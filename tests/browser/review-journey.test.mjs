@@ -25,6 +25,7 @@ function snapshot(version, files) {
       root: "/fixture/browser-fixture",
       base: "main",
       head: "fixture-head",
+      branch: "feature/browser-review",
       target: { kind: "worktree" },
     },
     change: {
@@ -443,6 +444,24 @@ test("shows error, empty, binary, truncated, and refreshed review states on desk
     await writeSnapshot(fixture());
     await page.getByRole("heading", { name: "Explain saved todos" }).waitFor();
     await page.getByText("The fixture risk is intentionally public.").waitFor();
+    await page.waitForFunction(
+      () =>
+        document.title ===
+        "browser-fixture · feature/browser-review — Diffsplain",
+    );
+
+    const pullRequest = fixture();
+    pullRequest.version = "pull-request";
+    pullRequest.change.number = 42;
+    pullRequest.repo.target.kind = "pull-request";
+    await writeSnapshot(pullRequest);
+    await page.waitForFunction(
+      () => document.title === "browser-fixture · PR #42 — Diffsplain",
+    );
+
+    const branchReview = fixture();
+    branchReview.version = "branch-review";
+    await writeSnapshot(branchReview);
 
     await selectFile(page, "long-list");
     await page.getByRole("button", { name: "Read full diff" }).click();

@@ -120,6 +120,13 @@ function changeScope(snapshot: DiffSnapshot) {
   return `${shortRef(repo.base)} → ${shortRef(repo.head)}`;
 }
 
+function browserTitle(snapshot: DiffSnapshot) {
+  const target = snapshot.change.number
+    ? `PR #${snapshot.change.number}`
+    : snapshot.repo.branch || changeScope(snapshot);
+  return `${snapshot.repo.name} · ${target} — Diffsplain`;
+}
+
 function relativeTime(value: string | null) {
   if (!value) return "Connecting";
   const seconds = Math.max(
@@ -356,6 +363,10 @@ export default function Home() {
   const pickerReturnFocusRef = useRef<HTMLElement | null>(null);
   const pickerTriggerRef = useRef<HTMLButtonElement | null>(null);
   const searchRef = useRef<HTMLInputElement | null>(null);
+
+  useEffect(() => {
+    document.title = snapshot ? browserTitle(snapshot) : "Diffsplain";
+  }, [snapshot]);
 
   useEffect(() => {
     const ticker = window.setInterval(() => setClock((value) => value + 1), 5_000);
