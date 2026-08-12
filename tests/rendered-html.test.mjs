@@ -44,6 +44,8 @@ test("ships the ten-file todo-list demo", async () => {
   assert.match(payload.version, /^[a-f0-9]{12}$/);
   assert.equal(payload.repo.name, "todo-list-demo");
   assert.equal(payload.change.number, 42);
+  assert.equal(payload.notes.agent, "codex");
+  assert.equal(payload.notes.model, "gpt-5.6-sol");
   assert.equal(payload.files.length, 10);
   assert.deepEqual(payload.files, todoDemoFiles);
   assert.ok(

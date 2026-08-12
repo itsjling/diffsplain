@@ -40,6 +40,8 @@ function snapshot(version, files) {
       status: "complete",
       completedFiles: files.length,
       totalFiles: files.length,
+      agent: "codex",
+      model: "gpt-5.6-sol",
     },
     files,
   };
@@ -443,6 +445,7 @@ test("shows error, empty, binary, truncated, and refreshed review states on desk
     await writeSnapshot(fixture());
     await page.getByRole("heading", { name: "Explain saved todos" }).waitFor();
     await page.getByText("The fixture risk is intentionally public.").waitFor();
+    await page.getByText("Written by GPT 5.6 Sol (Codex)").waitFor();
 
     await selectFile(page, "long-list");
     await page.getByRole("button", { name: "Read full diff" }).click();

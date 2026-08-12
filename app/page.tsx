@@ -36,6 +36,17 @@ type DiffFile = {
   noteReady?: boolean;
 };
 
+type DiffNotes = {
+  fresh: boolean;
+  complete: boolean;
+  status: "idle" | "generating" | "complete" | "failed" | "stale";
+  completedFiles: number;
+  totalFiles: number;
+  agent?: string;
+  model?: string;
+  reasoning?: string;
+};
+
 type DiffSnapshot = {
   version: string;
   generatedAt: string;
@@ -62,15 +73,7 @@ type DiffSnapshot = {
     risks: string[];
   };
   files: DiffFile[];
-  notes?: {
-    fresh: boolean;
-    complete: boolean;
-    status: "idle" | "generating" | "complete" | "failed" | "stale";
-    completedFiles: number;
-    totalFiles: number;
-    model?: string;
-    reasoning?: string;
-  };
+  notes?: DiffNotes;
 };
 
 const SWIPE_THRESHOLD = 48;
@@ -91,6 +94,35 @@ const DIFF_OPTIONS = {
 
 function shortRef(ref: string) {
   return ref.length > 16 ? ref.slice(0, 8) : ref;
+}
+
+const AGENT_NAMES: Record<string, string> = {
+  claude: "Claude",
+  codex: "Codex",
+  copilot: "Copilot",
+  cursor: "Cursor",
+  opencode: "OpenCode",
+};
+
+function formatName(value: string) {
+  return value
+    .trim()
+    .split(/[\s_-]+/)
+    .filter(Boolean)
+    .map((part) =>
+      part.toLowerCase() === "gpt"
+        ? "GPT"
+        : `${part.charAt(0).toUpperCase()}${part.slice(1)}`,
+    )
+    .join(" ");
+}
+
+function noteWriter(notes?: DiffNotes) {
+  const model = notes?.model ? formatName(notes.model) : "Default model";
+  const agent = notes?.agent
+    ? (AGENT_NAMES[notes.agent.toLowerCase()] ?? formatName(notes.agent))
+    : "Unknown agent";
+  return `${model} (${agent})`;
 }
 
 function changeScope(snapshot: DiffSnapshot) {
@@ -528,6 +560,7 @@ export default function Home() {
   const noteProgress = snapshot.notes
     ? `${snapshot.notes.completedFiles} of ${snapshot.notes.totalFiles} ready`
     : "";
+  const writer = noteWriter(snapshot.notes);
   const syncLabel = loadError
     ? "Reconnecting"
     : notesGenerating
@@ -857,8 +890,8 @@ export default function Home() {
                 </span>
                 <span>
                   {noteUnavailable
-                    ? "The coding agent stopped"
-                    : "Written by the coding agent"}
+                    ? `${writer} stopped`
+                    : `Written by ${writer}`}
                   <small>
                     {noteUnavailable
                       ? noteProgress
