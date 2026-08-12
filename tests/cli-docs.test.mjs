@@ -7,7 +7,6 @@ import {
   parseCliArgs,
 } from '../scripts/cli-args.mjs';
 import {
-  agentDisabledReason,
   enabledCodingAgents,
 } from '../scripts/coding-agents.mjs';
 
@@ -51,7 +50,7 @@ test('documents provider inputs and limits', () => {
   assert.doesNotMatch(agentNotes, /--agent claude[\s\S]{0,100}--reasoning/);
 });
 
-test('documents the enabled provider order and Cursor boundary', () => {
+test('documents the provider order and Cursor boundary', () => {
   const providerNames = enabledCodingAgents.map(
     (agent) => (agent === 'opencode'
       ? 'OpenCode'
@@ -59,22 +58,20 @@ test('documents the enabled provider order and Cursor boundary', () => {
   );
   const providerOrder =
     `${providerNames.slice(0, -1).join(', ')}, then ${providerNames.at(-1)}`;
-  const cursorBoundary = agentDisabledReason('cursor')
-    ?.match(/read-only, no-network, no-tool mode/)?.[0];
-  assert.ok(cursorBoundary);
-
   for (const document of [product, index, agentNotes, development]) {
     const text = document.replace(/\s+/g, ' ');
     assert.match(text, new RegExp(providerOrder));
-    assert.match(text, /Cursor detection does not mean support/i);
-    assert.match(text, /Cursor.{0,100}unsupported/i);
-    assert.match(text, new RegExp(cursorBoundary));
+    assert.match(text, /Cursor.{0,50}2026\.08\.11 or newer/i);
+    assert.match(text, /Cursor.{0,160}hostile (?:boundary check|canary)/i);
+    assert.match(text, /Cursor.{0,160}contacts.{0,50}(?:own )?service/i);
   }
 
-  assert.doesNotMatch(
-    development.replace(/\s+/g, ' '),
-    /Cursor.{0,100}(?:sign in|login)/i,
-  );
+  const notes = agentNotes.replace(/\s+/g, ' ');
+  assert.match(notes, /non-interactive Ask mode/i);
+  assert.match(notes, /read-only sandbox/i);
+  assert.match(notes, /temporary writes/i);
+  assert.match(notes, /deny shell, write, WebFetch, WebSearch, and MCP/i);
+  assert.match(notes, /rules, root agent files, skills, hooks, plugins, or MCP settings/i);
 });
 
 test('derives documented numeric defaults and bounds from the parser', () => {

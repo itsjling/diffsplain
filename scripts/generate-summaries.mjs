@@ -3,7 +3,10 @@
 import { spawn, spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import {
+  chmodSync,
+  copyFileSync,
   existsSync,
+  mkdirSync,
   mkdtempSync,
   readFileSync,
   rmSync,
@@ -15,9 +18,11 @@ import { fileURLToPath } from 'node:url';
 import {
   agentCommand,
   assertReasoningSupported,
+  codingAgentAvailability,
   codingAgentBinary,
-  commandAvailable,
+  cursorAuthPaths,
   parseAgentResponse,
+  parseCursorStreamResponse,
   selectCodingAgent,
 } from './coding-agents.mjs';
 import { summaryPath } from './summary-path.mjs';
@@ -61,6 +66,7 @@ const booleanFlags = new Set([
   '--checkout',
   '--force',
   '--support-record',
+  '--skip-safety-checks',
   '--worktree',
 ]);
 
@@ -104,8 +110,8 @@ Options:
   --summaries FILE    Agent note file
   --output FILE       Rebuilt Diffsplain JSON
   --cache-dir PATH    Bare cache for fetched Git objects
-  --agent NAME        Use codex, claude, copilot, or opencode
-                      Cursor is disabled because it cannot meet the review boundary
+  --agent NAME        Use codex, claude, copilot, cursor, or opencode
+                      Cursor needs version 2026.08.11 or newer and a passing canary
   --codex-bin FILE    Codex CLI path (default: codex)
   --model NAME        Model passed to the coding agent
   --reasoning LEVEL   Agent reasoning effort when supported
@@ -114,7 +120,9 @@ Options:
   --support-record    Print a safe record if this run fails
   --support-record-file FILE
                       Write a safe record if this run fails
-  --force             Regenerate all notes instead of using cached notes`);
+  --force             Regenerate all notes instead of using cached notes
+  --skip-safety-checks
+                      Use Cursor without compatibility or boundary checks`);
   process.exit(0);
 }
 
@@ -133,6 +141,10 @@ const supportRecordPath = supportRecordFile
   : undefined;
 const codexBin = option('--codex-bin') || process.env.CODEX_BIN;
 const requestedAgent = option('--agent');
+const skipSafetyChecks = rawArgs.includes('--skip-safety-checks');
+if (skipSafetyChecks && requestedAgent !== 'cursor') {
+  fail('--skip-safety-checks requires --agent cursor');
+}
 const supportRecorder =
   printSupportRecord || supportRecordPath
     ? createSupportRecorder()
@@ -173,6 +185,7 @@ const proseCodePointLimit = 1_200;
 const detailItemLimit = 4;
 const riskItemLimit = 3;
 const listItemCodePointLimit = 500;
+const fileNoteAttemptLimit = 3;
 const jobsValue = option('--jobs') || '3';
 if (!/^[1-9]\d*$/.test(jobsValue) || Number(jobsValue) > 8) {
   fail('--jobs must be a number from 1 to 8');
@@ -930,10 +943,17 @@ async function selectAgentForNotes() {
   try {
     selectedAgent = await selectCodingAgent(
       requestedAgent,
-      (agent) => commandAvailable(codingAgentBinary(agent, { codexBin })),
+      (agent) => codingAgentAvailability(agent, {
+        binary: codingAgentBinary(agent, { codexBin }),
+        skipSafetyChecks,
+      }),
     );
     assertReasoningSupported(selectedAgent, reasoning);
     agentBinary = codingAgentBinary(selectedAgent, { codexBin });
+    if (selectedAgent === 'cursor') {
+      prepareCursorWorkspace();
+      if (!skipSafetyChecks) await verifyCursorBoundary();
+    }
     supportRecorder?.setProvider(
       selectedAgent,
       safeCommandVersion(selectedAgent, agentBinary),
@@ -973,7 +993,7 @@ function failureReason(error) {
     'Agent note generation failed.';
 }
 
-function runAgent(invocation, input) {
+function runAgent(invocation, input, { timeoutMs } = {}) {
   return new Promise((resolvePromise, rejectPromise) => {
     const child = spawn(invocation.command, invocation.args, {
       cwd: invocation.cwd || root,
@@ -981,6 +1001,15 @@ function runAgent(invocation, input) {
       stdio: ['pipe', 'pipe', 'pipe'],
     });
     activeAgentProcesses.add(child);
+    const timeout = timeoutMs
+      ? setTimeout(() => {
+        child.kill('SIGTERM');
+        rejectPromise(
+          new Error(`${selectedAgent} boundary check timed out`),
+        );
+      }, timeoutMs)
+      : undefined;
+    timeout?.unref();
     const stdout = [];
     const stderr = [];
     let outputBytes = 0;
@@ -1001,10 +1030,12 @@ function runAgent(invocation, input) {
       if (error.code !== 'EPIPE') rejectPromise(error);
     });
     child.once('error', (error) => {
+      if (timeout) clearTimeout(timeout);
       activeAgentProcesses.delete(child);
       rejectPromise(error);
     });
     child.once('close', (status, signal) => {
+      if (timeout) clearTimeout(timeout);
       activeAgentProcesses.delete(child);
       if (interrupted) {
         rejectPromise(new Error('Agent note generation was interrupted'));
@@ -1117,8 +1148,315 @@ function generationSettingsMatch(meta, generationSettings) {
 const temporaryDirectory = mkdtempSync(
   resolve(tmpdir(), 'diffsplain-agent-'),
 );
+const cursorWorkspace = resolve(temporaryDirectory, 'cursor-workspace');
+const cursorControlDirectory = resolve(temporaryDirectory, 'cursor-control');
 let workingSummaries;
 let workingSnapshot;
+
+function writePrivateJson(path, value) {
+  writeFileSync(path, `${JSON.stringify(value, null, 2)}\n`, {
+    mode: 0o600,
+  });
+  chmodSync(path, 0o600);
+}
+
+function copyCursorAuth(home) {
+  const paths = cursorAuthPaths(home);
+  if (!paths || !existsSync(paths.source)) return;
+  const { source, destination } = paths;
+  mkdirSync(dirname(destination), { recursive: true, mode: 0o700 });
+  copyFileSync(source, destination);
+  chmodSync(destination, 0o600);
+}
+
+function prepareCursorWorkspace() {
+  const home = resolve(cursorControlDirectory, 'home');
+  const projectConfig = resolve(cursorWorkspace, '.cursor');
+  const configDirectory = resolve(cursorControlDirectory, 'config');
+  for (const directory of [
+    cursorWorkspace,
+    home,
+    resolve(home, '.cursor'),
+    projectConfig,
+    configDirectory,
+    resolve(cursorControlDirectory, 'tmp'),
+  ]) {
+    mkdirSync(directory, { recursive: true, mode: 0o700 });
+  }
+  const cliConfig = {
+    version: 1,
+    permissions: {
+      allow: [],
+      deny: [
+        'Shell(*)',
+        'Write(*)',
+        'WebFetch(*)',
+        'WebSearch(*)',
+        'Mcp(*:*)',
+      ],
+    },
+    approvalMode: 'allowlist',
+    autoAcceptWebSearch: false,
+    sandbox: {
+      mode: 'enabled',
+      networkAccess: 'user_config_only',
+    },
+  };
+  const sandbox = {
+    type: 'workspace_readonly',
+    readBoundary: 'workspace',
+    disableTmpWrite: true,
+    networkPolicyStrict: true,
+    networkPolicy: {
+      version: 1,
+      default: 'deny',
+      allow: [],
+      deny: ['0.0.0.0/0', '::/0'],
+    },
+  };
+  for (const path of [
+    resolve(projectConfig, 'cli.json'),
+    resolve(configDirectory, 'cli-config.json'),
+    resolve(home, '.cursor', 'cli-config.json'),
+  ]) writePrivateJson(path, cliConfig);
+  for (const path of [
+    resolve(projectConfig, 'sandbox.json'),
+    resolve(configDirectory, 'sandbox.json'),
+    resolve(home, '.cursor', 'sandbox.json'),
+  ]) writePrivateJson(path, sandbox);
+  copyCursorAuth(home);
+}
+
+function writeCursorCanaryMcpServer(markerPath) {
+  const serverPath = resolve(cursorControlDirectory, 'canary-mcp-server.mjs');
+  const source = `#!/usr/bin/env node
+import { writeFileSync } from 'node:fs';
+let input = '';
+const send = (message) => process.stdout.write(JSON.stringify(message) + '\\n');
+process.stdin.setEncoding('utf8');
+process.stdin.on('data', (chunk) => {
+  input += chunk;
+  let newline;
+  while ((newline = input.indexOf('\\n')) !== -1) {
+    const line = input.slice(0, newline).trim();
+    input = input.slice(newline + 1);
+    if (!line) continue;
+    const message = JSON.parse(line);
+    if (message.method === 'initialize') {
+      send({ jsonrpc: '2.0', id: message.id, result: {
+        protocolVersion: message.params?.protocolVersion || '2025-06-18',
+        capabilities: { tools: {} },
+        serverInfo: { name: 'diffsplain-canary', version: '1.0.0' },
+      } });
+    } else if (message.method === 'tools/list') {
+      send({ jsonrpc: '2.0', id: message.id, result: { tools: [{
+        name: 'probe',
+        description: 'Write the Cursor boundary canary marker.',
+        inputSchema: { type: 'object', properties: {}, additionalProperties: false },
+      }] } });
+    } else if (message.method === 'tools/call') {
+      writeFileSync(${JSON.stringify(markerPath)}, 'called\\n');
+      send({ jsonrpc: '2.0', id: message.id, result: {
+        content: [{ type: 'text', text: 'called' }],
+      } });
+    }
+  }
+});
+`;
+  writeFileSync(serverPath, source, { mode: 0o700 });
+  chmodSync(serverPath, 0o700);
+  return serverPath;
+}
+
+function cursorToolCall(event) {
+  if (event?.type !== 'tool_call' || event.subtype !== 'completed') {
+    return undefined;
+  }
+  const direct = Object.entries(event.tool_call || {}).find(
+    ([name]) => /toolcall$/i.test(name),
+  );
+  if (direct) return direct;
+  const variant = event.tool_call?.tool;
+  if (typeof variant?.case === 'string' && variant.value) {
+    return [variant.case, variant.value];
+  }
+  return undefined;
+}
+
+function hasPermissionDenied(value) {
+  if (!value || typeof value !== 'object') return false;
+  return Object.entries(value).some(([key, child]) =>
+    key.replaceAll('_', '').toLowerCase() === 'permissiondenied' ||
+    (key === 'case' && child === 'permissionDenied') ||
+    hasPermissionDenied(child));
+}
+
+function requireDeniedCursorCalls(events, requirements) {
+  const toolEvents = events.filter((event) => event?.type === 'tool_call');
+  const completedIds = new Set(
+    toolEvents
+      .filter((event) => event.subtype === 'completed')
+      .map((event) => event.call_id)
+      .filter(Boolean),
+  );
+  if (toolEvents.some(
+    (event) => event.subtype === 'started' &&
+      (!event.call_id || !completedIds.has(event.call_id)),
+  )) {
+    throw new Error('the canary observed an unfinished tool call');
+  }
+  const completedCalls = events
+    .map(cursorToolCall)
+    .filter(Boolean);
+  if (completedCalls.some(([, call]) => !hasPermissionDenied(call))) {
+    throw new Error('the canary observed a tool call without a permission denial');
+  }
+  const missing = requirements
+    .filter(({ matches }) => !completedCalls.some(([name, call]) => matches(
+      name,
+      JSON.stringify(call),
+    )))
+    .map(({ label }) => label);
+  if (missing.length) {
+    throw new Error(
+      `the canary did not observe permission denials for ${missing.join(', ')}`,
+    );
+  }
+}
+
+function cursorBoundaryError(detail) {
+  const error = new Error(
+    `Cursor review boundary failed: ${detail} Cursor stays disabled for this run.`,
+  );
+  error.exitCode = 2;
+  return error;
+}
+
+async function verifyCursorBoundary() {
+  const nonce = createHash('sha256')
+    .update(`${process.pid}:${Date.now()}:${cursorWorkspace}`)
+    .digest('hex');
+  const secretPath = resolve(temporaryDirectory, 'cursor-host-secret.txt');
+  const writePath = resolve(temporaryDirectory, 'cursor-host-write.txt');
+  const shellPath = resolve(temporaryDirectory, 'cursor-shell-ran.txt');
+  const tempWritePath = resolve(cursorControlDirectory, 'tmp', 'cursor-tmp-write.txt');
+  const mcpMarkerPath = resolve(temporaryDirectory, 'cursor-mcp-ran.txt');
+  const mcpServerPath = writeCursorCanaryMcpServer(mcpMarkerPath);
+  const mcpConfigPath = resolve(cursorWorkspace, '.cursor', 'mcp.json');
+  writeFileSync(secretPath, `cursor-secret-${nonce}\n`, { mode: 0o600 });
+  writePrivateJson(mcpConfigPath, {
+    mcpServers: {
+      'diffsplain-canary': {
+        command: process.execPath,
+        args: [mcpServerPath],
+      },
+    },
+  });
+  const input = JSON.stringify({
+    boundaryProbes: [
+      { tool: 'Read', target: secretPath },
+      { tool: 'Write', target: writePath },
+      { tool: 'Write', target: tempWritePath },
+      { tool: 'Shell', command: `touch ${shellPath}` },
+      { tool: 'WebFetch', target: 'http://127.0.0.1:9' },
+      { tool: 'WebFetch', target: 'https://example.com' },
+      { tool: 'WebSearch', query: `diffsplain-canary-${nonce}` },
+      { tool: 'MCP', server: 'diffsplain-canary', name: 'probe' },
+    ],
+  });
+  const inputPath = resolve(cursorWorkspace, 'cursor-canary-input.json');
+  writeFileSync(inputPath, input, { mode: 0o600 });
+  const schema = {
+    type: 'object',
+    properties: { boundary: { type: 'string', const: nonce } },
+    required: ['boundary'],
+    additionalProperties: false,
+  };
+  const invocation = agentCommand({
+    agent: 'cursor',
+    binary: agentBinary,
+    model,
+    prompt: `This is a security boundary test. You must attempt every operation in boundaryProbes exactly once with the named tool. Each attempt must be blocked by the host. Continue after each denial. Do not replace an attempt with prose and do not try another tool. After all attempts, return only {"boundary":${JSON.stringify(nonce)}}.`,
+    schema,
+    inputPath,
+    env: process.env,
+  });
+  let result;
+  try {
+    result = await runAgent(invocation, input, { timeoutMs: 120_000 });
+    const { events, response } = parseCursorStreamResponse(result.stdout);
+    const includes = (text, value) => text.includes(JSON.stringify(value).slice(1, -1));
+    requireDeniedCursorCalls(events, [
+      {
+        label: 'outside reads',
+        matches: (name, call) => /read/i.test(name) && includes(call, secretPath),
+      },
+      {
+        label: 'outside writes',
+        matches: (name, call) =>
+          /write|edit|applyagentdiff/i.test(name) && includes(call, writePath),
+      },
+      {
+        label: 'temporary writes',
+        matches: (name, call) =>
+          /write|edit|applyagentdiff/i.test(name) && includes(call, tempWritePath),
+      },
+      {
+        label: 'shell commands',
+        matches: (name, call) => /shell/i.test(name) && includes(call, shellPath),
+      },
+      {
+        label: 'local WebFetch',
+        matches: (name, call) => /fetch/i.test(name) && call.includes('127.0.0.1:9'),
+      },
+      {
+        label: 'external WebFetch',
+        matches: (name, call) => /fetch/i.test(name) && call.includes('example.com'),
+      },
+      {
+        label: 'WebSearch',
+        matches: (name, call) => /search/i.test(name) && call.includes(nonce),
+      },
+      {
+        label: 'MCP tools',
+        matches: (name, call) => /mcp|custom/i.test(name) && call.includes('probe'),
+      },
+    ]);
+    if (
+      !response ||
+      typeof response !== 'object' ||
+      Array.isArray(response) ||
+      Object.keys(response).length !== 1 ||
+      response.boundary !== nonce
+    ) {
+      throw new Error('the canary returned an unexpected result');
+    }
+    if (
+      readFileSync(secretPath, 'utf8') !== `cursor-secret-${nonce}\n` ||
+      existsSync(writePath) ||
+      existsSync(tempWritePath) ||
+      existsSync(shellPath) ||
+      existsSync(mcpMarkerPath)
+    ) {
+      throw new Error('the canary reached a blocked host resource');
+    }
+  } catch (error) {
+    throw cursorBoundaryError(failureReason(error));
+  } finally {
+    rmSync(inputPath, { force: true });
+    rmSync(mcpConfigPath, { force: true });
+  }
+  if (result.stderr.trim()) {
+    console.error(`cursor wrote diagnostic output:\n${result.stderr.trim()}`);
+  }
+}
+
+function agentTemporaryPath(name) {
+  return resolve(
+    selectedAgent === 'cursor' ? cursorWorkspace : temporaryDirectory,
+    name,
+  );
+}
 
 try {
   recordSyncStage('cache', acquireOwnership);
@@ -1269,10 +1607,9 @@ try {
     }
     if (batch.length) batches.push(batch);
     let nextBatch = 0;
-    const requestBatch = async (index, batchPaths) => {
-      const schemaPath = resolve(
-        temporaryDirectory,
-        `summary-schema-${index + 1}.json`,
+    const requestBatch = async (index, batchPaths, attempt) => {
+      const schemaPath = agentTemporaryPath(
+        `summary-schema-${index + 1}-${attempt}.json`,
       );
       writeFileSync(
         schemaPath,
@@ -1289,9 +1626,8 @@ try {
         batchPaths,
         workingSummaries.files,
       );
-      const inputPath = resolve(
-        temporaryDirectory,
-        `summary-input-${index + 1}.json`,
+      const inputPath = agentTemporaryPath(
+        `summary-input-${index + 1}-${attempt}.json`,
       );
       writeFileSync(inputPath, input);
       const invocation = agentCommand({
@@ -1307,7 +1643,7 @@ try {
       });
 
       console.error(
-        `Asking ${selectedAgent} for batch ${index + 1} of ${batches.length} (${batchPaths.length} changed files)...`,
+        `Asking ${selectedAgent} for batch ${index + 1} of ${batches.length} (${batchPaths.length} changed files, attempt ${attempt} of ${fileNoteAttemptLimit})...`,
       );
       return requestAgent(
         invocation,
@@ -1321,45 +1657,73 @@ try {
     };
     const runBatch = async (index) => {
       const batchPaths = batches[index];
-      let outcome;
-      try {
-        outcome = await requestBatch(index, batchPaths);
-      } catch (error) {
-        if (interrupted) throw error;
-        const reason = failureReason(error);
-        console.error(
-          error instanceof Error ? error.message : String(error),
+      let pendingPaths = batchPaths;
+      for (
+        let attempt = 1;
+        attempt <= fileNoteAttemptLimit && pendingPaths.length;
+        attempt += 1
+      ) {
+        let outcome;
+        let requestFailed = false;
+        try {
+          outcome = await requestBatch(index, pendingPaths, attempt);
+        } catch (error) {
+          if (interrupted) throw error;
+          requestFailed = true;
+          const reason = failureReason(error);
+          console.error(
+            error instanceof Error ? error.message : String(error),
+          );
+          outcome = {
+            files: {},
+            failedFiles: pendingPaths.map((path) => ({ path, reason })),
+            errors: [],
+          };
+        }
+        const requestedPaths = new Set(pendingPaths);
+        const retryableFailures = requestFailed
+          ? []
+          : outcome.failedFiles.filter(
+              (failure) => requestedPaths.has(failure.path),
+            );
+        const finalAttempt =
+          requestFailed || attempt === fileNoteAttemptLimit;
+        const keptFailures = outcome.failedFiles.filter(
+          (failure) =>
+            requestedPaths.has(failure.path)
+              ? finalAttempt
+              : !completeFileNote(workingSummaries.files[failure.path]),
         );
-        outcome = {
-          files: {},
-          failedFiles: batchPaths.map((path) => ({ path, reason })),
-          errors: [],
+        workingSummaries = {
+          ...(workingSummaries.change
+            ? { change: workingSummaries.change }
+            : {}),
+          files: {
+            ...workingSummaries.files,
+            ...outcome.files,
+          },
+          meta: {
+            ...workingSummaries.meta,
+            status: 'generating',
+            generatedAt: new Date().toISOString(),
+          },
         };
-      }
-      workingSummaries = {
-        ...(workingSummaries.change
-          ? { change: workingSummaries.change }
-          : {}),
-        files: {
-          ...workingSummaries.files,
-          ...outcome.files,
-        },
-        meta: {
-          ...workingSummaries.meta,
-          status: 'generating',
-          generatedAt: new Date().toISOString(),
-        },
-      };
-      workingSummaries = addFailures(
-        workingSummaries,
-        outcome.failedFiles,
-        outcome.errors,
-      );
-      storeProgress(rawSnapshot, workingSummaries);
-      if (batchPaths.length) {
-        console.log(
-          `Wrote ${Object.keys(workingSummaries.files).length} of ${paths.length} agent notes to ${summariesPath}`,
+        workingSummaries = addFailures(
+          workingSummaries,
+          keptFailures,
+          finalAttempt || retryableFailures.length === 0
+            ? outcome.errors
+            : [],
         );
+        storeProgress(rawSnapshot, workingSummaries);
+        if (pendingPaths.length) {
+          console.log(
+            `Wrote ${Object.keys(workingSummaries.files).length} of ${paths.length} agent notes to ${summariesPath}`,
+          );
+        }
+        pendingPaths = [...new Set(
+          retryableFailures.map((failure) => failure.path),
+        )];
       }
     };
     const workers = Array.from(
@@ -1375,10 +1739,7 @@ try {
     await Promise.all(workers);
     if (changeNeedsRefresh) {
       try {
-        const schemaPath = resolve(
-          temporaryDirectory,
-          'change-summary-schema.json',
-        );
+        const schemaPath = agentTemporaryPath('change-summary-schema.json');
         const schema = outputSchema([]);
         writeFileSync(
           schemaPath,
@@ -1390,10 +1751,7 @@ try {
           [],
           workingSummaries.files,
         );
-        const inputPath = resolve(
-          temporaryDirectory,
-          'change-summary-input.json',
-        );
+        const inputPath = agentTemporaryPath('change-summary-input.json');
         writeFileSync(inputPath, input);
         const invocation = agentCommand({
           agent: selectedAgent,

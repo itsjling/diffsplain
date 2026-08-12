@@ -172,8 +172,11 @@ test('keeps completed notes and resumes only queued work after cancellation', as
 import { appendFileSync, existsSync, readFileSync } from 'node:fs';
 const input = JSON.parse(readFileSync(0, 'utf8'));
 const paths = input.files.map((file) => file.path);
+const priorCalls = existsSync(${JSON.stringify(calls)})
+  ? readFileSync(${JSON.stringify(calls)}, 'utf8').trim().split('\\n').filter(Boolean).length
+  : 0;
 appendFileSync(${JSON.stringify(calls)}, JSON.stringify(paths) + '\\n');
-if (paths.includes('second.txt') && !existsSync(${JSON.stringify(resume)})) {
+if (paths.length && priorCalls === 1 && !existsSync(${JSON.stringify(resume)})) {
   Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 10_000);
 }
 const response = paths.length
@@ -198,18 +201,22 @@ process.stdout.write(JSON.stringify(response));
     await chmod(codex, 0o755);
     first = present(repo, summaries, output, codex);
 
-    await waitFor(async () => {
+    const progress = await waitFor(async () => {
       const notes = JSON.parse(await readFile(summaries, 'utf8'));
       const seen = recordedCalls(await readFile(calls, 'utf8'));
-      return notes.files?.['first.txt'] && seen.some((paths) => paths[0] === 'second.txt')
-        ? notes
+      const fileAttempts = seen.filter((paths) => paths.length);
+      return fileAttempts.length >= 2 && notes.files?.[fileAttempts[0][0]]
+        ? { notes, fileAttempts }
         : undefined;
     });
     assert.deepEqual(await stop(first), { code: 0, signal: null });
     first = undefined;
 
     const partial = JSON.parse(await readFile(summaries, 'utf8'));
-    assert.deepEqual(Object.keys(partial.files), ['first.txt']);
+    const completedPath = progress.fileAttempts[0][0];
+    const queuedPath = progress.fileAttempts[1][0];
+    assert.notEqual(completedPath, queuedPath);
+    assert.deepEqual(Object.keys(partial.files), [completedPath]);
     assert.equal(partial.meta.status, 'generating');
 
     await writeFile(resume, '');
@@ -222,8 +229,8 @@ process.stdout.write(JSON.stringify(response));
     assert.equal(complete.change.title, 'Recovered change');
 
     const attempted = recordedCalls(await readFile(calls, 'utf8'));
-    assert.equal(attempted.filter((paths) => paths[0] === 'first.txt').length, 1);
-    assert.equal(attempted.filter((paths) => paths[0] === 'second.txt').length, 2);
+    assert.equal(attempted.filter((paths) => paths[0] === completedPath).length, 1);
+    assert.equal(attempted.filter((paths) => paths[0] === queuedPath).length, 2);
     assert.equal(attempted.filter((paths) => paths.length === 0).length, 1);
   } finally {
     await stopIfRunning(first);

@@ -1,9 +1,9 @@
 import { spawnSync } from 'node:child_process';
 import {
-  agentDisabledReason,
   codingAgentBinary,
   codingAgents,
   findCommand,
+  inspectCursorCompatibility,
 } from './coding-agents.mjs';
 
 const agentLabels = {
@@ -76,6 +76,28 @@ async function inspectDependency(label, command, { env, platform }) {
   };
 }
 
+async function inspectAgent(agent, { env, platform }) {
+  const label = agentLabels[agent];
+  const command = codingAgentBinary(agent, { env });
+  if (agent !== 'cursor') {
+    return inspectDependency(label, command, { env, platform });
+  }
+  const path = await findCommand(command, { env, platform });
+  if (!path) {
+    return { label, command, installed: false, compatible: 'not-checked' };
+  }
+  const inspection = inspectCursorCompatibility(path, { env });
+  return {
+    label,
+    command,
+    installed: true,
+    path,
+    version: inspection.version,
+    compatible: inspection.compatible ? 'yes' : 'no',
+    ...(inspection.reason ? { boundaryError: inspection.reason } : {}),
+  };
+}
+
 function dependencyLine(dependency) {
   const label = dependency.label.padEnd(9);
   if (dependency.disabled) {
@@ -83,6 +105,9 @@ function dependencyLine(dependency) {
   }
   if (!dependency.installed) {
     return `  ✗ ${label} not found (${dependency.command})`;
+  }
+  if (dependency.boundaryError) {
+    return `  ! ${label} ${dependency.version || 'version unavailable'} (${dependency.path}; ${dependency.boundaryError})`;
   }
   const mark = dependency.version ? '✓' : '!';
   return `  ${mark} ${label} ${dependency.version || 'version unavailable'} (${dependency.path})`;
@@ -132,23 +157,7 @@ async function inspectDependencies(env, platform) {
   const [git, gh, ...agents] = await Promise.all([
     inspectDependency('Git', 'git', { env, platform }),
     inspectDependency('gh', 'gh', { env, platform }),
-    ...codingAgents.map((agent) => {
-      const disabled = agentDisabledReason(agent);
-      if (disabled) {
-        return Promise.resolve({
-          label: agentLabels[agent],
-          command: codingAgentBinary(agent, { env }),
-          installed: false,
-          compatible: 'no',
-          disabled,
-        });
-      }
-      return inspectDependency(
-        agentLabels[agent],
-        codingAgentBinary(agent, { env }),
-        { env, platform },
-      );
-    }),
+    ...codingAgents.map((agent) => inspectAgent(agent, { env, platform })),
   ]);
   return { git, gh, agents };
 }

@@ -4,13 +4,16 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
 import {
-  agentDisabledReason,
   agentCommand,
   agentSupportsReasoning,
+  codingAgentAvailability,
   codingAgentCapabilities,
   codingAgentBinary,
+  cursorAuthPaths,
   findCommand,
+  inspectCursorCompatibility,
   parseAgentResponse,
+  parseCursorStreamResponse,
   selectCodingAgent,
   summaryAgentEnvironment,
 } from '../scripts/coding-agents.mjs';
@@ -60,15 +63,15 @@ test('discovers executable providers on the configured path', async () => {
   }
 });
 
-test('selects the first available agent in fallback order', async () => {
+test('selects the first usable agent during automatic discovery', async () => {
   const checked = [];
   const selected = await selectCodingAgent(undefined, async (agent) => {
     checked.push(agent);
-    return agent === 'copilot';
+    return agent === 'cursor';
   });
 
-  assert.equal(selected, 'copilot');
-  assert.deepEqual(checked, ['codex', 'claude', 'copilot']);
+  assert.equal(selected, 'cursor');
+  assert.deepEqual(checked, ['codex', 'claude', 'copilot', 'cursor']);
 });
 
 test('fails when no coding agent is available', async () => {
@@ -80,11 +83,11 @@ test('fails when no coding agent is available', async () => {
     }),
     (error) => {
       assert.match(error.message, /no coding agent is available/i);
-      assert.match(error.message, /Cursor review is disabled/i);
+      assert.match(error.message, /cursor, opencode/i);
       return true;
     },
   );
-  assert.deepEqual(checked, ['codex', 'claude', 'copilot', 'opencode']);
+  assert.deepEqual(checked, ['codex', 'claude', 'copilot', 'cursor', 'opencode']);
 });
 
 test('fails when the requested coding agent is unavailable', async () => {
@@ -94,26 +97,60 @@ test('fails when the requested coding agent is unavailable', async () => {
   );
 });
 
-test('suggests only enabled agents for an unknown name', async () => {
+test('suggests every supported agent for an unknown name', async () => {
   await assert.rejects(
     selectCodingAgent('gemini'),
     (error) => {
-      assert.match(error.message, /Choose codex, claude, copilot, opencode/);
-      assert.doesNotMatch(error.message, /Choose .*cursor/);
+      assert.match(error.message, /Choose codex, claude, copilot, cursor, opencode/);
       return true;
     },
   );
 });
 
-test('disables Cursor because it cannot enforce the review boundary', async () => {
-  assert.match(
-    agentDisabledReason('cursor'),
-    /read-only, no-network, no-tool mode/,
-  );
-  await assert.rejects(
-    selectCodingAgent('cursor', async () => true),
-    /Cursor review is disabled/,
-  );
+test('gates Cursor on its version and boundary flags', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'diffsplain-cursor-'));
+  const cursor = join(directory, 'cursor-agent');
+  try {
+    await writeFile(
+      cursor,
+      `#!/bin/sh
+if [ "$1" = "--version" ]; then echo 2026.08.11-e8db854; exit 0; fi
+if [ "$1" = "--help" ]; then echo '--mode <mode> "ask" --sandbox <mode> "enabled" --workspace <path-or-name> --output-format <format> --model <model>'; exit 0; fi
+exit 1
+`,
+    );
+    await chmod(cursor, 0o755);
+    assert.equal(inspectCursorCompatibility(cursor).compatible, true);
+    assert.equal(
+      (await codingAgentAvailability('cursor', { binary: cursor })).available,
+      true,
+    );
+
+    await writeFile(
+      cursor,
+      '#!/bin/sh\necho 2025.11.25-d5b3271\n',
+    );
+    await chmod(cursor, 0o755);
+    const old = inspectCursorCompatibility(cursor);
+    assert.equal(old.compatible, false);
+    assert.match(old.reason, /2026\.08\.11 or newer/);
+    assert.equal(
+      (await codingAgentAvailability('cursor', {
+        binary: cursor,
+        skipSafetyChecks: true,
+      })).available,
+      true,
+    );
+    await assert.rejects(
+      selectCodingAgent('cursor', async () => ({
+        available: false,
+        reason: old.reason,
+      })),
+      /Upgrade Cursor Agent/,
+    );
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
 });
 
 test('builds non-interactive commands for each coding agent', () => {
@@ -155,10 +192,33 @@ test('builds non-interactive commands for each coding agent', () => {
   assert.match(copilot.args.at(-1), /@\/tmp\/input\.json/);
   assert.equal(copilot.cwd, '/tmp');
 
-  assert.throws(
-    () => agentCommand({ ...common, agent: 'cursor' }),
-    /Cursor review is disabled/,
+  const cursor = agentCommand({ ...common, agent: 'cursor' });
+  assert.ok(cursor.args.includes('--print'));
+  assert.deepEqual(
+    cursor.args.slice(cursor.args.indexOf('--mode'), cursor.args.indexOf('--mode') + 2),
+    ['--mode', 'ask'],
   );
+  assert.deepEqual(
+    cursor.args.slice(cursor.args.indexOf('--sandbox'), cursor.args.indexOf('--sandbox') + 2),
+    ['--sandbox', 'enabled'],
+  );
+  assert.deepEqual(
+    cursor.args.slice(cursor.args.indexOf('--output-format'), cursor.args.indexOf('--output-format') + 2),
+    ['--output-format', 'stream-json'],
+  );
+  for (const unsafe of ['--force', '--yolo', '--approve-mcps', '--auto-review']) {
+    assert.ok(!cursor.args.includes(unsafe));
+  }
+  assert.equal(cursor.cwd, '/tmp');
+  assert.equal(cursor.input, 'stdin');
+  assert.equal(cursor.env.HOME, '/cursor-control/home');
+  assert.equal(cursor.env.USERPROFILE, '/cursor-control/home');
+  assert.equal(cursor.env.APPDATA, '/cursor-control/home/AppData/Roaming');
+  assert.equal(cursor.env.CURSOR_CONFIG_DIR, '/cursor-control/config');
+  assert.equal(cursor.env.TEMP, '/cursor-control/tmp');
+  assert.equal(cursor.env.TMP, '/cursor-control/tmp');
+  assert.equal(cursor.env.TMPDIR, '/cursor-control/tmp');
+  assert.ok(!cursor.env.HOME.startsWith(cursor.cwd));
 
   const opencode = agentCommand({ ...common, agent: 'opencode' });
   assert.deepEqual(opencode.args.slice(0, 4), [
@@ -192,6 +252,29 @@ test('builds non-interactive commands for each coding agent', () => {
   );
 });
 
+test('keeps copied Cursor auth outside the readable workspace', () => {
+  const home = '/tmp/diffsplain-agent/cursor-control/home';
+  const workspace = '/tmp/diffsplain-agent/cursor-workspace';
+  const linux = cursorAuthPaths(home, {
+    env: { HOME: '/home/reviewer' },
+    platform: 'linux',
+  });
+  assert.equal(linux.source, '/home/reviewer/.config/cursor/auth.json');
+  assert.equal(linux.destination, `${home}/.config/cursor/auth.json`);
+  assert.ok(!linux.destination.startsWith(workspace));
+
+  const windows = cursorAuthPaths(home, {
+    env: { APPDATA: 'C:\\Users\\reviewer\\AppData\\Roaming' },
+    platform: 'win32',
+  });
+  assert.match(windows.source, /Cursor[/\\]auth\.json$/);
+  assert.equal(
+    windows.destination,
+    `${home}/AppData/Roaming/Cursor/auth.json`,
+  );
+  assert.ok(!windows.destination.startsWith(workspace));
+});
+
 test('passes only runtime variables to product summary agents', () => {
   assert.deepEqual(
     summaryAgentEnvironment({
@@ -222,6 +305,31 @@ test('reads structured output from each coding agent', () => {
     parseAgentResponse('codex', JSON.stringify(response)),
     response,
   );
+  assert.throws(
+    () => parseAgentResponse(
+      'cursor',
+      `${JSON.stringify({ type: 'tool_call', subtype: 'started' })}\n${JSON.stringify({ type: 'result', subtype: 'success', is_error: false, result: JSON.stringify(response) })}\n`,
+    ),
+    /unexpected tool call/,
+  );
+  const deniedStream = parseCursorStreamResponse(
+    `${JSON.stringify({
+      type: 'tool_call',
+      subtype: 'completed',
+      tool_call: {
+        shellToolCall: {
+          result: { permissionDenied: { error: 'denied' } },
+        },
+      },
+    })}\n${JSON.stringify({
+      type: 'result',
+      subtype: 'success',
+      is_error: false,
+      result: JSON.stringify(response),
+    })}\n`,
+  );
+  assert.deepEqual(deniedStream.response, response);
+  assert.equal(deniedStream.events.length, 2);
   assert.deepEqual(
     parseAgentResponse(
       'claude',

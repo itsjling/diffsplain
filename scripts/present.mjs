@@ -18,8 +18,8 @@ import { fileURLToPath } from 'node:url';
 import { helpText, parseCliArgs } from './cli-args.mjs';
 import {
   assertReasoningSupported,
+  codingAgentAvailability,
   codingAgentBinary,
-  commandAvailable,
   selectCodingAgent,
 } from './coding-agents.mjs';
 import { doctorReport } from './doctor.mjs';
@@ -189,9 +189,10 @@ if (agentEnabled) {
     selectedAgent = await selectCodingAgent(
       cli.agent,
       (agent) =>
-        commandAvailable(
-          codingAgentBinary(agent, { codexBin: cli.codexBin }),
-        ),
+        codingAgentAvailability(agent, {
+          binary: codingAgentBinary(agent, { codexBin: cli.codexBin }),
+          skipSafetyChecks: cli.skipSafetyChecks,
+        }),
     );
     assertReasoningSupported(selectedAgent, cli.reasoning);
     const agentBinary = codingAgentBinary(selectedAgent, {
