@@ -134,6 +134,13 @@ exit 1
     const old = inspectCursorCompatibility(cursor);
     assert.equal(old.compatible, false);
     assert.match(old.reason, /2026\.08\.11 or newer/);
+    assert.equal(
+      (await codingAgentAvailability('cursor', {
+        binary: cursor,
+        skipSafetyChecks: true,
+      })).available,
+      true,
+    );
     await assert.rejects(
       selectCodingAgent('cursor', async () => ({
         available: false,

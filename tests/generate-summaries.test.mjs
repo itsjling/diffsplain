@@ -923,6 +923,74 @@ if (process.argv[2] === "--version") {
   }
 });
 
+test("uses an old Cursor without a canary when safety checks are skipped", async () => {
+  const repo = await makeRepo();
+  const summaries = join(repo, "cursor-notes.json");
+  const output = join(repo, "diff-data.json");
+  const cursor = join(repo, "old-cursor-agent.mjs");
+  const calls = join(repo, "cursor-calls.jsonl");
+
+  try {
+    await writeFile(
+      cursor,
+      `#!/usr/bin/env node
+import { appendFileSync, readFileSync } from "node:fs";
+if (process.argv[2] === "--version") {
+  process.stdout.write("2025.11.25-d5b3271\\n");
+} else {
+  const input = JSON.parse(readFileSync(0, "utf8"));
+  if (input.boundaryProbes) process.exit(9);
+  appendFileSync(${JSON.stringify(calls)}, JSON.stringify(input.files.map((file) => file.path)) + "\\n");
+  const response = input.files.length
+    ? { files: input.files.map((file) => ({
+        path: file.path,
+        title: "Cursor note for " + file.path,
+        what: "Explains the file.",
+        why: "The file changed.",
+        details: [],
+        risks: [],
+      })) }
+    : { change: {
+        title: "Cursor review",
+        summary: "Explains the change.",
+        why: "The review needs a summary.",
+        highlights: [],
+        risks: [],
+      } };
+  process.stdout.write(JSON.stringify({
+    type: "result",
+    subtype: "success",
+    is_error: false,
+    result: JSON.stringify(response),
+  }) + "\\n");
+}
+`,
+    );
+    await chmod(cursor, 0o755);
+
+    const result = run(repo, [
+      "--range",
+      "HEAD~1..HEAD",
+      "--agent",
+      "cursor",
+      "--skip-safety-checks",
+      "--summaries",
+      summaries,
+      "--output",
+      output,
+    ], { env: { ...process.env, CURSOR_BIN: cursor } });
+
+    assert.equal(result.status, 0, result.stderr);
+    assert.deepEqual(await recordedCalls(calls), [
+      ["added.txt", "changed.txt"],
+      [],
+    ]);
+    assert.equal(JSON.parse(await readFile(summaries, "utf8")).meta.agent, "cursor");
+  } finally {
+    await rm(repo, { recursive: true, force: true });
+  }
+});
+
 test("fails Cursor's canary when a requested operation is not denied", async () => {
   const repo = await makeRepo();
   const snapshot = join(repo, "hostile-snapshot.json");

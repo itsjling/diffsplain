@@ -292,6 +292,7 @@ test('rejects duplicate options and aliases', () => {
     ['--no-agent', '--no-agent'],
     ['--worktree', '--worktree'],
     ['--force', '--force'],
+    ['--skip-safety-checks', '--skip-safety-checks'],
     ['--no-browser', '--no-browser'],
     ['--host', 'localhost', '--host', '0.0.0.0'],
     ['-h', '--help'],
@@ -368,6 +369,25 @@ test('forces note regeneration only in the agent process', () => {
   assert.equal(parsed.forceSummaryRegeneration, true);
   assert.doesNotMatch(parsed.feedArgs.join(' '), /--force/);
   assert.ok(parsed.agentArgs.includes('--force'));
+});
+
+test('passes the Cursor safety bypass only to the agent process', () => {
+  const parsed = parseCliArgs(
+    ['--agent', 'cursor', '--skip-safety-checks'],
+    { callerDirectory: cwd, pathExists: missing },
+  );
+
+  assert.equal(parsed.skipSafetyChecks, true);
+  assert.ok(parsed.agentArgs.includes('--skip-safety-checks'));
+  assert.doesNotMatch(parsed.feedArgs.join(' '), /skip-safety-checks/);
+  assert.throws(
+    () => parseCliArgs(['--skip-safety-checks']),
+    /requires --agent cursor/i,
+  );
+  assert.throws(
+    () => parseCliArgs(['--agent', 'codex', '--skip-safety-checks']),
+    /requires --agent cursor/i,
+  );
 });
 
 test('passes one opt-in support record only to the agent process', () => {

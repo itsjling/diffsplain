@@ -52,6 +52,7 @@ Arguments:
 | `--batch-size COUNT` | Set the most files per agent pass. The default is `12`; large patches use smaller batches. |
 | `--jobs COUNT` | Set agent passes to run at once. The default is `3`. |
 | `--force` | Regenerate all agent notes instead of using cached notes. |
+| `--skip-safety-checks` | Use an explicitly selected Cursor without its compatibility gate or boundary canary. |
 | `--support-record` | Print a safe JSON record if the review fails. |
 | `--support-record-file FILE` | Write one safe JSON record if the review fails. |
 | `--remote NAME\|URL` | Choose the Git remote. The default is `origin`. |

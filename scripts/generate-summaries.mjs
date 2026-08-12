@@ -66,6 +66,7 @@ const booleanFlags = new Set([
   '--checkout',
   '--force',
   '--support-record',
+  '--skip-safety-checks',
   '--worktree',
 ]);
 
@@ -119,7 +120,9 @@ Options:
   --support-record    Print a safe record if this run fails
   --support-record-file FILE
                       Write a safe record if this run fails
-  --force             Regenerate all notes instead of using cached notes`);
+  --force             Regenerate all notes instead of using cached notes
+  --skip-safety-checks
+                      Use Cursor without compatibility or boundary checks`);
   process.exit(0);
 }
 
@@ -138,6 +141,10 @@ const supportRecordPath = supportRecordFile
   : undefined;
 const codexBin = option('--codex-bin') || process.env.CODEX_BIN;
 const requestedAgent = option('--agent');
+const skipSafetyChecks = rawArgs.includes('--skip-safety-checks');
+if (skipSafetyChecks && requestedAgent !== 'cursor') {
+  fail('--skip-safety-checks requires --agent cursor');
+}
 const supportRecorder =
   printSupportRecord || supportRecordPath
     ? createSupportRecorder()
@@ -938,12 +945,14 @@ async function selectAgentForNotes() {
       requestedAgent,
       (agent) => codingAgentAvailability(agent, {
         binary: codingAgentBinary(agent, { codexBin }),
+        skipSafetyChecks,
       }),
     );
     assertReasoningSupported(selectedAgent, reasoning);
     agentBinary = codingAgentBinary(selectedAgent, { codexBin });
     if (selectedAgent === 'cursor') {
-      await verifyCursorBoundary();
+      prepareCursorWorkspace();
+      if (!skipSafetyChecks) await verifyCursorBoundary();
     }
     supportRecorder?.setProvider(
       selectedAgent,
@@ -1324,7 +1333,6 @@ function cursorBoundaryError(detail) {
 }
 
 async function verifyCursorBoundary() {
-  prepareCursorWorkspace();
   const nonce = createHash('sha256')
     .update(`${process.pid}:${Date.now()}:${cursorWorkspace}`)
     .digest('hex');

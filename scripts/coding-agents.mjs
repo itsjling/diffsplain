@@ -249,11 +249,15 @@ export async function codingAgentAvailability(
     binary = codingAgentBinary(agent),
     env = process.env,
     platform = process.platform,
+    skipSafetyChecks = false,
   } = {},
 ) {
   const path = await findCommand(binary, { env, platform });
   if (!path) return { available: false, installed: false };
   if (agent !== 'cursor') {
+    return { available: true, installed: true, path };
+  }
+  if (skipSafetyChecks) {
     return { available: true, installed: true, path };
   }
   const inspection = inspectCursorCompatibility(path, { env });
