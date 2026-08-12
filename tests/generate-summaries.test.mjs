@@ -1350,6 +1350,11 @@ test("keeps completed batches after malformed output or a provider exit", async 
         built.files.find((file) => file.path === "added.txt").noteReady,
         true,
       );
+      const calls = await recordedCalls(codex.calls);
+      assert.equal(
+        calls.filter((call) => call.files[0]?.path === "changed.txt").length,
+        1,
+      );
     } finally {
       await rm(repo, { recursive: true, force: true });
     }

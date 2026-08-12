@@ -1329,10 +1329,12 @@ try {
         attempt += 1
       ) {
         let outcome;
+        let requestFailed = false;
         try {
           outcome = await requestBatch(index, pendingPaths, attempt);
         } catch (error) {
           if (interrupted) throw error;
+          requestFailed = true;
           const reason = failureReason(error);
           console.error(
             error instanceof Error ? error.message : String(error),
@@ -1344,10 +1346,13 @@ try {
           };
         }
         const requestedPaths = new Set(pendingPaths);
-        const retryableFailures = outcome.failedFiles.filter(
-          (failure) => requestedPaths.has(failure.path),
-        );
-        const finalAttempt = attempt === fileNoteAttemptLimit;
+        const retryableFailures = requestFailed
+          ? []
+          : outcome.failedFiles.filter(
+              (failure) => requestedPaths.has(failure.path),
+            );
+        const finalAttempt =
+          requestFailed || attempt === fileNoteAttemptLimit;
         const keptFailures = outcome.failedFiles.filter(
           (failure) =>
             requestedPaths.has(failure.path)
