@@ -11,14 +11,19 @@ const script = new URL('../scripts/present.mjs', import.meta.url).pathname;
 async function fakeCommand(
   directory,
   name,
-  { authStatus = 1, versionStatus = 0 } = {},
+  {
+    authStatus = 1,
+    help = '',
+    version = `${name} version test`,
+    versionStatus = 0,
+  } = {},
 ) {
   const path = join(directory, name);
   await writeFile(
     path,
     `#!/bin/sh
-if [ "$1" = "--version" ]; then printf '%s\\n' ${JSON.stringify(`${name} version test`)}; exit ${versionStatus}; fi
-if [ "$1" = "--help" ]; then exit 0; fi
+if [ "$1" = "--version" ]; then printf '%s\\n' ${JSON.stringify(version)}; exit ${versionStatus}; fi
+if [ "$1" = "--help" ]; then printf '%s\\n' ${JSON.stringify(help)}; exit 0; fi
 if [ "$1" = "auth" ] && [ "$2" = "status" ] && [ "$3" = "--active" ]; then exit ${authStatus}; fi
 exit 9
 `,
@@ -51,7 +56,7 @@ function options(directory, deep = false) {
   };
 }
 
-test('reports Cursor as disabled when it cannot meet the review boundary', async () => {
+test('reports an installed but incompatible Cursor with its real details', async () => {
   await withCommands(
     { git: {}, gh: { authStatus: 0 }, 'cursor-agent': {} },
     async (directory) => {
@@ -59,23 +64,43 @@ test('reports Cursor as disabled when it cannot meet the review boundary', async
       const cursor = report.json.capabilities.agentNotes.cursor;
 
       assert.equal(report.ready, true);
-      assert.equal(cursor.installed, false);
+      assert.equal(cursor.installed, true);
       assert.equal(cursor.compatible, 'no');
       assert.equal(cursor.smokeTest, 'not-run');
-      assert.match(report.text, /Coding agents \(none installed\)/);
+      assert.match(report.text, /Coding agents \(1 installed\)/);
       assert.match(
         report.text,
-        /! Cursor\s+disabled \(Cursor review is disabled: Cursor Agent has no supported read-only, no-network, no-tool mode\.\)/,
+        /! Cursor\s+cursor-agent version test \(.+Upgrade Cursor Agent\.\)/,
       );
       assert.match(
         report.text,
-        /Agent notes: Cursor[\s\S]*installed\s+no[\s\S]*compatible\s+no/,
-      );
-      assert.match(
-        report.text,
-        /No agent is required for a plain local review; use --no-agent/,
+        /Agent notes: Cursor[\s\S]*installed\s+yes[\s\S]*compatible\s+no/,
       );
       assert.match(report.text, /Platform: \S+ test-arch/);
+    },
+  );
+});
+
+test('reports a compatible Cursor install', async () => {
+  await withCommands(
+    {
+      git: {},
+      'cursor-agent': {
+        version: '2026.08.11-e8db854',
+        help: '--mode <mode> "ask" --sandbox <mode> "enabled" --workspace <path-or-name> --output-format <format> --model <model>',
+      },
+    },
+    async (directory) => {
+      const report = await doctorReport(options(directory));
+      const dependency = report.json.dependencies.agents.cursor;
+      const capability = report.json.capabilities.agentNotes.cursor;
+
+      assert.equal(dependency.installed, true);
+      assert.equal(dependency.version, '2026.08.11-e8db854');
+      assert.equal(dependency.path, join(directory, 'cursor-agent'));
+      assert.equal(dependency.compatible, 'yes');
+      assert.equal(capability.installed, true);
+      assert.equal(capability.compatible, 'yes');
     },
   );
 });

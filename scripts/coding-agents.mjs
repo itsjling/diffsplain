@@ -1,10 +1,13 @@
 import { constants } from 'node:fs';
 import { access } from 'node:fs/promises';
+import { spawnSync } from 'node:child_process';
 import {
+  basename,
   delimiter,
   dirname,
   isAbsolute,
   join,
+  resolve,
 } from 'node:path';
 
 export const codingAgentCapabilities = {
@@ -60,17 +63,134 @@ export function summaryAgentEnvironment(env = process.env) {
   );
 }
 
-const cursorDisabledReason =
-  'Cursor review is disabled: Cursor Agent has no supported read-only, no-network, no-tool mode.';
-
-export function agentDisabledReason(agent) {
-  if (agent === 'cursor') return cursorDisabledReason;
+export function cursorAuthPaths(
+  home,
+  {
+    env = process.env,
+    platform = process.platform,
+  } = {},
+) {
+  if (platform === 'linux') {
+    const configHome = env.XDG_CONFIG_HOME ||
+      (env.HOME ? resolve(env.HOME, '.config') : undefined);
+    return configHome
+      ? {
+          source: resolve(configHome, 'cursor', 'auth.json'),
+          destination: resolve(home, '.config', 'cursor', 'auth.json'),
+        }
+      : undefined;
+  }
+  if (platform === 'win32') {
+    const roaming = env.APPDATA ||
+      (env.USERPROFILE
+        ? resolve(env.USERPROFILE, 'AppData', 'Roaming')
+        : undefined);
+    return roaming
+      ? {
+          source: resolve(roaming, 'Cursor', 'auth.json'),
+          destination: resolve(home, 'AppData', 'Roaming', 'Cursor', 'auth.json'),
+        }
+      : undefined;
+  }
   return undefined;
 }
 
-export const enabledCodingAgents = codingAgents.filter(
-  (agent) => !agentDisabledReason(agent),
-);
+const minimumCursorVersion = [2026, 8, 11];
+const cursorBoundarySummary =
+  'Cursor needs Ask mode, a read-only sandbox, isolated settings, denied tools, and the hostile boundary canary.';
+
+export const enabledCodingAgents = codingAgents;
+
+function firstLine(value) {
+  return value
+    .replace(/\u001b\[[0-?]*[ -/]*[@-~]/g, '')
+    .split('\n')
+    .map((line) => line.trim())
+    .find(Boolean);
+}
+
+function cursorVersionParts(version) {
+  const match = version?.match(/^(\d{4})\.(\d{1,2})\.(\d{1,2})(?:-|$)/);
+  return match?.slice(1).map(Number);
+}
+
+function versionAtLeast(current, minimum) {
+  for (const [index, part] of current.entries()) {
+    if (part !== minimum[index]) return part > minimum[index];
+  }
+  return true;
+}
+
+function cursorBoundaryError(detail) {
+  return `Cursor review boundary is incompatible: ${detail} ${cursorBoundarySummary} Upgrade Cursor Agent.`;
+}
+
+export function inspectCursorCompatibility(
+  command,
+  {
+    env = process.env,
+    timeout = 5_000,
+  } = {},
+) {
+  const run = (args) => spawnSync(command, args, {
+    encoding: 'utf8',
+    env,
+    timeout,
+    windowsHide: true,
+  });
+  const versionResult = run(['--version']);
+  const version = firstLine(
+    `${versionResult.stdout || ''}\n${versionResult.stderr || ''}`,
+  );
+  if (versionResult.error || versionResult.status !== 0 || !version) {
+    return {
+      compatible: false,
+      version,
+      reason: cursorBoundaryError('The version check failed.'),
+    };
+  }
+  const parts = cursorVersionParts(version);
+  if (!parts || !versionAtLeast(parts, minimumCursorVersion)) {
+    return {
+      compatible: false,
+      version,
+      reason: cursorBoundaryError(
+        `Found ${version}; version 2026.08.11 or newer is required.`,
+      ),
+    };
+  }
+  const helpResult = run(['--help']);
+  const help = `${helpResult.stdout || ''}\n${helpResult.stderr || ''}`;
+  if (helpResult.error || helpResult.status !== 0) {
+    return {
+      compatible: false,
+      version,
+      reason: cursorBoundaryError('The CLI help check failed.'),
+    };
+  }
+  const requiredHelp = [
+    ['--mode <mode>', 'Ask mode'],
+    ['"ask"', 'Ask mode'],
+    ['--sandbox <mode>', 'sandbox control'],
+    ['"enabled"', 'sandbox control'],
+    ['--workspace <path-or-name>', 'workspace isolation'],
+    ['--output-format <format>', 'structured output'],
+    ['--model <model>', 'model selection'],
+  ];
+  const missing = requiredHelp
+    .filter(([text]) => !help.includes(text))
+    .map(([, label]) => label);
+  if (missing.length) {
+    return {
+      compatible: false,
+      version,
+      reason: cursorBoundaryError(
+        `The CLI lacks ${[...new Set(missing)].join(', ')}.`,
+      ),
+    };
+  }
+  return { compatible: true, version };
+}
 
 async function executable(path) {
   try {
@@ -123,7 +243,34 @@ export async function commandAvailable(command, options) {
   return Boolean(await findCommand(command, options));
 }
 
-// fallow-ignore-next-line complexity -- validation and fallback share one public selector.
+export async function codingAgentAvailability(
+  agent,
+  {
+    binary = codingAgentBinary(agent),
+    env = process.env,
+    platform = process.platform,
+    skipSafetyChecks = false,
+  } = {},
+) {
+  const path = await findCommand(binary, { env, platform });
+  if (!path) return { available: false, installed: false };
+  if (agent !== 'cursor') {
+    return { available: true, installed: true, path };
+  }
+  if (skipSafetyChecks) {
+    return { available: true, installed: true, path };
+  }
+  const inspection = inspectCursorCompatibility(path, { env });
+  return {
+    available: inspection.compatible,
+    installed: true,
+    path,
+    version: inspection.version,
+    reason: inspection.reason,
+  };
+}
+
+// fallow-ignore-next-line complexity -- validation and discovery share one public selector.
 export async function selectCodingAgent(
   requested,
   available = commandAvailable,
@@ -134,19 +281,32 @@ export async function selectCodingAgent(
         `Unsupported agent "${requested}". Choose ${enabledCodingAgents.join(', ')}.`,
       );
     }
-    const disabled = agentDisabledReason(requested);
-    if (disabled) throw new Error(disabled);
-    if (!(await available(requested))) {
+    const result = await available(requested);
+    const availableResult = typeof result === 'object'
+      ? result.available
+      : result;
+    if (!availableResult) {
+      if (typeof result === 'object' && result.reason) {
+        throw new Error(result.reason);
+      }
       throw new Error(`Coding agent "${requested}" is not available.`);
     }
     return requested;
   }
 
+  let cursorReason;
   for (const agent of enabledCodingAgents) {
-    if (await available(agent)) return agent;
+    const result = await available(agent);
+    const availableResult = typeof result === 'object'
+      ? result.available
+      : result;
+    if (availableResult) return agent;
+    if (agent === 'cursor' && typeof result === 'object') {
+      cursorReason = result.reason;
+    }
   }
   throw new Error(
-    `No coding agent is available. Install one of: ${enabledCodingAgents.join(', ')}. ${cursorDisabledReason}`,
+    `No coding agent is available. Install one of: ${enabledCodingAgents.join(', ')}.${cursorReason ? ` ${cursorReason}` : ''}`,
   );
 }
 
@@ -207,8 +367,40 @@ function parseOpenCodeResponse(stdout) {
   return parseJsonText(parts.join(''), 'OpenCode');
 }
 
+export function parseCursorStreamResponse(stdout) {
+  const trimmed = stdout.trim();
+  const lines = trimmed.split('\n').filter(Boolean);
+  const events = lines.map(parseEvent);
+  if (!lines.length || !events.every(Boolean)) {
+    throw new Error('Cursor did not return a valid event stream');
+  }
+  const envelope = [...events]
+    .reverse()
+    .find((event) => event.type === 'result');
+  if (!envelope || envelope.subtype !== 'success' || envelope.is_error) {
+    throw new Error('Cursor did not return a successful result');
+  }
+  if (typeof envelope.result !== 'string') {
+    throw new Error('Cursor did not return summary JSON');
+  }
+  return {
+    events,
+    response: parseJsonText(envelope.result, 'Cursor'),
+  };
+}
+
 function parseCursorResponse(stdout) {
-  const envelope = parseJsonText(stdout, 'Cursor');
+  const trimmed = stdout.trim();
+  const lines = trimmed.split('\n').filter(Boolean);
+  if (lines.length > 1) {
+    const parsed = parseCursorStreamResponse(trimmed);
+    const toolCall = parsed.events.find((event) => event.type === 'tool_call');
+    if (toolCall) {
+      throw new Error('Cursor emitted an unexpected tool call');
+    }
+    return parsed.response;
+  }
+  const envelope = parseJsonText(trimmed, 'Cursor');
   if (typeof envelope?.result === 'string') {
     return parseJsonText(envelope.result, 'Cursor');
   }
@@ -380,6 +572,62 @@ function openCodeCommand({
   };
 }
 
+function cursorCommand({
+  binary,
+  inputPath,
+  model,
+  prompt,
+  schema,
+  summaryDirectory,
+  summaryEnv,
+  sourceEnv,
+}) {
+  const args = [
+    '--print',
+    '--output-format',
+    'stream-json',
+    '--mode',
+    'ask',
+    '--sandbox',
+    'enabled',
+    '--workspace',
+    summaryDirectory,
+  ];
+  if (model) args.push('--model', model);
+  args.push(
+    `${prompt}\n\nThe snapshot JSON follows this prompt on standard input. Return JSON that matches this schema:\n${JSON.stringify(schema)}`,
+  );
+  const controlDirectory = join(dirname(summaryDirectory), 'cursor-control');
+  const home = join(controlDirectory, 'home');
+  const temporary = join(controlDirectory, 'tmp');
+  const invocationName = basename(inputPath).replace(/[^A-Za-z0-9.-]/g, '-');
+  return {
+    command: binary,
+    args,
+    input: 'stdin',
+    cwd: summaryDirectory,
+    env: {
+      ...summaryEnv,
+      HOME: home,
+      USERPROFILE: home,
+      APPDATA: join(home, 'AppData', 'Roaming'),
+      LOCALAPPDATA: join(home, 'AppData', 'Local'),
+      XDG_CONFIG_HOME: join(home, '.config'),
+      CURSOR_CONFIG_DIR: join(controlDirectory, 'config'),
+      CURSOR_DATA_DIR: join(controlDirectory, `data-${invocationName}`),
+      TEMP: temporary,
+      TMP: temporary,
+      TMPDIR: temporary,
+      ...(sourceEnv.CURSOR_API_KEY
+        ? { CURSOR_API_KEY: sourceEnv.CURSOR_API_KEY }
+        : {}),
+      ...(sourceEnv.CURSOR_AUTH_TOKEN
+        ? { CURSOR_AUTH_TOKEN: sourceEnv.CURSOR_AUTH_TOKEN }
+        : {}),
+    },
+  };
+}
+
 export function agentCommand({
   agent,
   binary = agent,
@@ -391,8 +639,6 @@ export function agentCommand({
   inputPath,
   env = process.env,
 }) {
-  const disabled = agentDisabledReason(agent);
-  if (disabled) throw new Error(disabled);
   const options = {
     binary,
     inputPath,
@@ -403,9 +649,11 @@ export function agentCommand({
     schemaPath,
     summaryDirectory: dirname(inputPath),
     summaryEnv: summaryAgentEnvironment(env),
+    sourceEnv: env,
   };
   if (agent === 'codex') return codexCommand(options);
   if (agent === 'claude') return claudeCommand(options);
   if (agent === 'copilot') return copilotCommand(options);
+  if (agent === 'cursor') return cursorCommand(options);
   return openCodeCommand(options);
 }
