@@ -35,6 +35,11 @@ const snapshot = {
     generatedFor: fingerprint,
     fresh: true,
     complete: true,
+    status: "complete",
+    completedFiles: todoDemoFiles.length,
+    totalFiles: todoDemoFiles.length,
+    agent: "codex",
+    model: "gpt-5.6-sol",
   },
   files: todoDemoFiles,
 };

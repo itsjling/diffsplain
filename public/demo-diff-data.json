@@ -31,7 +31,12 @@
     "reviewFingerprint": "5d2d2bb7580d9040d31c2f29c55688264f6d4724d1ba921a86d4ba11513382d8",
     "generatedFor": "5d2d2bb7580d9040d31c2f29c55688264f6d4724d1ba921a86d4ba11513382d8",
     "fresh": true,
-    "complete": true
+    "complete": true,
+    "status": "complete",
+    "completedFiles": 10,
+    "totalFiles": 10,
+    "agent": "codex",
+    "model": "gpt-5.6-sol"
   },
   "files": [
     {
