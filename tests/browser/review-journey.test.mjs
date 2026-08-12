@@ -460,6 +460,29 @@ test("shows error, empty, binary, truncated, and refreshed review states on desk
   });
 });
 
+test("does not credit stale fallback text to the prior note writer", async () => {
+  await runReviewJourney(
+    "stale note attribution",
+    { viewport: { width: 1280, height: 800 } },
+    async (page) => {
+      const stale = fixture("stale");
+      Object.assign(stale.notes, {
+        complete: false,
+        completedFiles: 0,
+        fresh: false,
+        status: "stale",
+      });
+      await writeSnapshot(stale);
+      await page.goto(serverUrl);
+
+      await page.getByText("Fixture review stale").waitFor();
+      await page
+        .getByText("Written by GPT 5.6 Sol (Codex)")
+        .waitFor({ state: "hidden" });
+    },
+  );
+});
+
 test("keeps the newest live snapshot through late responses and faults", async () => {
   await runReviewJourney(
     "ordered live refresh",

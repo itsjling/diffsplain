@@ -560,6 +560,7 @@ export default function Home() {
   const noteProgress = snapshot.notes
     ? `${snapshot.notes.completedFiles} of ${snapshot.notes.totalFiles} ready`
     : "";
+  const hasFreshNote = noteReady && snapshot.notes?.fresh === true;
   const writer = noteWriter(snapshot.notes);
   const syncLabel = loadError
     ? "Reconnecting"
@@ -883,7 +884,7 @@ export default function Home() {
               ) : null}
             </div>
 
-            {!notesInProgress ? (
+            {!notesInProgress && (hasFreshNote || noteUnavailable) ? (
               <footer className="agent-signoff">
                 <span className="agent-glyph" aria-hidden="true">
                   ✦
