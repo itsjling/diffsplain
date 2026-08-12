@@ -265,6 +265,54 @@ process.stdout.write(JSON.stringify(response));
   return { bin, calls };
 }
 
+async function malformedFileNoteCodex(root, recoverOnCall) {
+  const bin = join(root, "malformed-file-note-codex.mjs");
+  const calls = join(root, "malformed-file-note-calls.jsonl");
+  await writeFile(
+    bin,
+    `#!/usr/bin/env node
+import { appendFileSync, existsSync, readFileSync } from "node:fs";
+const input = JSON.parse(readFileSync(0, "utf8"));
+const call = existsSync(${JSON.stringify(calls)})
+  ? readFileSync(${JSON.stringify(calls)}, "utf8").trim().split("\\n").length + 1
+  : 1;
+appendFileSync(
+  ${JSON.stringify(calls)},
+  JSON.stringify({
+    files: input.files.map((file) => file.path).sort(),
+    existing: Object.keys(input.existingFileNotes || {}).sort(),
+  }) + "\\n",
+);
+const note = (path) => ({
+  path,
+  title: "Note for " + path + " from call " + call,
+  what: "Explains " + path + ".",
+  why: "This file changed.",
+  details: [],
+  risks: [],
+});
+if (input.files.length) {
+  const files = input.files.map((file) => note(file.path));
+  const malformed = files.find((file) => file.path === "changed.txt");
+  if (malformed && call < ${recoverOnCall}) delete malformed.details;
+  process.stdout.write(JSON.stringify({ files }));
+} else {
+  process.stdout.write(JSON.stringify({
+    change: {
+      title: "Keep recovered notes",
+      summary: "Retries malformed file notes without replacing valid notes.",
+      why: "Completes the review in the same run when possible.",
+      highlights: [],
+      risks: [],
+    },
+  }));
+}
+`,
+  );
+  await chmod(bin, 0o755);
+  return { bin, calls };
+}
+
 function run(repo, args, options = {}) {
   return spawnSync(process.execPath, [script, "--repo", repo, ...args], {
     encoding: "utf8",
@@ -1106,6 +1154,99 @@ test("marks note generation as failed when Codex misses a changed file", async (
       snapshot.files.find((file) => file.path === "added.txt").noteFailure,
       /omitted/i,
     );
+  } finally {
+    await rm(repo, { recursive: true, force: true });
+  }
+});
+
+test("retries only malformed file notes and keeps valid notes", async () => {
+  const repo = await makeRepo();
+  const summaries = join(repo, "notes.json");
+  const output = join(repo, "diff-data.json");
+
+  try {
+    const codex = await malformedFileNoteCodex(repo, 2);
+    const result = run(repo, [
+      "--range",
+      "HEAD~1..HEAD",
+      "--codex-bin",
+      codex.bin,
+      "--jobs",
+      "1",
+      "--summaries",
+      summaries,
+      "--output",
+      output,
+    ]);
+
+    assert.equal(result.status, 0, result.stderr);
+    assert.deepEqual(await recordedCalls(codex.calls), [
+      { files: ["added.txt", "changed.txt"], existing: [] },
+      { files: ["changed.txt"], existing: ["added.txt"] },
+      { files: [], existing: ["added.txt", "changed.txt"] },
+    ]);
+    const writtenNotes = JSON.parse(await readFile(summaries, "utf8"));
+    assert.equal(writtenNotes.meta.status, "complete");
+    assert.equal(writtenNotes.files["added.txt"].title, "Note for added.txt from call 1");
+    assert.equal(writtenNotes.files["changed.txt"].title, "Note for changed.txt from call 2");
+    assert.ok(!Object.hasOwn(writtenNotes.meta, "failedFiles"));
+    const built = JSON.parse(await readFile(output, "utf8"));
+    assert.equal(built.notes.complete, true);
+    assert.equal(built.notes.completedFiles, 2);
+  } finally {
+    await rm(repo, { recursive: true, force: true });
+  }
+});
+
+test("stops malformed file note retries at the limit and retries on restart", async () => {
+  const repo = await makeRepo();
+  const summaries = join(repo, "notes.json");
+  const output = join(repo, "diff-data.json");
+
+  try {
+    const codex = await malformedFileNoteCodex(repo, 5);
+    const args = [
+      "--range",
+      "HEAD~1..HEAD",
+      "--codex-bin",
+      codex.bin,
+      "--jobs",
+      "1",
+      "--summaries",
+      summaries,
+      "--output",
+      output,
+    ];
+    const failed = run(repo, args);
+
+    assert.equal(failed.status, 1);
+    assert.deepEqual(await recordedCalls(codex.calls), [
+      { files: ["added.txt", "changed.txt"], existing: [] },
+      { files: ["changed.txt"], existing: ["added.txt"] },
+      { files: ["changed.txt"], existing: ["added.txt"] },
+      { files: [], existing: ["added.txt"] },
+    ]);
+    const failedNotes = JSON.parse(await readFile(summaries, "utf8"));
+    assert.equal(failedNotes.meta.status, "failed");
+    assert.equal(failedNotes.change.title, "Keep recovered notes");
+    assert.equal(failedNotes.files["added.txt"].title, "Note for added.txt from call 1");
+    assert.deepEqual(failedNotes.meta.failedFiles, [
+      {
+        path: "changed.txt",
+        reason: "changed.txt has missing: details",
+      },
+    ]);
+
+    const recovered = run(repo, args);
+    assert.equal(recovered.status, 0, recovered.stderr);
+    assert.deepEqual((await recordedCalls(codex.calls)).at(-1), {
+      files: ["changed.txt"],
+      existing: ["added.txt"],
+    });
+    const recoveredNotes = JSON.parse(await readFile(summaries, "utf8"));
+    assert.equal(recoveredNotes.meta.status, "complete");
+    assert.equal(recoveredNotes.change.title, "Keep recovered notes");
+    assert.ok(!Object.hasOwn(recoveredNotes.meta, "failedFiles"));
   } finally {
     await rm(repo, { recursive: true, force: true });
   }
