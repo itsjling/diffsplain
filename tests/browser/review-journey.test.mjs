@@ -41,6 +41,8 @@ function snapshot(version, files) {
       status: "complete",
       completedFiles: files.length,
       totalFiles: files.length,
+      agent: "codex",
+      model: "gpt-5.6-sol",
     },
     files,
   };
@@ -449,6 +451,7 @@ test("shows error, empty, binary, truncated, and refreshed review states on desk
         document.title ===
         "browser-fixture · feature/browser-review — Diffsplain",
     );
+    await page.getByText("Written by GPT 5.6 Sol (Codex)").waitFor();
 
     const pullRequest = fixture();
     pullRequest.version = "pull-request";
@@ -474,6 +477,29 @@ test("shows error, empty, binary, truncated, and refreshed review states on desk
     await writeSnapshot(fixture("two"));
     await page.getByRole("heading", { name: "Binary note two" }).waitFor();
   });
+});
+
+test("does not credit stale fallback text to the prior note writer", async () => {
+  await runReviewJourney(
+    "stale note attribution",
+    { viewport: { width: 1280, height: 800 } },
+    async (page) => {
+      const stale = fixture("stale");
+      Object.assign(stale.notes, {
+        complete: false,
+        completedFiles: 0,
+        fresh: false,
+        status: "stale",
+      });
+      await writeSnapshot(stale);
+      await page.goto(serverUrl);
+
+      await page.getByText("Fixture review stale").waitFor();
+      await page
+        .getByText("Written by GPT 5.6 Sol (Codex)")
+        .waitFor({ state: "hidden" });
+    },
+  );
 });
 
 test("keeps the newest live snapshot through late responses and faults", async () => {
