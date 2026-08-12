@@ -178,6 +178,7 @@ const proseCodePointLimit = 1_200;
 const detailItemLimit = 4;
 const riskItemLimit = 3;
 const listItemCodePointLimit = 500;
+const fileNoteAttemptLimit = 3;
 const jobsValue = option('--jobs') || '3';
 if (!/^[1-9]\d*$/.test(jobsValue) || Number(jobsValue) > 8) {
   fail('--jobs must be a number from 1 to 8');
@@ -1598,10 +1599,9 @@ try {
     }
     if (batch.length) batches.push(batch);
     let nextBatch = 0;
-    const requestBatch = async (index, batchPaths) => {
-      const schemaPath = resolve(
-        selectedAgent === 'cursor' ? cursorWorkspace : temporaryDirectory,
-        `summary-schema-${index + 1}.json`,
+    const requestBatch = async (index, batchPaths, attempt) => {
+      const schemaPath = agentTemporaryPath(
+        `summary-schema-${index + 1}-${attempt}.json`,
       );
       writeFileSync(
         schemaPath,
@@ -1618,7 +1618,9 @@ try {
         batchPaths,
         workingSummaries.files,
       );
-      const inputPath = agentTemporaryPath(`summary-input-${index + 1}.json`);
+      const inputPath = agentTemporaryPath(
+        `summary-input-${index + 1}-${attempt}.json`,
+      );
       writeFileSync(inputPath, input);
       const invocation = agentCommand({
         agent: selectedAgent,
@@ -1633,7 +1635,7 @@ try {
       });
 
       console.error(
-        `Asking ${selectedAgent} for batch ${index + 1} of ${batches.length} (${batchPaths.length} changed files)...`,
+        `Asking ${selectedAgent} for batch ${index + 1} of ${batches.length} (${batchPaths.length} changed files, attempt ${attempt} of ${fileNoteAttemptLimit})...`,
       );
       return requestAgent(
         invocation,
@@ -1647,45 +1649,73 @@ try {
     };
     const runBatch = async (index) => {
       const batchPaths = batches[index];
-      let outcome;
-      try {
-        outcome = await requestBatch(index, batchPaths);
-      } catch (error) {
-        if (interrupted) throw error;
-        const reason = failureReason(error);
-        console.error(
-          error instanceof Error ? error.message : String(error),
+      let pendingPaths = batchPaths;
+      for (
+        let attempt = 1;
+        attempt <= fileNoteAttemptLimit && pendingPaths.length;
+        attempt += 1
+      ) {
+        let outcome;
+        let requestFailed = false;
+        try {
+          outcome = await requestBatch(index, pendingPaths, attempt);
+        } catch (error) {
+          if (interrupted) throw error;
+          requestFailed = true;
+          const reason = failureReason(error);
+          console.error(
+            error instanceof Error ? error.message : String(error),
+          );
+          outcome = {
+            files: {},
+            failedFiles: pendingPaths.map((path) => ({ path, reason })),
+            errors: [],
+          };
+        }
+        const requestedPaths = new Set(pendingPaths);
+        const retryableFailures = requestFailed
+          ? []
+          : outcome.failedFiles.filter(
+              (failure) => requestedPaths.has(failure.path),
+            );
+        const finalAttempt =
+          requestFailed || attempt === fileNoteAttemptLimit;
+        const keptFailures = outcome.failedFiles.filter(
+          (failure) =>
+            requestedPaths.has(failure.path)
+              ? finalAttempt
+              : !completeFileNote(workingSummaries.files[failure.path]),
         );
-        outcome = {
-          files: {},
-          failedFiles: batchPaths.map((path) => ({ path, reason })),
-          errors: [],
+        workingSummaries = {
+          ...(workingSummaries.change
+            ? { change: workingSummaries.change }
+            : {}),
+          files: {
+            ...workingSummaries.files,
+            ...outcome.files,
+          },
+          meta: {
+            ...workingSummaries.meta,
+            status: 'generating',
+            generatedAt: new Date().toISOString(),
+          },
         };
-      }
-      workingSummaries = {
-        ...(workingSummaries.change
-          ? { change: workingSummaries.change }
-          : {}),
-        files: {
-          ...workingSummaries.files,
-          ...outcome.files,
-        },
-        meta: {
-          ...workingSummaries.meta,
-          status: 'generating',
-          generatedAt: new Date().toISOString(),
-        },
-      };
-      workingSummaries = addFailures(
-        workingSummaries,
-        outcome.failedFiles,
-        outcome.errors,
-      );
-      storeProgress(rawSnapshot, workingSummaries);
-      if (batchPaths.length) {
-        console.log(
-          `Wrote ${Object.keys(workingSummaries.files).length} of ${paths.length} agent notes to ${summariesPath}`,
+        workingSummaries = addFailures(
+          workingSummaries,
+          keptFailures,
+          finalAttempt || retryableFailures.length === 0
+            ? outcome.errors
+            : [],
         );
+        storeProgress(rawSnapshot, workingSummaries);
+        if (pendingPaths.length) {
+          console.log(
+            `Wrote ${Object.keys(workingSummaries.files).length} of ${paths.length} agent notes to ${summariesPath}`,
+          );
+        }
+        pendingPaths = [...new Set(
+          retryableFailures.map((failure) => failure.path),
+        )];
       }
     };
     const workers = Array.from(
