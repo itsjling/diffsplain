@@ -4,12 +4,13 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
 import {
-  agentDisabledReason,
   agentCommand,
   agentSupportsReasoning,
+  codingAgentAvailability,
   codingAgentCapabilities,
   codingAgentBinary,
   findCommand,
+  inspectCursorCompatibility,
   parseAgentResponse,
   selectCodingAgent,
   summaryAgentEnvironment,
@@ -60,15 +61,15 @@ test('discovers executable providers on the configured path', async () => {
   }
 });
 
-test('selects the first available agent in fallback order', async () => {
+test('selects the first usable agent during automatic discovery', async () => {
   const checked = [];
   const selected = await selectCodingAgent(undefined, async (agent) => {
     checked.push(agent);
-    return agent === 'copilot';
+    return agent === 'cursor';
   });
 
-  assert.equal(selected, 'copilot');
-  assert.deepEqual(checked, ['codex', 'claude', 'copilot']);
+  assert.equal(selected, 'cursor');
+  assert.deepEqual(checked, ['codex', 'claude', 'copilot', 'cursor']);
 });
 
 test('fails when no coding agent is available', async () => {
@@ -80,11 +81,11 @@ test('fails when no coding agent is available', async () => {
     }),
     (error) => {
       assert.match(error.message, /no coding agent is available/i);
-      assert.match(error.message, /Cursor review is disabled/i);
+      assert.match(error.message, /cursor, opencode/i);
       return true;
     },
   );
-  assert.deepEqual(checked, ['codex', 'claude', 'copilot', 'opencode']);
+  assert.deepEqual(checked, ['codex', 'claude', 'copilot', 'cursor', 'opencode']);
 });
 
 test('fails when the requested coding agent is unavailable', async () => {
@@ -94,26 +95,53 @@ test('fails when the requested coding agent is unavailable', async () => {
   );
 });
 
-test('suggests only enabled agents for an unknown name', async () => {
+test('suggests every supported agent for an unknown name', async () => {
   await assert.rejects(
     selectCodingAgent('gemini'),
     (error) => {
-      assert.match(error.message, /Choose codex, claude, copilot, opencode/);
-      assert.doesNotMatch(error.message, /Choose .*cursor/);
+      assert.match(error.message, /Choose codex, claude, copilot, cursor, opencode/);
       return true;
     },
   );
 });
 
-test('disables Cursor because it cannot enforce the review boundary', async () => {
-  assert.match(
-    agentDisabledReason('cursor'),
-    /read-only, no-network, no-tool mode/,
-  );
-  await assert.rejects(
-    selectCodingAgent('cursor', async () => true),
-    /Cursor review is disabled/,
-  );
+test('gates Cursor on its version and boundary flags', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'diffsplain-cursor-'));
+  const cursor = join(directory, 'cursor-agent');
+  try {
+    await writeFile(
+      cursor,
+      `#!/bin/sh
+if [ "$1" = "--version" ]; then echo 2026.08.11-e8db854; exit 0; fi
+if [ "$1" = "--help" ]; then echo '--mode <mode> "ask" --sandbox <mode> "enabled" --workspace <path-or-name> --output-format <format> --model <model>'; exit 0; fi
+exit 1
+`,
+    );
+    await chmod(cursor, 0o755);
+    assert.equal(inspectCursorCompatibility(cursor).compatible, true);
+    assert.equal(
+      (await codingAgentAvailability('cursor', { binary: cursor })).available,
+      true,
+    );
+
+    await writeFile(
+      cursor,
+      '#!/bin/sh\necho 2025.11.25-d5b3271\n',
+    );
+    await chmod(cursor, 0o755);
+    const old = inspectCursorCompatibility(cursor);
+    assert.equal(old.compatible, false);
+    assert.match(old.reason, /2026\.08\.11 or newer/);
+    await assert.rejects(
+      selectCodingAgent('cursor', async () => ({
+        available: false,
+        reason: old.reason,
+      })),
+      /Upgrade Cursor Agent/,
+    );
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
 });
 
 test('builds non-interactive commands for each coding agent', () => {
@@ -155,10 +183,27 @@ test('builds non-interactive commands for each coding agent', () => {
   assert.match(copilot.args.at(-1), /@\/tmp\/input\.json/);
   assert.equal(copilot.cwd, '/tmp');
 
-  assert.throws(
-    () => agentCommand({ ...common, agent: 'cursor' }),
-    /Cursor review is disabled/,
+  const cursor = agentCommand({ ...common, agent: 'cursor' });
+  assert.ok(cursor.args.includes('--print'));
+  assert.deepEqual(
+    cursor.args.slice(cursor.args.indexOf('--mode'), cursor.args.indexOf('--mode') + 2),
+    ['--mode', 'ask'],
   );
+  assert.deepEqual(
+    cursor.args.slice(cursor.args.indexOf('--sandbox'), cursor.args.indexOf('--sandbox') + 2),
+    ['--sandbox', 'enabled'],
+  );
+  assert.deepEqual(
+    cursor.args.slice(cursor.args.indexOf('--output-format'), cursor.args.indexOf('--output-format') + 2),
+    ['--output-format', 'stream-json'],
+  );
+  for (const unsafe of ['--force', '--yolo', '--approve-mcps', '--auto-review']) {
+    assert.ok(!cursor.args.includes(unsafe));
+  }
+  assert.equal(cursor.cwd, '/tmp');
+  assert.equal(cursor.input, 'stdin');
+  assert.equal(cursor.env.HOME, '/tmp/home');
+  assert.match(cursor.env.CURSOR_CONFIG_DIR, /\/tmp\/cursor-config$/);
 
   const opencode = agentCommand({ ...common, agent: 'opencode' });
   assert.deepEqual(opencode.args.slice(0, 4), [
@@ -221,6 +266,13 @@ test('reads structured output from each coding agent', () => {
   assert.deepEqual(
     parseAgentResponse('codex', JSON.stringify(response)),
     response,
+  );
+  assert.throws(
+    () => parseAgentResponse(
+      'cursor',
+      `${JSON.stringify({ type: 'tool_call', subtype: 'started' })}\n${JSON.stringify({ type: 'result', subtype: 'success', is_error: false, result: JSON.stringify(response) })}\n`,
+    ),
+    /unexpected tool call/,
   );
   assert.deepEqual(
     parseAgentResponse(

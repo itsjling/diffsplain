@@ -28,10 +28,11 @@ Developers run `npx diffsplain` in a Git checkout. With no arguments, it compare
 - Compare the current checkout with its default branch when no target is passed.
 - Accept local paths, Git URLs, and GitHub `owner/name` repo names.
 - Report local dependency paths, versions, and readiness with `diffsplain doctor`.
-- Try Codex, Claude, Copilot, then OpenCode when no agent is chosen. Cursor
-  detection does not mean support: Diffsplain detects it only so it can report
-  that Cursor is unsupported. It has no supported read-only, no-network,
-  no-tool mode, so it cannot generate notes.
+- Try Codex, Claude, Copilot, Cursor, then OpenCode when no agent is chosen.
+  Use Cursor only when version 2026.08.11 or newer passes the hostile boundary
+  check. Cursor still contacts its service, but its review tools cannot read or
+  change host files, run commands, use MCP, or reach hosts. Once Diffsplain
+  chooses an agent, do not switch agents after a failed check or run.
 - Show tracked and untracked worktree changes, exact local ranges, and remote branches as secondary targets.
 - Present full or shortened unified diffs, including binary-file metadata.
 - Pair the whole change and each file with agent-written summaries, reasons, details, and risks.

@@ -13,10 +13,12 @@ npx diffsplain
 
 The command opens a local page and compares the checkout with its default
 branch. It starts at port `2299` and uses the next free port when needed. You
-need Node.js 22.13 or newer and a signed-in Codex, Claude, Copilot, or OpenCode
-CLI. Diffsplain tries them in that order. Pull requests also need a signed-in
-GitHub CLI. Cursor reviews stay disabled because Cursor Agent has no supported
-read-only, no-network, no-tool mode.
+need Node.js 22.13 or newer and a signed-in Codex, Claude, Copilot, Cursor, or
+OpenCode CLI. Diffsplain tries them in that order. Cursor Agent must be version
+2026.08.11 or newer and pass a hostile boundary check. It still contacts the
+Cursor service, but its review tools cannot access the host. Pull requests also
+need a signed-in GitHub CLI. Once Diffsplain chooses an agent, a failed check or
+run ends the command; it does not switch agents.
 
 Common targets:
 

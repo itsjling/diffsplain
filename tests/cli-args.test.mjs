@@ -238,8 +238,10 @@ test('rejects an unknown coding agent', () => {
       }),
     (error) => {
       assert.match(error.message, /unsupported agent/i);
-      assert.match(error.message, /Choose codex, claude, copilot, opencode/);
-      assert.doesNotMatch(error.message, /Choose .*cursor/);
+      assert.match(
+        error.message,
+        /Choose codex, claude, copilot, cursor, opencode/,
+      );
       return true;
     },
   );

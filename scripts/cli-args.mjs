@@ -86,7 +86,7 @@ Targets:
 Options:
   --repo PATH|URL|OWNER/NAME
                       Repo to review (default: current repo)
-  --agent NAME        Use codex, claude, copilot, or opencode
+  --agent NAME        Use codex, claude, copilot, cursor, or opencode
   --no-agent          Do not write agent notes
   --model NAME        Model for agent notes
   --reasoning LEVEL   Agent reasoning effort when supported
@@ -107,12 +107,12 @@ Options:
   -h, --help          Show this help
   -v, --version       Show the installed version
 
-Agent fallback:
-  codex, claude, copilot, opencode
+Automatic agent selection:
+  codex, claude, copilot, cursor, opencode
 
 Cursor:
-  Disabled because Cursor Agent has no supported read-only, no-network,
-  no-tool mode
+  Requires Cursor Agent 2026.08.11 or newer and a passing boundary canary.
+  Cursor contacts its service, but its review tools cannot access the host.
 
 Examples:
   diffsplain
