@@ -7,6 +7,7 @@ import {
   dirname,
   isAbsolute,
   join,
+  resolve,
 } from 'node:path';
 
 export const codingAgentCapabilities = {
@@ -60,6 +61,38 @@ export function summaryAgentEnvironment(env = process.env) {
       .filter((name) => typeof env[name] === 'string')
       .map((name) => [name, env[name]]),
   );
+}
+
+export function cursorAuthPaths(
+  home,
+  {
+    env = process.env,
+    platform = process.platform,
+  } = {},
+) {
+  if (platform === 'linux') {
+    const configHome = env.XDG_CONFIG_HOME ||
+      (env.HOME ? resolve(env.HOME, '.config') : undefined);
+    return configHome
+      ? {
+          source: resolve(configHome, 'cursor', 'auth.json'),
+          destination: resolve(home, '.config', 'cursor', 'auth.json'),
+        }
+      : undefined;
+  }
+  if (platform === 'win32') {
+    const roaming = env.APPDATA ||
+      (env.USERPROFILE
+        ? resolve(env.USERPROFILE, 'AppData', 'Roaming')
+        : undefined);
+    return roaming
+      ? {
+          source: resolve(roaming, 'Cursor', 'auth.json'),
+          destination: resolve(home, 'AppData', 'Roaming', 'Cursor', 'auth.json'),
+        }
+      : undefined;
+  }
+  return undefined;
 }
 
 const minimumCursorVersion = [2026, 8, 11];
@@ -330,28 +363,38 @@ function parseOpenCodeResponse(stdout) {
   return parseJsonText(parts.join(''), 'OpenCode');
 }
 
-function parseCursorResponse(stdout) {
+export function parseCursorStreamResponse(stdout) {
   const trimmed = stdout.trim();
   const lines = trimmed.split('\n').filter(Boolean);
   const events = lines.map(parseEvent);
-  if (
-    lines.length > 1 &&
-    events.every(Boolean)
-  ) {
-    const toolCall = events.find((event) => event.type === 'tool_call');
+  if (!lines.length || !events.every(Boolean)) {
+    throw new Error('Cursor did not return a valid event stream');
+  }
+  const envelope = [...events]
+    .reverse()
+    .find((event) => event.type === 'result');
+  if (!envelope || envelope.subtype !== 'success' || envelope.is_error) {
+    throw new Error('Cursor did not return a successful result');
+  }
+  if (typeof envelope.result !== 'string') {
+    throw new Error('Cursor did not return summary JSON');
+  }
+  return {
+    events,
+    response: parseJsonText(envelope.result, 'Cursor'),
+  };
+}
+
+function parseCursorResponse(stdout) {
+  const trimmed = stdout.trim();
+  const lines = trimmed.split('\n').filter(Boolean);
+  if (lines.length > 1) {
+    const parsed = parseCursorStreamResponse(trimmed);
+    const toolCall = parsed.events.find((event) => event.type === 'tool_call');
     if (toolCall) {
       throw new Error('Cursor emitted an unexpected tool call');
     }
-    const envelope = [...events]
-      .reverse()
-      .find((event) => event.type === 'result');
-    if (!envelope || envelope.subtype !== 'success' || envelope.is_error) {
-      throw new Error('Cursor did not return a successful result');
-    }
-    if (typeof envelope.result !== 'string') {
-      throw new Error('Cursor did not return summary JSON');
-    }
-    return parseJsonText(envelope.result, 'Cursor');
+    return parsed.response;
   }
   const envelope = parseJsonText(trimmed, 'Cursor');
   if (typeof envelope?.result === 'string') {
@@ -550,7 +593,9 @@ function cursorCommand({
   args.push(
     `${prompt}\n\nThe snapshot JSON follows this prompt on standard input. Return JSON that matches this schema:\n${JSON.stringify(schema)}`,
   );
-  const home = join(summaryDirectory, 'home');
+  const controlDirectory = join(dirname(summaryDirectory), 'cursor-control');
+  const home = join(controlDirectory, 'home');
+  const temporary = join(controlDirectory, 'tmp');
   const invocationName = basename(inputPath).replace(/[^A-Za-z0-9.-]/g, '-');
   return {
     command: binary,
@@ -560,10 +605,15 @@ function cursorCommand({
     env: {
       ...summaryEnv,
       HOME: home,
+      USERPROFILE: home,
+      APPDATA: join(home, 'AppData', 'Roaming'),
+      LOCALAPPDATA: join(home, 'AppData', 'Local'),
       XDG_CONFIG_HOME: join(home, '.config'),
-      CURSOR_CONFIG_DIR: join(summaryDirectory, 'cursor-config'),
-      CURSOR_DATA_DIR: join(summaryDirectory, `cursor-data-${invocationName}`),
-      TMPDIR: join(summaryDirectory, 'tmp'),
+      CURSOR_CONFIG_DIR: join(controlDirectory, 'config'),
+      CURSOR_DATA_DIR: join(controlDirectory, `data-${invocationName}`),
+      TEMP: temporary,
+      TMP: temporary,
+      TMPDIR: temporary,
       ...(sourceEnv.CURSOR_API_KEY
         ? { CURSOR_API_KEY: sourceEnv.CURSOR_API_KEY }
         : {}),

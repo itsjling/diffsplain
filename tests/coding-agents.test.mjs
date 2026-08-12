@@ -9,9 +9,11 @@ import {
   codingAgentAvailability,
   codingAgentCapabilities,
   codingAgentBinary,
+  cursorAuthPaths,
   findCommand,
   inspectCursorCompatibility,
   parseAgentResponse,
+  parseCursorStreamResponse,
   selectCodingAgent,
   summaryAgentEnvironment,
 } from '../scripts/coding-agents.mjs';
@@ -202,8 +204,14 @@ test('builds non-interactive commands for each coding agent', () => {
   }
   assert.equal(cursor.cwd, '/tmp');
   assert.equal(cursor.input, 'stdin');
-  assert.equal(cursor.env.HOME, '/tmp/home');
-  assert.match(cursor.env.CURSOR_CONFIG_DIR, /\/tmp\/cursor-config$/);
+  assert.equal(cursor.env.HOME, '/cursor-control/home');
+  assert.equal(cursor.env.USERPROFILE, '/cursor-control/home');
+  assert.equal(cursor.env.APPDATA, '/cursor-control/home/AppData/Roaming');
+  assert.equal(cursor.env.CURSOR_CONFIG_DIR, '/cursor-control/config');
+  assert.equal(cursor.env.TEMP, '/cursor-control/tmp');
+  assert.equal(cursor.env.TMP, '/cursor-control/tmp');
+  assert.equal(cursor.env.TMPDIR, '/cursor-control/tmp');
+  assert.ok(!cursor.env.HOME.startsWith(cursor.cwd));
 
   const opencode = agentCommand({ ...common, agent: 'opencode' });
   assert.deepEqual(opencode.args.slice(0, 4), [
@@ -235,6 +243,29 @@ test('builds non-interactive commands for each coding agent', () => {
     opencode.env.OPENCODE_CONFIG_CONTENT,
     '{"permission":{"*":"deny"},"agent":{"build":{"permission":{"*":"deny"}}}}',
   );
+});
+
+test('keeps copied Cursor auth outside the readable workspace', () => {
+  const home = '/tmp/diffsplain-agent/cursor-control/home';
+  const workspace = '/tmp/diffsplain-agent/cursor-workspace';
+  const linux = cursorAuthPaths(home, {
+    env: { HOME: '/home/reviewer' },
+    platform: 'linux',
+  });
+  assert.equal(linux.source, '/home/reviewer/.config/cursor/auth.json');
+  assert.equal(linux.destination, `${home}/.config/cursor/auth.json`);
+  assert.ok(!linux.destination.startsWith(workspace));
+
+  const windows = cursorAuthPaths(home, {
+    env: { APPDATA: 'C:\\Users\\reviewer\\AppData\\Roaming' },
+    platform: 'win32',
+  });
+  assert.match(windows.source, /Cursor[/\\]auth\.json$/);
+  assert.equal(
+    windows.destination,
+    `${home}/AppData/Roaming/Cursor/auth.json`,
+  );
+  assert.ok(!windows.destination.startsWith(workspace));
 });
 
 test('passes only runtime variables to product summary agents', () => {
@@ -274,6 +305,24 @@ test('reads structured output from each coding agent', () => {
     ),
     /unexpected tool call/,
   );
+  const deniedStream = parseCursorStreamResponse(
+    `${JSON.stringify({
+      type: 'tool_call',
+      subtype: 'completed',
+      tool_call: {
+        shellToolCall: {
+          result: { permissionDenied: { error: 'denied' } },
+        },
+      },
+    })}\n${JSON.stringify({
+      type: 'result',
+      subtype: 'success',
+      is_error: false,
+      result: JSON.stringify(response),
+    })}\n`,
+  );
+  assert.deepEqual(deniedStream.response, response);
+  assert.equal(deniedStream.events.length, 2);
   assert.deepEqual(
     parseAgentResponse(
       'claude',

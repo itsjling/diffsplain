@@ -15,12 +15,14 @@ non-interactive Ask mode in a disposable workspace. A read-only sandbox turns
 off temporary writes and denies shell network access by default. Fixed rules
 deny shell, write, WebFetch, WebSearch, and MCP actions. The workspace contains
 none of the target repo's Cursor rules, root agent files, skills, hooks,
-plugins, or MCP settings. Diffsplain does not pass force, yolo, automatic
-review, automatic MCP approval, or workspace trust flags. Cursor still
-contacts its own service. An old CLI, a missing control, a trust prompt, a tool
-event, or a failed canary stops Cursor before notes start. Once Diffsplain
-chooses an agent, a failed check or run ends the command; it does not switch to
-another agent.
+plugins, or MCP settings. Login data and private Cursor state stay outside the
+readable workspace. The canary asks Cursor to try each blocked read, write,
+shell, network, search, and MCP action, then checks each permission denial and
+host side effect. Diffsplain does not pass force, yolo, automatic review,
+automatic MCP approval, or workspace trust flags. Cursor still contacts its
+own service. An old CLI, a missing control, a trust prompt, or a failed canary
+stops Cursor before notes start. Once Diffsplain chooses an agent, a failed
+check or run ends the command; it does not switch to another agent.
 
 Use a plain diff when you do not want notes:
 
