@@ -87,7 +87,7 @@ test('reports a compatible Cursor install', async () => {
       git: {},
       'cursor-agent': {
         version: '2026.08.11-e8db854',
-        help: '--mode <mode> "ask" --sandbox <mode> "enabled" --workspace <path-or-name> --output-format <format> --model <model>',
+        help: '--mode <mode> "ask" --sandbox <mode> "enabled" --workspace <path-or-name> --output-format <format> --model <model> --trust',
       },
     },
     async (directory) => {

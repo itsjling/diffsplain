@@ -167,10 +167,10 @@ corepack pnpm run cloud:check
 Those tests use fake coding providers and a fake browser command. Real Codex,
 Claude, Copilot, Cursor, OpenCode, GitHub, or browser login is optional and is
 needed only for a live integration task. Diffsplain tries Codex, Claude,
-Copilot, Cursor, then OpenCode for notes. Cursor Agent 2026.08.11 or newer must
-pass a hostile boundary check in its isolated review workspace. It still
-contacts the Cursor service. Keep credentials in Codex environment settings,
-not checked-in rules or scripts.
+Copilot, Cursor, then OpenCode for notes. Cursor Agent 2026.08.11 or newer uses
+the signed-in Cursor CLI in the user's home. It still contacts the Cursor
+service. Keep credentials in Codex environment settings, not checked-in rules
+or scripts.
 
 To test the linked-worktree path itself, run:
 

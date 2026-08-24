@@ -191,7 +191,6 @@ if (agentEnabled) {
       (agent) =>
         codingAgentAvailability(agent, {
           binary: codingAgentBinary(agent, { codexBin: cli.codexBin }),
-          skipSafetyChecks: cli.skipSafetyChecks,
         }),
     );
     assertReasoningSupported(selectedAgent, cli.reasoning);

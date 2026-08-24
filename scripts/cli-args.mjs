@@ -40,7 +40,6 @@ export const cliOptions = defineCliOptions({
   '--agent': { kind: 'agent' },
   '--no-agent': { kind: 'no-agent' },
   '--force': { kind: 'flag' },
-  '--skip-safety-checks': { kind: 'flag' },
   '--worktree': { kind: 'flag' },
   '--no-browser': { kind: 'flag' },
   '--support-record': { kind: 'flag' },
@@ -94,8 +93,6 @@ Options:
   --batch-size COUNT  Maximum files per agent pass (default: ${batchSizeOption.default})
   --jobs COUNT        Agent passes to run at once (default: ${jobsOption.default})
   --force             Regenerate all agent notes
-  --skip-safety-checks
-                      Use Cursor without compatibility or boundary checks
   --support-record    Print a safe record if agent notes fail
   --support-record-file FILE
                       Write a safe record if agent notes fail
@@ -114,8 +111,8 @@ Automatic agent selection:
   codex, claude, copilot, cursor, opencode
 
 Cursor:
-  Requires Cursor Agent 2026.08.11 or newer and a passing boundary canary.
-  Cursor contacts its service, but its review tools cannot access the host.
+  Requires Cursor Agent 2026.08.11 or newer. Uses the signed-in CLI in the
+  user's home. Cursor still contacts its service.
 
 Examples:
   diffsplain
@@ -274,9 +271,6 @@ export function parseCliArgs(
   if (noAgent && options.has('--summaries')) {
     fail('--no-agent cannot be used with --summaries');
   }
-  if (options.has('--skip-safety-checks') && agent !== 'cursor') {
-    fail('--skip-safety-checks requires --agent cursor');
-  }
   if (
     noAgent &&
     (options.has('--support-record') ||
@@ -374,9 +368,6 @@ export function parseCliArgs(
   }
   const agentArgs = [...commonArgs];
   if (options.has('--force')) agentArgs.push('--force');
-  if (options.has('--skip-safety-checks')) {
-    agentArgs.push('--skip-safety-checks');
-  }
   for (const name of [
     '--codex-bin',
     '--model',
@@ -481,6 +472,5 @@ export function parseCliArgs(
     host,
     browserEnabled: !options.has('--no-browser'),
     forceSummaryRegeneration: options.has('--force'),
-    skipSafetyChecks: options.has('--skip-safety-checks'),
   };
 }
