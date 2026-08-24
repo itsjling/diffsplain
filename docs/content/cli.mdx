@@ -30,9 +30,10 @@ npx diffsplain owner/repo --pr 198
 npx diffsplain --repo https://github.com/owner/repo --pr 198
 ```
 
-`owner/repo` is fetched over HTTPS. Diffsplain uses the signed-in GitHub CLI
-for that fetch; `gh auth login` is enough. You do not need a separate Git
-HTTPS password.
+`owner/repo` is fetched over HTTPS. Diffsplain adds the signed-in GitHub CLI
+as a Git credential helper for `https://github.com` remotes only; existing
+helpers stay in place. `gh auth login` is enough. You do not need a separate
+Git HTTPS password.
 
 A full pull request URL carries the repo:
 

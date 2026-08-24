@@ -191,7 +191,12 @@ test('builds non-interactive commands for each coding agent', () => {
   const cursor = agentCommand({
     ...common,
     agent: 'cursor',
-    env: { HOME: '/Users/reviewer', PATH: '/usr/bin' },
+    env: {
+      HOME: '/Users/reviewer',
+      PATH: '/usr/bin',
+      XDG_CONFIG_HOME: '/custom/config',
+      APPDATA: '/custom/appdata',
+    },
   });
   assert.ok(cursor.args.includes('--print'));
   assert.deepEqual(
@@ -222,6 +227,8 @@ test('builds non-interactive commands for each coding agent', () => {
   assert.match(cursor.args.at(-1), /Read the snapshot JSON from input\.json/);
   assert.equal(cursor.env.HOME, '/Users/reviewer');
   assert.equal(cursor.env.PATH, '/usr/bin');
+  assert.equal(cursor.env.XDG_CONFIG_HOME, '/custom/config');
+  assert.equal(cursor.env.APPDATA, '/custom/appdata');
   assert.equal(cursor.env.CURSOR_CONFIG_DIR, undefined);
   assert.equal(cursor.env.AGENT_CLI_CREDENTIAL_STORE, undefined);
 

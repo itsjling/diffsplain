@@ -581,6 +581,10 @@ function cursorCommand({
     cwd: summaryDirectory,
     env: {
       ...summaryEnv,
+      ...(sourceEnv.XDG_CONFIG_HOME
+        ? { XDG_CONFIG_HOME: sourceEnv.XDG_CONFIG_HOME }
+        : {}),
+      ...(sourceEnv.APPDATA ? { APPDATA: sourceEnv.APPDATA } : {}),
       ...(sourceEnv.CURSOR_API_KEY
         ? { CURSOR_API_KEY: sourceEnv.CURSOR_API_KEY }
         : {}),

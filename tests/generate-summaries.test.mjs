@@ -895,6 +895,7 @@ if (args[0] === "--version") {
     args,
     cwd: process.cwd(),
     home: process.env.HOME,
+    configHome: process.env.XDG_CONFIG_HOME,
     config: process.env.CURSOR_CONFIG_DIR,
     credentialStore: process.env.AGENT_CLI_CREDENTIAL_STORE,
     probes: input.boundaryProbes,
@@ -936,7 +937,12 @@ if (args[0] === "--version") {
       "--output",
       output,
     ], {
-      env: { ...process.env, HOME: userHome, CURSOR_BIN: cursor },
+      env: {
+        ...process.env,
+        HOME: userHome,
+        XDG_CONFIG_HOME: join(userHome, "config"),
+        CURSOR_BIN: cursor,
+      },
     });
 
     assert.equal(result.status, 0, result.stderr);
@@ -944,6 +950,7 @@ if (args[0] === "--version") {
     assert.equal(recorded.length, 2);
     for (const call of recorded) {
       assert.equal(call.home, userHome);
+      assert.equal(call.configHome, join(userHome, "config"));
       assert.equal(call.config, undefined);
       assert.equal(call.credentialStore, undefined);
       assert.equal(call.probes, undefined);

@@ -154,7 +154,7 @@ function githubHttpsRemote(url) {
   try {
     const parsed = new URL(url);
     return (
-      (parsed.protocol === 'https:' || parsed.protocol === 'http:') &&
+      parsed.protocol === 'https:' &&
       (parsed.hostname === 'github.com' || parsed.hostname === 'www.github.com')
     );
   } catch {
@@ -169,12 +169,7 @@ function runGit(gitArgs, { gitDir, remoteUrl } = {}) {
     [
       ...(gitDir ? ['--git-dir', gitDir] : ['-C', repo]),
       ...(githubHttps
-        ? [
-            '-c',
-            'credential.helper=',
-            '-c',
-            'credential.helper=!gh auth git-credential',
-          ]
+        ? ['-c', 'credential.helper=!gh auth git-credential']
         : []),
       ...gitArgs,
     ],
