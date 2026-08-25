@@ -894,6 +894,36 @@ test("distinguishes a missing checkout pull request from an auth failure", async
     assert.match(missing.stderr, /github\.com\/owner\/repo\/pull\/7/);
     assert.doesNotMatch(missing.stderr, /gh auth status/);
 
+    git(
+      fixture.repo,
+      "remote",
+      "set-url",
+      "origin",
+      "https://github.example.com/example/diffsplain.git",
+    );
+    const missingUrl = spawnSync(
+      process.execPath,
+      [
+        script,
+        "--repo",
+        fixture.repo,
+        "--pr",
+        "https://github.example.com/example/diffsplain/pull/7",
+        "--output",
+        output,
+      ],
+      {
+        encoding: "utf8",
+        env: { ...process.env, PATH: `${bin}:${process.env.PATH}` },
+      },
+    );
+
+    assert.notEqual(missingUrl.status, 0);
+    assert.match(
+      missingUrl.stderr,
+      /Pull request 7 was not found in github\.example\.com\/example\/diffsplain\. Pass github\.example\.com\/owner\/repo before --pr 7, or pass https:\/\/github\.example\.com\/owner\/repo\/pull\/7\./,
+    );
+
     await writeFile(
       gh,
       "#!/bin/sh\necho 'HTTP 401: Bad credentials (https://api.github.com/graphql)' >&2\nexit 1\n",

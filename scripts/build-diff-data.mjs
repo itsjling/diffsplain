@@ -613,8 +613,17 @@ function pullRequestInfo(pr, remote) {
       repository &&
       /Could not resolve to a PullRequest with the number of/i.test(detail)
     ) {
+      const prNumber = String(pr).replace(
+        /^.*\/pull\/(\d+)(?:\/.*)?$/,
+        "$1",
+      );
+      const repositoryShape = repository.selector.replace(
+        repository.name,
+        "owner/repo",
+      );
+      const pullRequestUrl = `${repository.webUrl.replace(repository.name, "owner/repo")}/pull/${prNumber}`;
       throw new Error(
-        `Pull request ${pr} was not found in ${repository.name}. Pass owner/repo before --pr ${pr}, or pass https://github.com/owner/repo/pull/${pr}.`,
+        `Pull request ${prNumber} was not found in ${repository.selector}. Pass ${repositoryShape} before --pr ${prNumber}, or pass ${pullRequestUrl}.`,
       );
     }
     const authHint =
