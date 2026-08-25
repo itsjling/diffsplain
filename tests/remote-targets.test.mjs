@@ -857,6 +857,63 @@ test("stops remote and pull-request lookups without replacing complete data", as
   }
 });
 
+test("distinguishes a missing checkout pull request from an auth failure", async () => {
+  const fixture = await makeRemoteRepo();
+  const bin = join(fixture.root, "bin");
+  const gh = join(bin, "gh");
+  const output = join(fixture.root, "pr.json");
+
+  try {
+    git(
+      fixture.repo,
+      "remote",
+      "set-url",
+      "origin",
+      "https://github.com/example/diffsplain.git",
+    );
+    await mkdir(bin);
+    await writeFile(
+      gh,
+      "#!/bin/sh\necho 'GraphQL: Could not resolve to a PullRequest with the number of 7. (repository.pullRequest)' >&2\nexit 1\n",
+    );
+    await chmod(gh, 0o755);
+
+    const missing = spawnSync(
+      process.execPath,
+      [script, "--repo", fixture.repo, "--pr", "7", "--output", output],
+      {
+        encoding: "utf8",
+        env: { ...process.env, PATH: `${bin}:${process.env.PATH}` },
+      },
+    );
+
+    assert.notEqual(missing.status, 0);
+    assert.match(missing.stderr, /pull request 7/i);
+    assert.match(missing.stderr, /example\/diffsplain/);
+    assert.match(missing.stderr, /owner\/repo/);
+    assert.match(missing.stderr, /github\.com\/owner\/repo\/pull\/7/);
+    assert.doesNotMatch(missing.stderr, /gh auth status/);
+
+    await writeFile(
+      gh,
+      "#!/bin/sh\necho 'HTTP 401: Bad credentials (https://api.github.com/graphql)' >&2\nexit 1\n",
+    );
+    const auth = spawnSync(
+      process.execPath,
+      [script, "--repo", fixture.repo, "--pr", "7", "--output", output],
+      {
+        encoding: "utf8",
+        env: { ...process.env, PATH: `${bin}:${process.env.PATH}` },
+      },
+    );
+
+    assert.notEqual(auth.status, 0);
+    assert.match(auth.stderr, /gh auth status/);
+  } finally {
+    await rm(fixture.root, { recursive: true, force: true });
+  }
+});
+
 test("watches local changes without changing the selected target", async () => {
   const fixture = await makeRemoteRepo();
   const localOutput = join(fixture.root, "local-watch.json");
