@@ -143,9 +143,40 @@ const excludedPaths = new Set(
 function command(commandName, commandArgs, options = {}) {
   return execFileSync(commandName, commandArgs, {
     cwd: options.cwd,
+    env: options.env,
     encoding: 'utf8',
     stdio: ['ignore', 'pipe', 'pipe'],
   });
+}
+
+function githubHttpsRemote(url) {
+  if (typeof url !== 'string' || !url) return false;
+  try {
+    const parsed = new URL(url);
+    return (
+      parsed.protocol === 'https:' &&
+      (parsed.hostname === 'github.com' || parsed.hostname === 'www.github.com')
+    );
+  } catch {
+    return false;
+  }
+}
+
+function runGit(gitArgs, { gitDir, remoteUrl } = {}) {
+  const githubHttps = githubHttpsRemote(remoteUrl);
+  return command(
+    'git',
+    [
+      ...(gitDir ? ['--git-dir', gitDir] : ['-C', repo]),
+      ...(githubHttps
+        ? ['-c', 'credential.helper=!gh auth git-credential']
+        : []),
+      ...gitArgs,
+    ],
+    githubHttps
+      ? { env: { ...process.env, GIT_TERMINAL_PROMPT: '0' } }
+      : {},
+  );
 }
 
 const runRepo = (gitArgs) => command('git', ['-C', repo, ...gitArgs]);
@@ -383,16 +414,19 @@ function bareCache(remoteUrl) {
 
 function fetchInto(cache, remoteUrl, refspecs) {
   try {
-    cache.run([
-      'fetch',
-      '--quiet',
-      '--no-tags',
-      '--no-write-fetch-head',
-      '--no-auto-maintenance',
-      '--force',
-      remoteUrl,
-      ...refspecs,
-    ]);
+    runGit(
+      [
+        'fetch',
+        '--quiet',
+        '--no-tags',
+        '--no-write-fetch-head',
+        '--no-auto-maintenance',
+        '--force',
+        remoteUrl,
+        ...refspecs,
+      ],
+      { gitDir: cache.path, remoteUrl },
+    );
   } catch (error) {
     const detail = error?.stderr?.toString().trim();
     throw new Error(
@@ -422,7 +456,7 @@ function uniqueMergeBase(runGit, base, head) {
 function remoteDefaultBranchInfo(remoteUrl) {
   let raw;
   try {
-    raw = runRepo(['ls-remote', '--symref', remoteUrl, 'HEAD']);
+    raw = runGit(['ls-remote', '--symref', remoteUrl, 'HEAD'], { remoteUrl });
   } catch {
     throw new Error('Could not read the remote default branch');
   }
@@ -441,7 +475,7 @@ function remoteDefaultBranch(remoteUrl) {
 function remoteContainsCommits(remoteUrl, commits) {
   let raw;
   try {
-    raw = runRepo(['ls-remote', remoteUrl]);
+    raw = runGit(['ls-remote', remoteUrl], { remoteUrl });
   } catch {
     return false;
   }

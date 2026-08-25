@@ -9,7 +9,6 @@ import {
   codingAgentAvailability,
   codingAgentCapabilities,
   codingAgentBinary,
-  cursorAuthPaths,
   findCommand,
   inspectCursorCompatibility,
   parseAgentResponse,
@@ -107,7 +106,7 @@ test('suggests every supported agent for an unknown name', async () => {
   );
 });
 
-test('gates Cursor on its version and boundary flags', async () => {
+test('gates Cursor on its version and required flags', async () => {
   const directory = await mkdtemp(join(tmpdir(), 'diffsplain-cursor-'));
   const cursor = join(directory, 'cursor-agent');
   try {
@@ -115,7 +114,7 @@ test('gates Cursor on its version and boundary flags', async () => {
       cursor,
       `#!/bin/sh
 if [ "$1" = "--version" ]; then echo 2026.08.11-e8db854; exit 0; fi
-if [ "$1" = "--help" ]; then echo '--mode <mode> "ask" --sandbox <mode> "enabled" --workspace <path-or-name> --output-format <format> --model <model>'; exit 0; fi
+if [ "$1" = "--help" ]; then echo '--mode <mode> "ask" --sandbox <mode> "enabled" --workspace <path-or-name> --output-format <format> --model <model> --trust'; exit 0; fi
 exit 1
 `,
     );
@@ -135,11 +134,8 @@ exit 1
     assert.equal(old.compatible, false);
     assert.match(old.reason, /2026\.08\.11 or newer/);
     assert.equal(
-      (await codingAgentAvailability('cursor', {
-        binary: cursor,
-        skipSafetyChecks: true,
-      })).available,
-      true,
+      (await codingAgentAvailability('cursor', { binary: cursor })).available,
+      false,
     );
     await assert.rejects(
       selectCodingAgent('cursor', async () => ({
@@ -192,7 +188,16 @@ test('builds non-interactive commands for each coding agent', () => {
   assert.match(copilot.args.at(-1), /@\/tmp\/input\.json/);
   assert.equal(copilot.cwd, '/tmp');
 
-  const cursor = agentCommand({ ...common, agent: 'cursor' });
+  const cursor = agentCommand({
+    ...common,
+    agent: 'cursor',
+    env: {
+      HOME: '/Users/reviewer',
+      PATH: '/usr/bin',
+      XDG_CONFIG_HOME: '/custom/config',
+      APPDATA: '/custom/appdata',
+    },
+  });
   assert.ok(cursor.args.includes('--print'));
   assert.deepEqual(
     cursor.args.slice(cursor.args.indexOf('--mode'), cursor.args.indexOf('--mode') + 2),
@@ -206,19 +211,26 @@ test('builds non-interactive commands for each coding agent', () => {
     cursor.args.slice(cursor.args.indexOf('--output-format'), cursor.args.indexOf('--output-format') + 2),
     ['--output-format', 'stream-json'],
   );
+  assert.deepEqual(
+    cursor.args.slice(
+      cursor.args.indexOf('--workspace'),
+      cursor.args.indexOf('--workspace') + 2,
+    ),
+    ['--workspace', '/tmp'],
+  );
+  assert.ok(cursor.args.includes('--trust'));
   for (const unsafe of ['--force', '--yolo', '--approve-mcps', '--auto-review']) {
     assert.ok(!cursor.args.includes(unsafe));
   }
   assert.equal(cursor.cwd, '/tmp');
   assert.equal(cursor.input, 'stdin');
-  assert.equal(cursor.env.HOME, '/cursor-control/home');
-  assert.equal(cursor.env.USERPROFILE, '/cursor-control/home');
-  assert.equal(cursor.env.APPDATA, '/cursor-control/home/AppData/Roaming');
-  assert.equal(cursor.env.CURSOR_CONFIG_DIR, '/cursor-control/config');
-  assert.equal(cursor.env.TEMP, '/cursor-control/tmp');
-  assert.equal(cursor.env.TMP, '/cursor-control/tmp');
-  assert.equal(cursor.env.TMPDIR, '/cursor-control/tmp');
-  assert.ok(!cursor.env.HOME.startsWith(cursor.cwd));
+  assert.match(cursor.args.at(-1), /Read the snapshot JSON from input\.json/);
+  assert.equal(cursor.env.HOME, '/Users/reviewer');
+  assert.equal(cursor.env.PATH, '/usr/bin');
+  assert.equal(cursor.env.XDG_CONFIG_HOME, '/custom/config');
+  assert.equal(cursor.env.APPDATA, '/custom/appdata');
+  assert.equal(cursor.env.CURSOR_CONFIG_DIR, undefined);
+  assert.equal(cursor.env.AGENT_CLI_CREDENTIAL_STORE, undefined);
 
   const opencode = agentCommand({ ...common, agent: 'opencode' });
   assert.deepEqual(opencode.args.slice(0, 4), [
@@ -252,29 +264,6 @@ test('builds non-interactive commands for each coding agent', () => {
   );
 });
 
-test('keeps copied Cursor auth outside the readable workspace', () => {
-  const home = '/tmp/diffsplain-agent/cursor-control/home';
-  const workspace = '/tmp/diffsplain-agent/cursor-workspace';
-  const linux = cursorAuthPaths(home, {
-    env: { HOME: '/home/reviewer' },
-    platform: 'linux',
-  });
-  assert.equal(linux.source, '/home/reviewer/.config/cursor/auth.json');
-  assert.equal(linux.destination, `${home}/.config/cursor/auth.json`);
-  assert.ok(!linux.destination.startsWith(workspace));
-
-  const windows = cursorAuthPaths(home, {
-    env: { APPDATA: 'C:\\Users\\reviewer\\AppData\\Roaming' },
-    platform: 'win32',
-  });
-  assert.match(windows.source, /Cursor[/\\]auth\.json$/);
-  assert.equal(
-    windows.destination,
-    `${home}/AppData/Roaming/Cursor/auth.json`,
-  );
-  assert.ok(!windows.destination.startsWith(workspace));
-});
-
 test('passes only runtime variables to product summary agents', () => {
   assert.deepEqual(
     summaryAgentEnvironment({
@@ -305,12 +294,12 @@ test('reads structured output from each coding agent', () => {
     parseAgentResponse('codex', JSON.stringify(response)),
     response,
   );
-  assert.throws(
-    () => parseAgentResponse(
+  assert.deepEqual(
+    parseAgentResponse(
       'cursor',
       `${JSON.stringify({ type: 'tool_call', subtype: 'started' })}\n${JSON.stringify({ type: 'result', subtype: 'success', is_error: false, result: JSON.stringify(response) })}\n`,
     ),
-    /unexpected tool call/,
+    response,
   );
   const deniedStream = parseCursorStreamResponse(
     `${JSON.stringify({
@@ -330,6 +319,38 @@ test('reads structured output from each coding agent', () => {
   );
   assert.deepEqual(deniedStream.response, response);
   assert.equal(deniedStream.events.length, 2);
+  assert.deepEqual(
+    parseCursorStreamResponse(
+      `${JSON.stringify({ type: 'system', subtype: 'init' })}\n${JSON.stringify({
+        type: 'result',
+        subtype: 'success',
+        is_error: false,
+        result: `I'll attempt each listed probe once.${JSON.stringify(response)}`,
+      })}\n`,
+    ).response,
+    response,
+  );
+  assert.deepEqual(
+    parseAgentResponse(
+      'cursor',
+      `${JSON.stringify({
+        type: 'tool_call',
+        subtype: 'completed',
+        tool_call: {
+          readToolCall: {
+            args: { path: '/tmp/input.json' },
+            result: { success: { content: '{}' } },
+          },
+        },
+      })}\n${JSON.stringify({
+        type: 'result',
+        subtype: 'success',
+        is_error: false,
+        result: JSON.stringify(response),
+      })}\n`,
+    ),
+    response,
+  );
   assert.deepEqual(
     parseAgentResponse(
       'claude',

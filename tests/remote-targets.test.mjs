@@ -543,6 +543,195 @@ test("keeps links out of worktree entries and leaves the checkout untouched", as
   }
 });
 
+test("uses gh credentials for GitHub HTTPS owner/name remotes", async () => {
+  const fixture = await makeRemoteRepo();
+  const bin = join(fixture.root, "bin");
+  const recorded = join(fixture.root, "git-args.jsonl");
+  const output = join(fixture.root, "pr.json");
+  const cache = join(fixture.root, "cache");
+  const remoteUrl = "https://github.com/example/project.git";
+  const fileRemote = `file://${fixture.remote}`;
+
+  try {
+    await mkdir(bin);
+    await writeFile(
+      join(bin, "gh"),
+      `#!/bin/sh\nprintf '%s\\n' '${JSON.stringify({
+        number: 35,
+        title: "Remote feature",
+        url: "https://github.com/example/project/pull/35",
+        state: "OPEN",
+        updatedAt: "2026-01-01T00:00:00Z",
+        isCrossRepository: false,
+        baseRefName: "main",
+        baseRefOid: fixture.mainOid,
+        headRefName: "feature",
+        headRefOid: fixture.featureOid,
+      })}'\n`,
+    );
+    await chmod(join(bin, "gh"), 0o755);
+    await writeFile(
+      join(bin, "git"),
+      `#!/usr/bin/env node
+const { appendFileSync } = require("node:fs");
+const { spawnSync } = require("node:child_process");
+const args = process.argv.slice(2);
+appendFileSync(${JSON.stringify(recorded)}, JSON.stringify({
+  args,
+  prompt: process.env.GIT_TERMINAL_PROMPT,
+}) + "\\n");
+const rewritten = args.map((arg) =>
+  arg === ${JSON.stringify(remoteUrl)} ? ${JSON.stringify(fileRemote)} : arg
+);
+const result = spawnSync("git", rewritten, {
+  env: { ...process.env, PATH: process.env.DIFFSPLAIN_REAL_PATH },
+  stdio: "inherit",
+});
+process.exit(result.status ?? 1);
+`,
+    );
+    await chmod(join(bin, "git"), 0o755);
+    execFileSync("git", [
+      "--git-dir",
+      fixture.remote,
+      "update-ref",
+      "refs/pull/35/head",
+      fixture.featureOid,
+    ]);
+
+    run(
+      fixture.repo,
+      [
+        "--pr",
+        "35",
+        "--remote",
+        remoteUrl,
+        "--cache-dir",
+        cache,
+        "--output",
+        output,
+      ],
+      {
+        env: {
+          ...process.env,
+          DIFFSPLAIN_REAL_PATH: process.env.PATH,
+          PATH: `${bin}:${process.env.PATH}`,
+        },
+      },
+    );
+
+    const calls = (await readFile(recorded, "utf8"))
+      .trim()
+      .split("\n")
+      .map((line) => JSON.parse(line));
+    const fetch = calls.find((call) => call.args.includes("fetch"));
+    assert.ok(fetch, "expected a git fetch of the GitHub HTTPS remote");
+    assert.ok(fetch.args.includes(remoteUrl));
+    assert.deepEqual(
+      fetch.args.slice(
+        fetch.args.indexOf("-c"),
+        fetch.args.indexOf("-c") + 2,
+      ),
+      ["-c", "credential.helper=!gh auth git-credential"],
+    );
+    assert.ok(!fetch.args.includes("credential.helper="));
+    assert.equal(fetch.prompt, "0");
+    const payload = JSON.parse(await readFile(output, "utf8"));
+    assert.equal(payload.change.number, 35);
+    assert.deepEqual(payload.files.map((file) => file.path), ["feature.txt"]);
+  } finally {
+    await rm(fixture.root, { recursive: true, force: true });
+  }
+});
+
+test("does not send gh credentials over GitHub HTTP remotes", async () => {
+  const fixture = await makeRemoteRepo();
+  const bin = join(fixture.root, "bin");
+  const recorded = join(fixture.root, "git-args.jsonl");
+  const output = join(fixture.root, "pr.json");
+  const cache = join(fixture.root, "cache");
+  const remoteUrl = "http://github.com/example/project.git";
+  const fileRemote = `file://${fixture.remote}`;
+
+  try {
+    await mkdir(bin);
+    await writeFile(
+      join(bin, "gh"),
+      `#!/bin/sh\nprintf '%s\\n' '${JSON.stringify({
+        number: 35,
+        title: "Remote feature",
+        url: "https://github.com/example/project/pull/35",
+        state: "OPEN",
+        updatedAt: "2026-01-01T00:00:00Z",
+        isCrossRepository: false,
+        baseRefName: "main",
+        baseRefOid: fixture.mainOid,
+        headRefName: "feature",
+        headRefOid: fixture.featureOid,
+      })}'\n`,
+    );
+    await chmod(join(bin, "gh"), 0o755);
+    await writeFile(
+      join(bin, "git"),
+      `#!/usr/bin/env node
+const { appendFileSync } = require("node:fs");
+const { spawnSync } = require("node:child_process");
+const args = process.argv.slice(2);
+appendFileSync(${JSON.stringify(recorded)}, JSON.stringify({ args }) + "\\n");
+const rewritten = args.map((arg) =>
+  arg === ${JSON.stringify(remoteUrl)} ? ${JSON.stringify(fileRemote)} : arg
+);
+const result = spawnSync("git", rewritten, {
+  env: { ...process.env, PATH: process.env.DIFFSPLAIN_REAL_PATH },
+  stdio: "inherit",
+});
+process.exit(result.status ?? 1);
+`,
+    );
+    await chmod(join(bin, "git"), 0o755);
+    execFileSync("git", [
+      "--git-dir",
+      fixture.remote,
+      "update-ref",
+      "refs/pull/35/head",
+      fixture.featureOid,
+    ]);
+
+    run(
+      fixture.repo,
+      [
+        "--pr",
+        "35",
+        "--remote",
+        remoteUrl,
+        "--cache-dir",
+        cache,
+        "--output",
+        output,
+      ],
+      {
+        env: {
+          ...process.env,
+          DIFFSPLAIN_REAL_PATH: process.env.PATH,
+          PATH: `${bin}:${process.env.PATH}`,
+        },
+      },
+    );
+
+    const calls = (await readFile(recorded, "utf8"))
+      .trim()
+      .split("\n")
+      .map((line) => JSON.parse(line));
+    const fetch = calls.find((call) => call.args.includes("fetch"));
+    assert.ok(fetch, "expected a git fetch of the GitHub HTTP remote");
+    assert.ok(fetch.args.includes(remoteUrl));
+    assert.ok(!fetch.args.includes("credential.helper=!gh auth git-credential"));
+    assert.ok(!fetch.args.includes("credential.helper="));
+  } finally {
+    await rm(fixture.root, { recursive: true, force: true });
+  }
+});
+
 test("builds a pull request range through gh without changing the checkout", async () => {
   const fixture = await makeRemoteRepo();
   const bin = join(fixture.root, "bin");

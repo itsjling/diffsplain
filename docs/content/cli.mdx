@@ -30,6 +30,11 @@ npx diffsplain owner/repo --pr 198
 npx diffsplain --repo https://github.com/owner/repo --pr 198
 ```
 
+`owner/repo` is fetched over HTTPS. Diffsplain adds the signed-in GitHub CLI
+as a Git credential helper for `https://github.com` remotes only; existing
+helpers stay in place. `gh auth login` is enough. You do not need a separate
+Git HTTPS password.
+
 A full pull request URL carries the repo:
 
 ```sh
@@ -152,7 +157,6 @@ pnpm run doctor
 | `--batch-size COUNT` | Set the most files per agent pass, from `1` to `50`. Large patches use smaller batches. |
 | `--jobs COUNT` | Set agent passes to run at once, from `1` to `8`. |
 | `--force` | Regenerate all agent notes instead of using cached notes. |
-| `--skip-safety-checks` | Use an explicitly selected Cursor without its compatibility gate or boundary canary. |
 | `--support-record` | Print a safe JSON record if the review fails. |
 | `--support-record-file FILE` | Write one safe JSON record if the review fails. |
 | `--remote NAME\|URL` | Choose the Git remote. The default is `origin`. |
@@ -176,24 +180,18 @@ from the current directory. `CODEX_BIN`, `CLAUDE_BIN`, `COPILOT_BIN`,
 accept `--model`. Only Codex and OpenCode accept `--reasoning`; its levels are
 `minimal`, `low`, `medium`, `high`, and `xhigh`.
 
-`--skip-safety-checks` requires `--agent cursor`. It skips Cursor's version and
-feature check and the hostile boundary canary. Cursor still receives the normal
-sandbox and denied-tool settings, but Diffsplain does not verify that the
-installed Cursor version enforces them.
-
 `--batch-size` defaults to `12` and accepts `1` through `50`. `--jobs` defaults
 to `3` and accepts `1` through `8`. `--port` accepts `0` through `65535`. When
 you omit it, Diffsplain starts at `2299` and increments until it finds a free
 port. When you omit `--agent`, Diffsplain tries Codex, Claude, Copilot, Cursor,
 then OpenCode. It stops with an error if none are usable. Cursor Agent needs
-version 2026.08.11 or newer and must pass its hostile boundary canary. It runs
-in Ask mode in an isolated, read-only, no-tool workspace with shell network
-access denied. Login and private Cursor state stay outside that readable
-workspace. The canary attempts each blocked capability and requires permission
-denials without host side effects. Cursor still contacts its own service.
-`--agent cursor` reports an upgrade or boundary error before note generation
-when any check fails. Once Diffsplain chooses an agent, a failed check or run
-ends the command; Diffsplain does not switch agents.
+version 2026.08.11 or newer. Note batches run in Ask mode with the user's
+Cursor login and home. Diffsplain passes `--trust` and `--workspace` for its
+snapshot directory. Cursor still contacts its own service.
+`--agent cursor` reports an upgrade or flag error before note generation when
+the CLI is too old or missing required flags. Once Diffsplain chooses an
+agent, a failed check or run ends the command; Diffsplain does not switch
+agents.
 
 The two support record options are opt-in and cannot be combined. They include
 the selected agent, so you cannot use them with `--no-agent`. See
