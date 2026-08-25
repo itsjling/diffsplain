@@ -609,8 +609,22 @@ function pullRequestInfo(pr, remote) {
     return { value, repository };
   } catch (error) {
     const detail = error?.stderr?.toString().trim() || error?.message;
+    if (
+      repository &&
+      /Could not resolve to a PullRequest with the number of/i.test(detail)
+    ) {
+      throw new Error(
+        `Pull request ${pr} was not found in ${repository.name}. Pass owner/repo before --pr ${pr}, or pass https://github.com/owner/repo/pull/${pr}.`,
+      );
+    }
+    const authHint =
+      /(?:HTTP 401|Bad credentials|authentication failed|not logged (?:in|into)|gh auth login)/i.test(
+        detail,
+      )
+        ? ' Check gh auth status.'
+        : '';
     throw new Error(
-      `Could not read pull request ${pr} with gh${detail ? `: ${detail}` : ''}. Check gh auth status.`,
+      `Could not read pull request ${pr} with gh${detail ? `: ${detail}` : ''}.${authHint}`,
     );
   }
 }
