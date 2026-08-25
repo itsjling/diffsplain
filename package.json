@@ -1,6 +1,6 @@
 {
   "name": "diffsplain",
-  "version": "0.8.1",
+  "version": "0.8.2",
   "description": "Review Git diffs one file at a time with coding agent notes beside each patch.",
   "keywords": [
     "codex",
