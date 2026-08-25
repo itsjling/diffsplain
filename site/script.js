@@ -280,21 +280,12 @@ if (demo) {
     elements.pickerBackdrop.hidden = false;
     elements.pickerTrigger.setAttribute("aria-expanded", "true");
     elements.pickerSearch.value = "";
-    elements.pickerList.style.paddingBlock = "";
     renderPicker();
     requestAnimationFrame(() => {
       const activeRow = elements.pickerList.querySelector(
         '[aria-current="true"]',
       );
-      if (
-        activeRow &&
-        elements.pickerList.scrollHeight > elements.pickerList.clientHeight
-      ) {
-        const edgeSpace = Math.max(
-          0,
-          (elements.pickerList.clientHeight - activeRow.offsetHeight) / 2,
-        );
-        elements.pickerList.style.paddingBlock = `${edgeSpace}px`;
+      if (activeRow) {
         elements.pickerList.scrollTop =
           activeRow.offsetTop -
           (elements.pickerList.clientHeight - activeRow.offsetHeight) / 2;

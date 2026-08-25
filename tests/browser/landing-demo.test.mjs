@@ -81,6 +81,9 @@ async function assertDemoHasNoAxeViolations(page) {
 }
 
 async function demoPickerPosition(page) {
+  await page.evaluate(
+    () => new Promise((resolve) => requestAnimationFrame(() => resolve())),
+  );
   return page.locator(".demo-picker-list").evaluate((list) => {
     const active = list.querySelector('[aria-current="true"]');
     if (!(active instanceof HTMLElement)) {

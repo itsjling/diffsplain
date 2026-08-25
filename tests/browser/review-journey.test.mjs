@@ -253,6 +253,9 @@ function pickerControls(page) {
 }
 
 async function pickerPosition(page) {
+  await page.evaluate(
+    () => new Promise((resolve) => requestAnimationFrame(() => resolve())),
+  );
   return page.locator(".picker-list").evaluate((list) => {
     const active = list.querySelector(".picker-row--active");
     if (!(active instanceof HTMLElement)) {
@@ -1030,16 +1033,11 @@ test("keeps filtered picker indexes and full-snapshot keyboard navigation aligne
 
       await controls.trigger.click();
       await controls.dialog.waitFor();
-      await page.waitForFunction(() => {
-        const list = document.querySelector(".picker-list");
-        const active = document.querySelector(".picker-row--active");
-        if (!list || !active) return false;
-        const listBounds = list.getBoundingClientRect();
-        const activeBounds = active.getBoundingClientRect();
-        const listCenter = listBounds.top + listBounds.height / 2;
-        const activeCenter = activeBounds.top + activeBounds.height / 2;
-        return Math.abs(listCenter - activeCenter) <= 1;
-      });
+      const position = await pickerPosition(page);
+      assert.ok(
+        position.bottomGap < position.rowHeight,
+        JSON.stringify(position),
+      );
       assert.match(
         await page.locator(".picker-row--active").textContent(),
         /src\/match-file-30\.ts/,
