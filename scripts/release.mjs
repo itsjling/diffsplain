@@ -120,6 +120,38 @@ function publishArgs(version) {
   ];
 }
 
+function requirePublishedVersion(deps, name, expectedVersion) {
+  const publishedVersion = deps.verifyPublished(name, expectedVersion);
+  if (publishedVersion !== expectedVersion) {
+    throw new Error(
+      `npm returned ${publishedVersion || 'no version'} after publishing ${expectedVersion}.`,
+    );
+  }
+}
+
+function errorMessage(error) {
+  return error instanceof Error ? error.message : String(error);
+}
+
+async function verifyPublishedRelease(deps, name, version) {
+  const verificationDelays = [0, 1_000, 2_000, 4_000];
+  let lastError;
+  for (const delay of verificationDelays) {
+    if (delay > 0) await deps.wait(delay);
+    try {
+      requirePublishedVersion(deps, name, version);
+      return;
+    } catch (error) {
+      lastError = error;
+    }
+  }
+
+  throw new Error(
+    `${name}@${version} was published, but post-publish verification failed: ${errorMessage(lastError)}`,
+    { cause: lastError },
+  );
+}
+
 function registryVersionExists(name, version) {
   const result = runNpm(
     ['view', `${name}@${version}`, 'version', '--json', '--registry', registry],
@@ -253,28 +285,8 @@ export async function publishRelease(expectedVersion, overrides = {}) {
   }
 
   deps.publish(publishArgs(pkg.version));
-  const verificationDelays = [1_000, 2_000, 4_000];
-  for (let attempt = 0; attempt <= verificationDelays.length; attempt += 1) {
-    try {
-      const publishedVersion = deps.verifyPublished(pkg.name, pkg.version);
-      if (publishedVersion !== pkg.version) {
-        throw new Error(
-          `npm returned ${publishedVersion || 'no version'} after publishing ${pkg.version}.`,
-        );
-      }
-      return { account, package: pkg.name, version: pkg.version };
-    } catch (error) {
-      const delay = verificationDelays[attempt];
-      if (delay === undefined) {
-        const detail = error instanceof Error ? error.message : String(error);
-        throw new Error(
-          `${pkg.name}@${pkg.version} was published, but post-publish verification failed: ${detail}`,
-          { cause: error },
-        );
-      }
-      await deps.wait(delay);
-    }
-  }
+  await verifyPublishedRelease(deps, pkg.name, pkg.version);
+  return { account, package: pkg.name, version: pkg.version };
 }
 
 function commandArguments(argv) {
@@ -306,7 +318,7 @@ if (resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   try {
     await main(process.argv.slice(2));
   } catch (error) {
-    console.error(error instanceof Error ? error.message : String(error));
+    console.error(errorMessage(error));
     process.exitCode = 2;
   }
 }
