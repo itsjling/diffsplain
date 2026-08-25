@@ -6,6 +6,7 @@ import {
   mkdir,
   mkdtemp,
   readFile,
+  realpath,
   rm,
   symlink,
   utimes,
@@ -736,23 +737,35 @@ test("builds a pull request range through gh without changing the checkout", asy
   const fixture = await makeRemoteRepo();
   const bin = join(fixture.root, "bin");
   const gh = join(bin, "gh");
+  const ghCall = join(fixture.root, "gh-call.json");
   const output = join(fixture.root, "pr.json");
   const cache = join(fixture.root, "cache");
   const before = checkoutState(fixture.repo);
+  const pullRequest = {
+    number: 7,
+    title: "Remote feature",
+    url: "https://github.com/example/project/pull/7",
+    baseRefName: "main",
+    baseRefOid: fixture.mainOid,
+    headRefName: "feature",
+    headRefOid: fixture.featureOid,
+  };
 
   try {
+    const remoteUrl = "https://github.com/example/diffsplain.git";
+    git(fixture.repo, "remote", "set-url", "origin", remoteUrl);
+    git(fixture.repo, "config", `url.file://${fixture.remote}.insteadOf`, remoteUrl);
     await mkdir(bin);
     await writeFile(
       gh,
-      `#!/bin/sh\nprintf '%s\\n' '${JSON.stringify({
-        number: 7,
-        title: "Remote feature",
-        url: "https://github.com/example/project/pull/7",
-        baseRefName: "main",
-        baseRefOid: fixture.mainOid,
-        headRefName: "feature",
-        headRefOid: fixture.featureOid,
-      })}'\n`,
+      `#!/usr/bin/env node
+const { writeFileSync } = require("node:fs");
+writeFileSync(${JSON.stringify(ghCall)}, JSON.stringify({
+  args: process.argv.slice(2),
+  cwd: process.cwd(),
+}));
+process.stdout.write(${JSON.stringify(`${JSON.stringify(pullRequest)}\n`)});
+`,
     );
     await chmod(gh, 0o755);
     execFileSync("git", ["--git-dir", fixture.remote, "update-ref", "refs/pull/7/head", fixture.featureOid]);
@@ -765,7 +778,11 @@ test("builds a pull request range through gh without changing the checkout", asy
       },
     );
     const payload = JSON.parse(await readFile(output, "utf8"));
+    const invocation = JSON.parse(await readFile(ghCall, "utf8"));
 
+    assert.equal(await realpath(invocation.cwd), await realpath(fixture.repo));
+    assert.deepEqual(invocation.args.slice(0, 3), ["pr", "view", "7"]);
+    assert.deepEqual(invocation.args.slice(-2), ["--repo", "example/diffsplain"]);
     assert.deepEqual(payload.files.map((file) => file.path), ["feature.txt"]);
     assert.equal(payload.repo.base, fixture.baseOid);
     assert.equal(payload.repo.head, fixture.featureOid);
