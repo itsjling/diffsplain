@@ -160,7 +160,7 @@ test('stops after bounded post-publish verification attempts', async () => {
       },
       wait: async (milliseconds) => calls.push(['wait', milliseconds]),
     }),
-    /npm registry lookup failed/,
+    /diffsplain@1\.2\.3 was published, but post-publish verification failed: npm registry lookup failed/,
   );
 
   assert.deepEqual(calls, [

@@ -4,6 +4,7 @@ import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { readFile, writeFile } from 'node:fs/promises';
 import { dirname, resolve } from 'node:path';
+import { setTimeout as wait } from 'node:timers/promises';
 import { fileURLToPath } from 'node:url';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
@@ -172,6 +173,7 @@ const defaults = {
     );
     return result.stdout.replace(/^"|"$/g, '');
   },
+  wait,
   writeReceipt: (receipt) =>
     writeFile(
       resolve(root, verificationReceipt),
@@ -251,13 +253,28 @@ export async function publishRelease(expectedVersion, overrides = {}) {
   }
 
   deps.publish(publishArgs(pkg.version));
-  const publishedVersion = deps.verifyPublished(pkg.name, pkg.version);
-  if (publishedVersion !== pkg.version) {
-    throw new Error(
-      `npm returned ${publishedVersion || 'no version'} after publishing ${pkg.version}.`,
-    );
+  const verificationDelays = [1_000, 2_000, 4_000];
+  for (let attempt = 0; attempt <= verificationDelays.length; attempt += 1) {
+    try {
+      const publishedVersion = deps.verifyPublished(pkg.name, pkg.version);
+      if (publishedVersion !== pkg.version) {
+        throw new Error(
+          `npm returned ${publishedVersion || 'no version'} after publishing ${pkg.version}.`,
+        );
+      }
+      return { account, package: pkg.name, version: pkg.version };
+    } catch (error) {
+      const delay = verificationDelays[attempt];
+      if (delay === undefined) {
+        const detail = error instanceof Error ? error.message : String(error);
+        throw new Error(
+          `${pkg.name}@${pkg.version} was published, but post-publish verification failed: ${detail}`,
+          { cause: error },
+        );
+      }
+      await deps.wait(delay);
+    }
   }
-  return { account, package: pkg.name, version: pkg.version };
 }
 
 function commandArguments(argv) {
