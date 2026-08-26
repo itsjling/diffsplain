@@ -505,13 +505,6 @@ export default function Home() {
         const list = pickerListRef.current;
         const activeRow = activePickerRowRef.current;
         if (list && activeRow) {
-          if (list.scrollHeight > list.clientHeight) {
-            const edgeSpace = Math.max(
-              0,
-              (list.clientHeight - activeRow.offsetHeight) / 2,
-            );
-            list.style.paddingBlock = `${edgeSpace}px`;
-          }
           list.scrollTop =
             activeRow.offsetTop -
             (list.clientHeight - activeRow.offsetHeight) / 2;

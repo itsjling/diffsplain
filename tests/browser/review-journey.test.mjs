@@ -252,6 +252,30 @@ function pickerControls(page) {
   };
 }
 
+async function pickerPosition(page) {
+  await page.evaluate(
+    () => new Promise((resolve) => requestAnimationFrame(() => resolve())),
+  );
+  return page.locator(".picker-list").evaluate((list) => {
+    const active = list.querySelector(".picker-row--active");
+    if (!(active instanceof HTMLElement)) {
+      throw new Error("No active picker row");
+    }
+    const listBounds = list.getBoundingClientRect();
+    const activeBounds = active.getBoundingClientRect();
+    return {
+      bottomGap: listBounds.bottom - activeBounds.bottom,
+      centerGap: Math.abs(
+        listBounds.top +
+          listBounds.height / 2 -
+          (activeBounds.top + activeBounds.height / 2),
+      ),
+      rowHeight: activeBounds.height,
+      topGap: activeBounds.top - listBounds.top,
+    };
+  });
+}
+
 async function assertTouchTarget(locator) {
   const box = await locator.boundingBox();
   assert.ok(box);
@@ -908,7 +932,7 @@ test("keeps narrow-screen touch and keyboard navigation usable", async () => {
   );
 });
 
-test("centers the selected file when reopening the picker", async () => {
+test("centers an ordinary selected file when reopening the picker", async () => {
   await runReviewJourney(
     "center selected picker file",
     { viewport: { width: 1280, height: 800 } },
@@ -920,23 +944,62 @@ test("centers the selected file when reopening the picker", async () => {
       const controls = pickerControls(page);
       await controls.trigger.click();
       const selectedRow = page.getByRole("button", {
-        name: /src\/file-30\.ts/i,
+        name: /src\/file-16\.ts/i,
       });
       await selectedRow.click();
+      await page.getByRole("heading", { name: "Explain file 16" }).waitFor();
+
+      await controls.trigger.click();
+      await controls.dialog.waitFor();
+      assert.ok((await pickerPosition(page)).centerGap <= 1);
+    },
+  );
+});
+
+test("keeps the first selected file at the picker start", async () => {
+  await runReviewJourney(
+    "first selected picker file",
+    { viewport: { width: 1280, height: 800 } },
+    async (page) => {
+      await writeSnapshot(longFileListFixture());
+      await page.goto(serverUrl);
+      await page.getByRole("heading", { name: "Explain file 1" }).waitFor();
+
+      const controls = pickerControls(page);
+      await controls.trigger.click();
+      await controls.dialog.waitFor();
+      const position = await pickerPosition(page);
+      assert.ok(
+        position.topGap < position.rowHeight,
+        JSON.stringify(position),
+      );
+    },
+  );
+});
+
+test("keeps the last selected file at the picker end", async () => {
+  await runReviewJourney(
+    "last selected picker file",
+    { viewport: { width: 1280, height: 800 } },
+    async (page) => {
+      await writeSnapshot(longFileListFixture());
+      await page.goto(serverUrl);
+      await page.getByRole("heading", { name: "Explain file 1" }).waitFor();
+
+      const controls = pickerControls(page);
+      await controls.trigger.click();
+      await page
+        .getByRole("button", { name: /src\/file-30\.ts/i })
+        .click();
       await page.getByRole("heading", { name: "Explain file 30" }).waitFor();
 
       await controls.trigger.click();
       await controls.dialog.waitFor();
-      await page.waitForFunction(() => {
-        const list = document.querySelector(".picker-list");
-        const active = document.querySelector(".picker-row--active");
-        if (!list || !active) return false;
-        const listBounds = list.getBoundingClientRect();
-        const activeBounds = active.getBoundingClientRect();
-        const listCenter = listBounds.top + listBounds.height / 2;
-        const activeCenter = activeBounds.top + activeBounds.height / 2;
-        return Math.abs(listCenter - activeCenter) <= 1;
-      });
+      const position = await pickerPosition(page);
+      assert.ok(
+        position.bottomGap < position.rowHeight,
+        JSON.stringify(position),
+      );
     },
   );
 });
@@ -970,16 +1033,11 @@ test("keeps filtered picker indexes and full-snapshot keyboard navigation aligne
 
       await controls.trigger.click();
       await controls.dialog.waitFor();
-      await page.waitForFunction(() => {
-        const list = document.querySelector(".picker-list");
-        const active = document.querySelector(".picker-row--active");
-        if (!list || !active) return false;
-        const listBounds = list.getBoundingClientRect();
-        const activeBounds = active.getBoundingClientRect();
-        const listCenter = listBounds.top + listBounds.height / 2;
-        const activeCenter = activeBounds.top + activeBounds.height / 2;
-        return Math.abs(listCenter - activeCenter) <= 1;
-      });
+      const position = await pickerPosition(page);
+      assert.ok(
+        position.bottomGap < position.rowHeight,
+        JSON.stringify(position),
+      );
       assert.match(
         await page.locator(".picker-row--active").textContent(),
         /src\/match-file-30\.ts/,

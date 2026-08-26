@@ -80,6 +80,30 @@ async function assertDemoHasNoAxeViolations(page) {
   }
 }
 
+async function demoPickerPosition(page) {
+  await page.evaluate(
+    () => new Promise((resolve) => requestAnimationFrame(() => resolve())),
+  );
+  return page.locator(".demo-picker-list").evaluate((list) => {
+    const active = list.querySelector('[aria-current="true"]');
+    if (!(active instanceof HTMLElement)) {
+      throw new Error("No active picker row");
+    }
+    const listBounds = list.getBoundingClientRect();
+    const activeBounds = active.getBoundingClientRect();
+    return {
+      bottomGap: listBounds.bottom - activeBounds.bottom,
+      centerGap: Math.abs(
+        listBounds.top +
+          listBounds.height / 2 -
+          (activeBounds.top + activeBounds.height / 2),
+      ),
+      rowHeight: activeBounds.height,
+      topGap: activeBounds.top - listBounds.top,
+    };
+  });
+}
+
 async function dispatchSwipe(locator, startX, endX) {
   await locator.evaluate(
     (element, points) => {
@@ -153,20 +177,6 @@ test("selects a demo file and shows its matching diff and note", async () => {
       );
 
       await page.getByRole("button", { name: /Choose file/ }).click();
-      await page.waitForFunction(() => {
-        const list = document.querySelector(".demo-picker-list");
-        const active = list?.querySelector('[aria-current="true"]');
-        if (!list || !active) return false;
-        const listBounds = list.getBoundingClientRect();
-        const activeBounds = active.getBoundingClientRect();
-        return (
-          Math.abs(
-            listBounds.top +
-              listBounds.height / 2 -
-              (activeBounds.top + activeBounds.height / 2),
-          ) <= 1
-        );
-      });
       await page.keyboard.press("Escape");
       await page.waitForFunction(
         () =>
@@ -206,6 +216,44 @@ test("selects a demo file and shows its matching diff and note", async () => {
       assert.equal(
         await page.locator("[data-demo-path]").textContent(),
         todoDemoFiles[1].path,
+      );
+    },
+  );
+});
+
+test("keeps landing edge files near the list bounds and centers an ordinary row", async () => {
+  await runLandingJourney(
+    "landing picker positions",
+    { viewport: { width: 1280, height: 900 } },
+    async (page) => {
+      await page.goto(server.url);
+      const picker = page.getByRole("button", { name: /Choose file/ });
+      const dialog = page.getByRole("dialog", { name: "Jump to a file" });
+
+      await picker.click();
+      let position = await demoPickerPosition(page);
+      assert.ok(
+        position.topGap < position.rowHeight,
+        JSON.stringify(position),
+      );
+
+      await dialog
+        .getByRole("button")
+        .filter({ hasText: todoDemoFiles[5].path })
+        .click();
+      await picker.click();
+      position = await demoPickerPosition(page);
+      assert.ok(position.centerGap <= 1);
+
+      await dialog
+        .getByRole("button")
+        .filter({ hasText: todoDemoFiles.at(-1).path })
+        .click();
+      await picker.click();
+      position = await demoPickerPosition(page);
+      assert.ok(
+        position.bottomGap < position.rowHeight,
+        JSON.stringify(position),
       );
     },
   );
