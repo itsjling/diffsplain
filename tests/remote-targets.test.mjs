@@ -6,6 +6,7 @@ import {
   mkdir,
   mkdtemp,
   readFile,
+  realpath,
   rm,
   symlink,
   utimes,
@@ -736,23 +737,35 @@ test("builds a pull request range through gh without changing the checkout", asy
   const fixture = await makeRemoteRepo();
   const bin = join(fixture.root, "bin");
   const gh = join(bin, "gh");
+  const ghCall = join(fixture.root, "gh-call.json");
   const output = join(fixture.root, "pr.json");
   const cache = join(fixture.root, "cache");
   const before = checkoutState(fixture.repo);
+  const pullRequest = {
+    number: 7,
+    title: "Remote feature",
+    url: "https://github.com/example/project/pull/7",
+    baseRefName: "main",
+    baseRefOid: fixture.mainOid,
+    headRefName: "feature",
+    headRefOid: fixture.featureOid,
+  };
 
   try {
+    const remoteUrl = "https://github.com/example/diffsplain.git";
+    git(fixture.repo, "remote", "set-url", "origin", remoteUrl);
+    git(fixture.repo, "config", `url.file://${fixture.remote}.insteadOf`, remoteUrl);
     await mkdir(bin);
     await writeFile(
       gh,
-      `#!/bin/sh\nprintf '%s\\n' '${JSON.stringify({
-        number: 7,
-        title: "Remote feature",
-        url: "https://github.com/example/project/pull/7",
-        baseRefName: "main",
-        baseRefOid: fixture.mainOid,
-        headRefName: "feature",
-        headRefOid: fixture.featureOid,
-      })}'\n`,
+      `#!/usr/bin/env node
+const { writeFileSync } = require("node:fs");
+writeFileSync(${JSON.stringify(ghCall)}, JSON.stringify({
+  args: process.argv.slice(2),
+  cwd: process.cwd(),
+}));
+process.stdout.write(${JSON.stringify(`${JSON.stringify(pullRequest)}\n`)});
+`,
     );
     await chmod(gh, 0o755);
     execFileSync("git", ["--git-dir", fixture.remote, "update-ref", "refs/pull/7/head", fixture.featureOid]);
@@ -765,7 +778,11 @@ test("builds a pull request range through gh without changing the checkout", asy
       },
     );
     const payload = JSON.parse(await readFile(output, "utf8"));
+    const invocation = JSON.parse(await readFile(ghCall, "utf8"));
 
+    assert.equal(await realpath(invocation.cwd), await realpath(fixture.repo));
+    assert.deepEqual(invocation.args.slice(0, 3), ["pr", "view", "7"]);
+    assert.deepEqual(invocation.args.slice(-2), ["--repo", "example/diffsplain"]);
     assert.deepEqual(payload.files.map((file) => file.path), ["feature.txt"]);
     assert.equal(payload.repo.base, fixture.baseOid);
     assert.equal(payload.repo.head, fixture.featureOid);
@@ -835,6 +852,93 @@ test("stops remote and pull-request lookups without replacing complete data", as
       /Could not read pull request 7 with gh.*unavailable/i,
     );
     assert.equal(await readFile(output, "utf8"), original);
+  } finally {
+    await rm(fixture.root, { recursive: true, force: true });
+  }
+});
+
+test("distinguishes a missing checkout pull request from an auth failure", async () => {
+  const fixture = await makeRemoteRepo();
+  const bin = join(fixture.root, "bin");
+  const gh = join(bin, "gh");
+  const output = join(fixture.root, "pr.json");
+
+  try {
+    git(
+      fixture.repo,
+      "remote",
+      "set-url",
+      "origin",
+      "https://github.com/example/diffsplain.git",
+    );
+    await mkdir(bin);
+    await writeFile(
+      gh,
+      "#!/bin/sh\necho 'GraphQL: Could not resolve to a PullRequest with the number of 7. (repository.pullRequest)' >&2\nexit 1\n",
+    );
+    await chmod(gh, 0o755);
+
+    const missing = spawnSync(
+      process.execPath,
+      [script, "--repo", fixture.repo, "--pr", "7", "--output", output],
+      {
+        encoding: "utf8",
+        env: { ...process.env, PATH: `${bin}:${process.env.PATH}` },
+      },
+    );
+
+    assert.notEqual(missing.status, 0);
+    assert.match(missing.stderr, /pull request 7/i);
+    assert.match(missing.stderr, /example\/diffsplain/);
+    assert.match(missing.stderr, /owner\/repo/);
+    assert.match(missing.stderr, /github\.com\/owner\/repo\/pull\/7/);
+    assert.doesNotMatch(missing.stderr, /gh auth status/);
+
+    git(
+      fixture.repo,
+      "remote",
+      "set-url",
+      "origin",
+      "https://github.example.com/example/diffsplain.git",
+    );
+    const missingUrl = spawnSync(
+      process.execPath,
+      [
+        script,
+        "--repo",
+        fixture.repo,
+        "--pr",
+        "https://github.example.com/example/diffsplain/pull/7",
+        "--output",
+        output,
+      ],
+      {
+        encoding: "utf8",
+        env: { ...process.env, PATH: `${bin}:${process.env.PATH}` },
+      },
+    );
+
+    assert.notEqual(missingUrl.status, 0);
+    assert.match(
+      missingUrl.stderr,
+      /Pull request 7 was not found in github\.example\.com\/example\/diffsplain\. Pass github\.example\.com\/owner\/repo before --pr 7, or pass https:\/\/github\.example\.com\/owner\/repo\/pull\/7\./,
+    );
+
+    await writeFile(
+      gh,
+      "#!/bin/sh\necho 'HTTP 401: Bad credentials (https://api.github.com/graphql)' >&2\nexit 1\n",
+    );
+    const auth = spawnSync(
+      process.execPath,
+      [script, "--repo", fixture.repo, "--pr", "7", "--output", output],
+      {
+        encoding: "utf8",
+        env: { ...process.env, PATH: `${bin}:${process.env.PATH}` },
+      },
+    );
+
+    assert.notEqual(auth.status, 0);
+    assert.match(auth.stderr, /gh auth status/);
   } finally {
     await rm(fixture.root, { recursive: true, force: true });
   }

@@ -609,8 +609,31 @@ function pullRequestInfo(pr, remote) {
     return { value, repository };
   } catch (error) {
     const detail = error?.stderr?.toString().trim() || error?.message;
+    if (
+      repository &&
+      /Could not resolve to a PullRequest with the number of/i.test(detail)
+    ) {
+      const prNumber = String(pr).replace(
+        /^.*\/pull\/(\d+)(?:\/.*)?$/,
+        "$1",
+      );
+      const repositoryShape = repository.selector.replace(
+        repository.name,
+        "owner/repo",
+      );
+      const pullRequestUrl = `${repository.webUrl.replace(repository.name, "owner/repo")}/pull/${prNumber}`;
+      throw new Error(
+        `Pull request ${prNumber} was not found in ${repository.selector}. Pass ${repositoryShape} before --pr ${prNumber}, or pass ${pullRequestUrl}.`,
+      );
+    }
+    const authHint =
+      /(?:HTTP 401|Bad credentials|authentication failed|not logged (?:in|into)|gh auth login)/i.test(
+        detail,
+      )
+        ? ' Check gh auth status.'
+        : '';
     throw new Error(
-      `Could not read pull request ${pr} with gh${detail ? `: ${detail}` : ''}. Check gh auth status.`,
+      `Could not read pull request ${pr} with gh${detail ? `: ${detail}` : ''}.${authHint}`,
     );
   }
 }
