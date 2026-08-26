@@ -108,6 +108,73 @@ test('publishes a verified stable release under the default tag', async () => {
   });
 });
 
+test('retries a transient post-publish lookup without publishing again', async () => {
+  const calls = [];
+  let verificationAttempt = 0;
+  const result = await publishRelease('1.2.3', {
+    publish: () => calls.push('publish'),
+    readPackage: async () => ({ name: 'diffsplain', version: '1.2.3' }),
+    readReceipt: async () => receipt,
+    readState: () => cleanState,
+    registryVersionExists: () => false,
+    requireNpmLogin: () => 'jling',
+    sha256: async () => 'verified-hash',
+    verifyPublished: () => {
+      calls.push('verify');
+      verificationAttempt += 1;
+      if (verificationAttempt === 1) {
+        throw new Error('npm registry lookup failed');
+      }
+      return '1.2.3';
+    },
+    wait: async (milliseconds) => calls.push(['wait', milliseconds]),
+  });
+
+  assert.deepEqual(calls, [
+    'publish',
+    'verify',
+    ['wait', 1_000],
+    'verify',
+  ]);
+  assert.deepEqual(result, {
+    account: 'jling',
+    package: 'diffsplain',
+    version: '1.2.3',
+  });
+});
+
+test('stops after bounded post-publish verification attempts', async () => {
+  const calls = [];
+  await assert.rejects(
+    publishRelease('1.2.3', {
+      publish: () => calls.push('publish'),
+      readPackage: async () => ({ name: 'diffsplain', version: '1.2.3' }),
+      readReceipt: async () => receipt,
+      readState: () => cleanState,
+      registryVersionExists: () => false,
+      requireNpmLogin: () => 'jling',
+      sha256: async () => 'verified-hash',
+      verifyPublished: () => {
+        calls.push('verify');
+        throw new Error('npm registry lookup failed');
+      },
+      wait: async (milliseconds) => calls.push(['wait', milliseconds]),
+    }),
+    /diffsplain@1\.2\.3 was published, but post-publish verification failed: npm registry lookup failed/,
+  );
+
+  assert.deepEqual(calls, [
+    'publish',
+    'verify',
+    ['wait', 1_000],
+    'verify',
+    ['wait', 2_000],
+    'verify',
+    ['wait', 4_000],
+    'verify',
+  ]);
+});
+
 test('publishes a verified prerelease under the next tag', async () => {
   const calls = [];
   const prerelease = {
