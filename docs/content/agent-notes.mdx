@@ -60,6 +60,25 @@ The default batch size is 12 files. Smaller batches add the first notes to
 the open page sooner. All supported agents accept `--model`; only Codex and
 OpenCode accept `--reasoning`.
 
+## Exclude files from automatic notes
+
+`--exclude PATTERN` controls prepared agent context. Repeat gitignore-style
+rules in the order you pass them. A later rule wins, and `!` puts a path back
+in. Diffsplain tests the current path of a renamed file, not its old path.
+
+Excluded files stay in the local snapshot and page with their full patches.
+Diffsplain keeps their path, metadata, patch, snippet, and prior note out of
+automatic agent input. It hides a cached note while the file is excluded and
+can reuse it only when the file returns with the same patch. If the patch
+changed while hidden, Diffsplain drops the note.
+`--force` does not override an exclusion. If all files are excluded,
+Diffsplain makes no agent request and keeps the reusable cache state.
+
+This option is not a privacy boundary and does not change checkout access. In
+`checkout-read-only` mode, an agent can still inspect the repo. Use it to
+shape automatic input, not to hide a secret. With `--no-agent`, Diffsplain
+still marks matching files in the snapshot, but it starts no agent.
+
 ## File limits and failed notes
 
 Diffsplain sends a file’s full patch when it is at most 180,000 bytes. For a

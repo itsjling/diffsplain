@@ -114,6 +114,36 @@ this mode because of a target mismatch.
 Pass `--no-checkout-access` to use `snapshot-only` access for any target. This
 option affects agent notes only. It does not change the diff or the page.
 
+## Exclude files from agent context
+
+Pass `--exclude PATTERN` to keep matching files out of automatic agent input.
+You can repeat it:
+
+```sh
+npx diffsplain \
+  --exclude 'private/**' \
+  --exclude '!private/keep.txt'
+```
+
+Rules use gitignore-style rules in the order you pass them. A later rule wins.
+A rule that starts with `!` puts a path back in. Diffsplain matches the current
+path of a renamed file, not its old path.
+
+The local page and snapshot keep every changed file and its full patch. A
+matching file gets `agentExcluded: true`. Its path, metadata, patch, snippet,
+and old note stay out of automatic agent input. Diffsplain hides its cached
+note while the file is excluded. It can reuse that note when the file returns
+only if its patch still matches. If the patch changes while excluded,
+Diffsplain drops that cached note. `--force` does not override an exclusion.
+
+When all files are excluded, Diffsplain makes no agent request. The local page
+still shows the diff and reports zero agent notes. Removing or changing rules
+can show a matching cached note again when its patch has not changed.
+
+This is prepared-context control, not a privacy boundary. It does not change
+checkout access. A checkout-access agent can inspect files in the repo, so do
+not use `--exclude` to hide secrets from an agent.
+
 ## Check your setup
 
 Run the doctor command to see the separate local review, agent note, and pull
@@ -185,6 +215,7 @@ pnpm run doctor
 | `--agent NAME` | Use `codex`, `claude`, `copilot`, `cursor`, or `opencode`. |
 | `--no-agent` | Show the diff without agent notes. |
 | `--no-checkout-access` | Limit agent notes to the supplied snapshot. |
+| `--exclude PATTERN` | Keep matching files out of automatic agent input. Repeat in gitignore order. |
 | `--model NAME` | Choose the model used for notes. |
 | `--reasoning LEVEL` | Set `minimal`, `low`, `medium`, `high`, or `xhigh`. |
 | `--batch-size COUNT` | Set the most files per agent pass, from `1` to `50`. Large patches use smaller batches. |

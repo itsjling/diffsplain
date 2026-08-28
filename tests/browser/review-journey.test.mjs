@@ -4,6 +4,7 @@ import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test, { after, before } from "node:test";
+import AxeBuilder from "@axe-core/playwright";
 
 import {
   parsedViteOutput,
@@ -109,6 +110,27 @@ function fixture(version = "one") {
   ];
   if (version !== "one") files[1].summary.title = `Live review ${version}`;
   return snapshot(version, files);
+}
+
+function excludedFixture(label, notes) {
+  const value = fixture(`excluded-${label}`);
+  const excluded = value.files[0];
+  excluded.agentExcluded = true;
+  excluded.noteReady = true;
+  excluded.summary = {
+    title: `STALE ${label} title`,
+    what: `STALE ${label} what`,
+    why: `STALE ${label} why`,
+    details: [`STALE ${label} detail`],
+    risks: [`STALE ${label} risk`],
+  };
+  value.change.title = `Excluded state ${label}`;
+  Object.assign(value.notes, {
+    completedFiles: 2,
+    totalFiles: 2,
+    ...notes,
+  });
+  return value;
 }
 
 function longFileListFixture() {
@@ -538,6 +560,97 @@ test("does not credit stale fallback text to the prior note writer", async () =>
       await page
         .getByText("Written by GPT 5.6 Sol (Codex)")
         .waitFor({ state: "hidden" });
+    },
+  );
+});
+
+test("keeps excluded files in the local review without exposing stale agent notes", async () => {
+  await runReviewJourney(
+    "excluded agent context",
+    { viewport: { width: 1280, height: 800 } },
+    async (page) => {
+      const states = [
+        ["cached", { complete: true, fresh: true, status: "complete" }],
+        ["pending", { complete: false, fresh: true, status: "generating" }],
+        ["failed", { complete: false, fresh: true, status: "failed" }],
+        ["fallback", { complete: false, fresh: false, status: "stale" }],
+      ];
+
+      await writeSnapshot(excludedFixture(...states[0]));
+      await page.goto(serverUrl);
+
+      for (const [label, notes] of states) {
+        if (label !== "cached") await writeSnapshot(excludedFixture(label, notes));
+        await page.getByText(`Excluded state ${label}`).waitFor();
+        await page
+          .getByRole("heading", { name: "Excluded from agent context" })
+          .waitFor();
+        await page
+          .getByText(
+            "This patch stays in the local review, but automatic note requests omit it.",
+          )
+          .waitFor();
+        const exclusionNotice = page.locator(".excluded-note");
+        assert.equal(await exclusionNotice.getAttribute("role"), "status");
+        assert.equal(await exclusionNotice.getAttribute("aria-live"), "polite");
+        await page.getByText(`STALE ${label} title`).waitFor({ state: "hidden" });
+        await page.getByText(`STALE ${label} what`).waitFor({ state: "hidden" });
+        await page.getByText(`STALE ${label} why`).waitFor({ state: "hidden" });
+        await page.getByText(`STALE ${label} detail`).waitFor({ state: "hidden" });
+        await page.getByText(`STALE ${label} risk`).waitFor({ state: "hidden" });
+        if (label === "failed") {
+          await page
+            .getByText("The agent stopped before it reached this file. The diff is still ready to review.")
+            .waitFor({ state: "hidden" });
+        }
+        assert.equal(await page.locator(".agent-signoff").count(), 0);
+      }
+
+      await page.getByText("Explain saved todos full patch").waitFor();
+      const results = await new AxeBuilder({ page })
+        .include(".summary-pane")
+        .analyze();
+      assert.deepEqual(results.violations, []);
+
+      const next = page.getByRole("button", { name: "Next file" });
+      await next.focus();
+      await next.press("Enter");
+      await page
+        .getByRole("heading", { name: "Live review excluded-fallback" })
+        .waitFor();
+      await next.press("ArrowLeft");
+      await page
+        .getByRole("heading", { name: "Excluded from agent context" })
+        .waitFor();
+      assert.equal(await hasFocus(next), true);
+    },
+  );
+});
+
+test("keeps the excluded state inside a 320-pixel mobile review", async () => {
+  await runReviewJourney(
+    "excluded agent context on mobile",
+    { hasTouch: true, isMobile: true, viewport: { width: 320, height: 740 } },
+    async (page) => {
+      await writeSnapshot(excludedFixture("mobile", {
+        complete: false,
+        fresh: true,
+        status: "generating",
+      }));
+      await page.goto(serverUrl);
+      await page
+        .getByRole("heading", { name: "Excluded from agent context" })
+        .waitFor();
+      await page.getByText("Explain saved todos full patch").waitFor();
+      const widths = await page.evaluate(() => ({
+        body: document.body.scrollWidth,
+        root: document.documentElement.scrollWidth,
+        viewport: document.documentElement.clientWidth,
+      }));
+      assert.ok(
+        widths.root <= widths.viewport && widths.body <= widths.viewport,
+        `page width ${JSON.stringify(widths)}`,
+      );
     },
   );
 });

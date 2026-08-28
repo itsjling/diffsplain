@@ -34,6 +34,7 @@ type DiffFile = {
   comparisonUrl?: string;
   summary: FileSummary;
   noteReady?: boolean;
+  agentExcluded?: boolean;
 };
 
 type DiffNotes = {
@@ -577,14 +578,16 @@ export default function Home() {
   const changeLabel = changeScope(snapshot);
   const noteReady =
     currentFile.noteReady ?? snapshot.notes?.complete ?? true;
+  const agentExcluded = currentFile.agentExcluded === true;
   const notesGenerating = snapshot.notes?.status === "generating";
   const notesFailed = snapshot.notes?.status === "failed";
-  const notesInProgress = notesGenerating && !noteReady;
-  const noteUnavailable = notesFailed && !noteReady;
+  const notesInProgress = !agentExcluded && notesGenerating && !noteReady;
+  const noteUnavailable = !agentExcluded && notesFailed && !noteReady;
   const noteProgress = snapshot.notes
     ? `${snapshot.notes.completedFiles} of ${snapshot.notes.totalFiles} ready`
     : "";
-  const hasFreshNote = noteReady && snapshot.notes?.fresh === true;
+  const hasFreshNote =
+    !agentExcluded && noteReady && snapshot.notes?.fresh === true;
   const writer = noteWriter(snapshot.notes);
   const syncLabel = loadError
     ? "Reconnecting"
@@ -812,13 +815,17 @@ export default function Home() {
             <div className="summary-scroll">
               <div
                 className={`summary-kicker ${
-                  notesInProgress || noteUnavailable
+                  agentExcluded
+                    ? "summary-kicker--excluded"
+                    : notesInProgress || noteUnavailable
                     ? "summary-kicker--pending"
                     : ""
                 }`}
               >
                 <span>
-                  {notesInProgress
+                  {agentExcluded
+                    ? "AGENT NOTE · EXCLUDED"
+                    : notesInProgress
                     ? "AGENT NOTE · WRITING"
                     : noteUnavailable
                       ? "AGENT NOTE · STOPPED"
@@ -830,7 +837,20 @@ export default function Home() {
                 </span>
               </div>
 
-              {notesInProgress ? (
+              {agentExcluded ? (
+                <div
+                  className="excluded-note"
+                  role="status"
+                  aria-live="polite"
+                  aria-atomic="true"
+                >
+                  <h2 id="summary-heading">Excluded from agent context</h2>
+                  <p className="summary-lead">
+                    This patch stays in the local review, but automatic note
+                    requests omit it.
+                  </p>
+                </div>
+              ) : notesInProgress ? (
                 <div
                   className="summary-loading"
                   role="status"
@@ -881,7 +901,8 @@ export default function Home() {
                 </>
               )}
 
-              {!notesInProgress &&
+              {!agentExcluded &&
+              !notesInProgress &&
               !noteUnavailable &&
               currentFile.summary.details.length ? (
                 <section className="note-section">
@@ -894,7 +915,8 @@ export default function Home() {
                 </section>
               ) : null}
 
-              {!notesInProgress &&
+              {!agentExcluded &&
+              !notesInProgress &&
               !noteUnavailable &&
               currentFile.summary.risks.length ? (
                 <section className="note-section note-section--risk">
@@ -908,7 +930,9 @@ export default function Home() {
               ) : null}
             </div>
 
-            {!notesInProgress && (hasFreshNote || noteUnavailable) ? (
+            {!agentExcluded &&
+            !notesInProgress &&
+            (hasFreshNote || noteUnavailable) ? (
               <footer className="agent-signoff">
                 <span className="agent-glyph" aria-hidden="true">
                   ✦

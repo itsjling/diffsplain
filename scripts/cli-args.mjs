@@ -29,6 +29,7 @@ export const cliOptions = defineCliOptions({
   '--cache-dir': { kind: 'value', path: true },
   '--codex-bin': { kind: 'value', path: true },
   '--support-record-file': { kind: 'value', path: true },
+  '--exclude': { kind: 'repeatable-value' },
   '--model': { kind: 'value' },
   '--reasoning': { kind: 'value' },
   '--batch-size': { kind: 'value', default: 12, min: 1, max: 50 },
@@ -54,6 +55,11 @@ const valueOptions = new Set(
 const flagOptions = new Set(
   Object.entries(cliOptions)
     .filter(([, record]) => record.kind === 'flag')
+    .map(([name]) => name),
+);
+const repeatableValueOptions = new Set(
+  Object.entries(cliOptions)
+    .filter(([, record]) => record.kind === 'repeatable-value')
     .map(([name]) => name),
 );
 const pathOptions = new Set(
@@ -91,6 +97,7 @@ Options:
   --no-agent          Do not write agent notes
   --no-checkout-access
                       Limit agent notes to the supplied snapshot
+  --exclude PATTERN   Omit matching files from automatic agent context
   --model NAME        Model for agent notes
   --reasoning LEVEL   Agent reasoning effort when supported
   --batch-size COUNT  Maximum files per agent pass (default: ${batchSizeOption.default})
@@ -203,6 +210,7 @@ export function parseCliArgs(
 
   const options = new Map();
   const positionals = [];
+  const excludePatterns = [];
   let agent;
   let agentSet = false;
   let noAgent = false;
@@ -250,10 +258,13 @@ export function parseCliArgs(
       continue;
     }
 
-    if (!valueOptions.has(parsed.name)) {
+    const repeatable = repeatableValueOptions.has(parsed.name);
+    if (!repeatable && !valueOptions.has(parsed.name)) {
       fail(`Unknown option: ${parsed.name}`);
     }
-    if (options.has(parsed.name)) fail(`${parsed.name} was passed more than once`);
+    if (!repeatable && options.has(parsed.name)) {
+      fail(`${parsed.name} was passed more than once`);
+    }
 
     let value = parsed.value;
     if (value === undefined) {
@@ -262,7 +273,8 @@ export function parseCliArgs(
       index += 1;
     }
     if (!value) fail(`${parsed.name} needs a value`);
-    options.set(parsed.name, value);
+    if (repeatable) excludePatterns.push(value);
+    else options.set(parsed.name, value);
   }
 
   if (options.has('--help')) return { help: true };
@@ -363,6 +375,9 @@ export function parseCliArgs(
   }
 
   const feedArgs = [...commonArgs];
+  for (const pattern of excludePatterns) {
+    feedArgs.push('--exclude', pattern);
+  }
   const supportRecordFile = options.get('--support-record-file');
   if (supportRecordFile) {
     feedArgs.push(
@@ -371,6 +386,9 @@ export function parseCliArgs(
     );
   }
   const agentArgs = [...commonArgs];
+  for (const pattern of excludePatterns) {
+    agentArgs.push('--exclude', pattern);
+  }
   if (options.has('--force')) agentArgs.push('--force');
   for (const name of [
     '--codex-bin',
@@ -466,6 +484,7 @@ export function parseCliArgs(
     agentEnabled: !noAgent,
     agent,
     noCheckoutAccess: options.has('--no-checkout-access'),
+    excludePatterns,
     model: options.get('--model'),
     reasoning,
     codexBin: options.get('--codex-bin'),

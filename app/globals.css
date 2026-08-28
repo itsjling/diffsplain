@@ -741,6 +741,14 @@ kbd {
   background: var(--blue);
 }
 
+.summary-kicker--excluded {
+  color: var(--blue);
+}
+
+.summary-kicker--excluded span:first-child::before {
+  background: var(--blue);
+}
+
 .summary-pane h2 {
   font-size: clamp(26px, 2vw, 36px);
   font-weight: 570;
@@ -756,6 +764,21 @@ kbd {
   line-height: 1.55;
   margin-top: 17px;
   max-width: 40em;
+}
+
+.excluded-note {
+  border-top: 1px solid var(--blue);
+  margin-top: 35px;
+  max-width: 40em;
+  padding-top: 20px;
+}
+
+.excluded-note h2 {
+  margin-top: 0;
+}
+
+.excluded-note .summary-lead {
+  color: var(--blue);
 }
 
 .note-skeleton {

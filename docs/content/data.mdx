@@ -38,8 +38,10 @@ The JSON file has:
 - a list of changed files.
 
 Each file records its path, status, line counts, full unified patch, short
-snippet, binary state, and agent note. The writer gives each snapshot a content
-hash and replaces the file only when its contents change.
+snippet, binary state, and agent note. `agentExcluded: true` marks a file that
+stays out of automatic agent input. The snapshot still keeps that file and its
+full patch. The writer gives each snapshot a content hash and replaces the
+file only when its contents change.
 
 An opt-in failed-run support record is separate from this snapshot. It keeps
 only fixed version fields, numeric timings and byte counts, a run ID, and the
@@ -85,9 +87,16 @@ the working tree has no remote commit. The watcher refreshes if the base ref,
 
 ## Agent data and cleanup
 
-The agent always receives target and change metadata, selected patches or
-excerpts, and reusable notes. Its completed snapshot records the plan in
-`notes.accessMode`: `checkout-read-only` or `snapshot-only`.
+The agent receives target and change metadata, selected patches or excerpts,
+and reusable notes. Files marked `agentExcluded` stay in the local snapshot,
+but automatic input omits their path, metadata, patch, snippet, and old note.
+Its completed snapshot records the plan in `notes.accessMode`:
+`checkout-read-only` or `snapshot-only`.
+
+`--exclude PATTERN` sets that prepared context. It does not remove a local
+file or patch, change checkout access, or provide a privacy boundary. See the
+[CLI guide](/cli/#exclude-files-from-agent-context) for ordered rules and
+cache behavior.
 
 The current checkout, `--worktree`, and `--base REF` without `--head` use
 `checkout-read-only` access. The agent uses the chosen repo as its working

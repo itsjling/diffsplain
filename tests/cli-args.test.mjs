@@ -8,6 +8,11 @@ import { reviewAccessMode } from '../scripts/local-target.mjs';
 const cwd = '/work/project';
 const missing = () => false;
 
+function valuesFor(args, name) {
+  return args.flatMap((argument, index) =>
+    argument === name ? [args[index + 1]] : []);
+}
+
 test('leaves agent selection open when no agent is passed', () => {
   const parsed = parseCliArgs([], {
     callerDirectory: cwd,
@@ -41,6 +46,45 @@ test('passes no-checkout-access only to agent notes', () => {
   assert.equal(parsed.noCheckoutAccess, true);
   assert.ok(parsed.agentArgs.includes('--no-checkout-access'));
   assert.ok(!parsed.feedArgs.includes('--no-checkout-access'));
+});
+
+test('keeps repeated exclusion rules in encounter order for both builders', () => {
+  const parsed = parseCliArgs([
+    '--exclude',
+    'private/**',
+    '--base',
+    'main',
+    '--exclude=!private/keep.txt',
+    '--exclude',
+    '\\!literal.txt',
+  ], {
+    callerDirectory: cwd,
+    pathExists: missing,
+  });
+
+  const expected = ['private/**', '!private/keep.txt', '\\!literal.txt'];
+  assert.deepEqual(valuesFor(parsed.feedArgs, '--exclude'), expected);
+  assert.deepEqual(valuesFor(parsed.agentArgs, '--exclude'), expected);
+  assert.equal(parsed.excludePatterns.join('\0'), expected.join('\0'));
+});
+
+test('forwards exclusion rules for a plain review', () => {
+  const parsed = parseCliArgs([
+    '--no-agent',
+    '--exclude=private/**',
+    '--exclude',
+    '!private/keep.txt',
+  ], {
+    callerDirectory: cwd,
+    pathExists: missing,
+  });
+
+  assert.equal(parsed.agentEnabled, false);
+  assert.deepEqual(parsed.agentArgs, parsed.feedArgs);
+  assert.deepEqual(valuesFor(parsed.feedArgs, '--exclude'), [
+    'private/**',
+    '!private/keep.txt',
+  ]);
 });
 
 test('classifies local targets for checkout access and remote targets for snapshots', () => {
@@ -335,6 +379,7 @@ test('rejects a missing value for every value option', () => {
     '--jobs',
     '--port',
     '--host',
+    '--exclude',
     '--agent',
   ]) {
     assert.throws(

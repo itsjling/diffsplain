@@ -10,13 +10,24 @@ import {
   enabledCodingAgents,
 } from '../scripts/coding-agents.mjs';
 
-const [docs, agentNotes, development, index, packageText, product] = await Promise.all([
+const [
+  docs,
+  agentNotes,
+  development,
+  index,
+  packageText,
+  product,
+  data,
+  readme,
+] = await Promise.all([
   readFile(new URL('../docs/content/cli.mdx', import.meta.url), 'utf8'),
   readFile(new URL('../docs/content/agent-notes.mdx', import.meta.url), 'utf8'),
   readFile(new URL('../docs/content/development.mdx', import.meta.url), 'utf8'),
   readFile(new URL('../docs/content/index.mdx', import.meta.url), 'utf8'),
   readFile(new URL('../package.json', import.meta.url), 'utf8'),
   readFile(new URL('../PRODUCT.md', import.meta.url), 'utf8'),
+  readFile(new URL('../docs/content/data.mdx', import.meta.url), 'utf8'),
+  readFile(new URL('../README.md', import.meta.url), 'utf8'),
 ]);
 
 test('lists each accepted option in public help and the CLI reference', () => {
@@ -62,6 +73,25 @@ test('documents checkout access and provider limits', () => {
   assert.match(notes, /approval.*user/i);
   assert.match(notes, /Diffsplain itself does not edit the review target/i);
   assert.match(notes, /Agents run under your user permissions/i);
+});
+
+test('documents ordered agent-context exclusions', () => {
+  const cli = docs.replace(/\s+/g, ' ');
+  const notes = agentNotes.replace(/\s+/g, ' ');
+  const snapshot = data.replace(/\s+/g, ' ');
+  assert.match(helpText, /--exclude PATTERN/);
+  assert.match(readme, /--exclude PATTERN/);
+  assert.match(cli, /gitignore-style rules in the order you pass them/i);
+  assert.match(cli, /!private\/keep\.txt/);
+  assert.match(cli, /current path.*renamed file/i);
+  assert.match(cli, /--force.*does not override/i);
+  assert.match(cli, /not a privacy boundary/i);
+  assert.match(cli, /does not change checkout access/i);
+  assert.match(notes, /automatic agent input/i);
+  assert.match(notes, /hides a cached note/i);
+  assert.match(notes, /all files.*excluded/i);
+  assert.match(snapshot, /agentExcluded/);
+  assert.match(snapshot, /full patch/i);
 });
 
 test('documents the picker order and Cursor CLI', () => {
