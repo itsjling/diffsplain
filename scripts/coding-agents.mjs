@@ -1,6 +1,7 @@
 import { constants } from 'node:fs';
 import { access } from 'node:fs/promises';
 import { spawnSync } from 'node:child_process';
+import { createInterface } from 'node:readline';
 import {
   basename,
   delimiter,
@@ -234,44 +235,120 @@ export async function codingAgentAvailability(
   };
 }
 
-// fallow-ignore-next-line complexity -- validation and discovery share one public selector.
-export async function selectCodingAgent(
-  requested,
-  available = commandAvailable,
-) {
-  if (requested) {
-    if (!codingAgents.includes(requested)) {
-      throw new Error(
-        `Unsupported agent "${requested}". Choose ${enabledCodingAgents.join(', ')}.`,
-      );
-    }
-    const result = await available(requested);
-    const availableResult = typeof result === 'object'
-      ? result.available
-      : result;
-    if (!availableResult) {
-      if (typeof result === 'object' && result.reason) {
-        throw new Error(result.reason);
-      }
-      throw new Error(`Coding agent "${requested}" is not available.`);
-    }
-    return requested;
-  }
+function availableResult(result) {
+  return typeof result === 'object' ? result.available : result;
+}
 
+function unavailableAgentError(requested, result) {
+  if (typeof result === 'object' && result.reason) {
+    return new Error(result.reason);
+  }
+  return new Error(`Coding agent "${requested}" is not available.`);
+}
+
+function noAvailableAgentError(cursorReason) {
+  return new Error(
+    `No coding agent is available. Install one of: ${enabledCodingAgents.join(', ')}. Pass --agent NAME to choose an agent or --no-agent for a plain review.${cursorReason ? ` ${cursorReason}` : ''}`,
+  );
+}
+
+function selectionCancelledError() {
+  return new Error(
+    'Agent selection was cancelled. Pass --agent NAME to choose an agent or --no-agent for a plain review.',
+  );
+}
+
+function nonInteractiveSelectionError() {
+  return new Error(
+    'An interactive terminal is required to choose a coding agent. Pass --agent NAME to choose an agent or --no-agent for a plain review.',
+  );
+}
+
+async function selectRequestedCodingAgent(requested, available) {
+  if (!codingAgents.includes(requested)) {
+    throw new Error(
+      `Unsupported agent "${requested}". Choose ${enabledCodingAgents.join(', ')}.`,
+    );
+  }
+  const result = await available(requested);
+  if (!availableResult(result)) {
+    throw unavailableAgentError(requested, result);
+  }
+  return requested;
+}
+
+async function usableCodingAgents(available) {
+  const usable = [];
   let cursorReason;
   for (const agent of enabledCodingAgents) {
     const result = await available(agent);
-    const availableResult = typeof result === 'object'
-      ? result.available
-      : result;
-    if (availableResult) return agent;
-    if (agent === 'cursor' && typeof result === 'object') {
+    if (availableResult(result)) {
+      usable.push(agent);
+    } else if (agent === 'cursor' && typeof result === 'object') {
       cursorReason = result.reason;
     }
   }
-  throw new Error(
-    `No coding agent is available. Install one of: ${enabledCodingAgents.join(', ')}.${cursorReason ? ` ${cursorReason}` : ''}`,
-  );
+  return { usable, cursorReason };
+}
+
+function selectFromTerminal(agents, { input, output }) {
+  output.write('Choose a coding agent:\n');
+  for (const [index, agent] of agents.entries()) {
+    output.write(`${index + 1}. ${agent}\n`);
+  }
+  output.write('Enter a number, or press Ctrl+C to cancel: ');
+
+  return new Promise((resolve, reject) => {
+    const picker = createInterface({ input, output, terminal: true });
+    let settled = false;
+    const finish = (callback, value) => {
+      if (settled) return;
+      settled = true;
+      picker.close();
+      callback(value);
+    };
+    const promptAgain = () => {
+      output.write(`Choose a number from 1 to ${agents.length}, or press Ctrl+C to cancel: `);
+    };
+    picker.on('SIGINT', () => {
+      finish(reject, selectionCancelledError());
+    });
+    picker.on('close', () => {
+      finish(reject, selectionCancelledError());
+    });
+    picker.on('line', (line) => {
+      const selected = Number(line.trim());
+      if (
+        !Number.isInteger(selected) ||
+        selected < 1 ||
+        selected > agents.length
+      ) {
+        promptAgain();
+        return;
+      }
+      finish(resolve, agents[selected - 1]);
+    });
+  });
+}
+
+export async function selectCodingAgent(
+  requested,
+  {
+    available = commandAvailable,
+    input = process.stdin,
+    output = process.stderr,
+  } = {},
+) {
+  if (requested) {
+    return selectRequestedCodingAgent(requested, available);
+  }
+
+  if (!input?.isTTY || !output?.isTTY) {
+    throw nonInteractiveSelectionError();
+  }
+  const { usable, cursorReason } = await usableCodingAgents(available);
+  if (!usable.length) throw noAvailableAgentError(cursorReason);
+  return selectFromTerminal(usable, { input, output });
 }
 
 // fallow-ignore-next-line complexity -- each supported agent has one override rule.

@@ -107,8 +107,9 @@ Options:
   -h, --help          Show this help
   -v, --version       Show the installed version
 
-Automatic agent selection:
-  codex, claude, copilot, cursor, opencode
+Agent choice:
+  Without --agent, an interactive terminal lists usable agents. In scripts,
+  pass --agent NAME or --no-agent.
 
 Cursor:
   Requires Cursor Agent 2026.08.11 or newer. Uses the signed-in CLI in the

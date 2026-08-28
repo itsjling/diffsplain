@@ -127,13 +127,14 @@ test('reports missing option values before startup', () => {
   }
 });
 
-test('fails before startup when no coding agent is installed', () => {
+test('requires an agent choice before the presenter starts', () => {
   const result = spawnSync(process.execPath, [script], {
     encoding: 'utf8',
     env: { ...process.env, PATH: '' },
   });
-  assert.equal(result.status, 1);
-  assert.match(result.stderr, /no coding agent is available/i);
+  assert.equal(result.status, 1, result.stderr);
+  assert.match(result.stderr, /interactive terminal/i);
+  assert.match(result.stderr, /--agent.*--no-agent/i);
 });
 
 test('prints a support record when snapshot startup fails', async () => {
@@ -156,6 +157,8 @@ test('prints a support record when snapshot startup fails', async () => {
         '--repo',
         repo,
         '--worktree',
+        '--agent',
+        'codex',
         '--support-record',
         '--port',
         '0',
@@ -226,6 +229,8 @@ test('keeps the failed build process exit code', async () => {
         '--repo',
         repo,
         '--worktree',
+        '--agent',
+        'codex',
         '--support-record',
       ],
       {
@@ -291,6 +296,8 @@ test('prints a support record when the summary generator is killed', async () =>
           '--repo',
           repo,
           '--worktree',
+          '--agent',
+          'codex',
           '--support-record',
           '--codex-bin',
           agent,

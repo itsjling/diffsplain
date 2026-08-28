@@ -69,6 +69,8 @@ function present(repo, summaries, output, codex, environment = {}) {
       '--repo',
       repo,
       '--worktree',
+      '--agent',
+      'codex',
       '--summaries',
       summaries,
       '--output',

@@ -188,10 +188,12 @@ if (agentEnabled) {
   try {
     selectedAgent = await selectCodingAgent(
       cli.agent,
-      (agent) =>
-        codingAgentAvailability(agent, {
-          binary: codingAgentBinary(agent, { codexBin: cli.codexBin }),
-        }),
+      {
+        available: (agent) =>
+          codingAgentAvailability(agent, {
+            binary: codingAgentBinary(agent, { codexBin: cli.codexBin }),
+          }),
+      },
     );
     assertReasoningSupported(selectedAgent, cli.reasoning);
     const agentBinary = codingAgentBinary(selectedAgent, {

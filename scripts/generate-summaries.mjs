@@ -106,6 +106,7 @@ Options:
   --cache-dir PATH    Bare cache for fetched Git objects
   --agent NAME        Use codex, claude, copilot, cursor, or opencode
                       Cursor needs version 2026.08.11 or newer
+                      Without --agent, choose from usable agents in a terminal
   --codex-bin FILE    Codex CLI path (default: codex)
   --model NAME        Model passed to the coding agent
   --reasoning LEVEL   Agent reasoning effort when supported
@@ -114,7 +115,10 @@ Options:
   --support-record    Print a safe record if this run fails
   --support-record-file FILE
                       Write a safe record if this run fails
-  --force             Regenerate all notes instead of using cached notes`);
+  --force             Regenerate all notes instead of using cached notes
+
+Without --agent, an interactive terminal is required. In scripts, pass
+--agent NAME. Use diffsplain --no-agent for a plain review.`);
   process.exit(0);
 }
 
@@ -151,14 +155,6 @@ const reasoningLevels = new Set([
 ]);
 if (reasoning && !reasoningLevels.has(reasoning)) {
   fail('--reasoning must be minimal, low, medium, high, or xhigh');
-}
-if (requestedAgent) {
-  try {
-    await selectCodingAgent(requestedAgent, async () => true);
-    assertReasoningSupported(requestedAgent, reasoning);
-  } catch (error) {
-    fail(error instanceof Error ? error.message : String(error));
-  }
 }
 if (!/^[1-9]\d*$/.test(batchSizeValue) || Number(batchSizeValue) > 50) {
   fail('--batch-size must be a number from 1 to 50');
@@ -239,6 +235,14 @@ if (range) {
   }
   rangeBase = range.slice(0, separator);
   rangeHead = range.slice(separator + 2);
+}
+
+try {
+  await selectAgentForNotes();
+} catch (error) {
+  console.error(error instanceof Error ? error.message : String(error));
+  emitFailedSupportRecord(2);
+  process.exit(2);
 }
 
 const targetArgs = ['--repo', repo];
@@ -938,9 +942,12 @@ async function selectAgentForNotes() {
   try {
     selectedAgent = await selectCodingAgent(
       requestedAgent,
-      (agent) => codingAgentAvailability(agent, {
-        binary: codingAgentBinary(agent, { codexBin }),
-      }),
+      {
+        available: (agent) =>
+          codingAgentAvailability(agent, {
+            binary: codingAgentBinary(agent, { codexBin }),
+          }),
+      },
     );
     assertReasoningSupported(selectedAgent, reasoning);
     agentBinary = codingAgentBinary(selectedAgent, { codexBin });
@@ -1170,7 +1177,6 @@ try {
     );
   }
   if (paths.length === 0) {
-    if (requestedAgent) await selectAgentForNotes();
     workingSnapshot = rawSnapshot;
     workingSummaries = {
       files: {},
@@ -1187,7 +1193,6 @@ try {
     storeProgress(rawSnapshot, workingSummaries);
     console.log('No changed files to summarize.');
   } else {
-    await selectAgentForNotes();
     const generationSettings = {
       agent: selectedAgent,
       model: model || null,

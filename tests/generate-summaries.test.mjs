@@ -313,11 +313,48 @@ if (input.files.length) {
 }
 
 function run(repo, args, options = {}) {
-  return spawnSync(process.execPath, [script, "--repo", repo, ...args], {
+  const hasAgentChoice = args.includes("--agent") || args.includes("--no-agent");
+  const selectedArgs = hasAgentChoice ? args : ["--agent", "codex", ...args];
+  return spawnSync(process.execPath, [script, "--repo", repo, ...selectedArgs], {
     encoding: "utf8",
     ...options,
   });
 }
+
+test("requires an agent choice before building a standalone snapshot", async () => {
+  const repo = await makeRepo();
+  const summaries = join(repo, "notes.json");
+  const output = join(repo, "diff-data.json");
+
+  try {
+    const result = spawnSync(
+      process.execPath,
+      [
+        script,
+        "--repo",
+        repo,
+        "--range",
+        "HEAD~1..HEAD",
+        "--summaries",
+        summaries,
+        "--output",
+        output,
+      ],
+      {
+        encoding: "utf8",
+        env: { ...process.env, PATH: "" },
+      },
+    );
+
+    assert.equal(result.status, 2, result.stderr);
+    assert.match(result.stderr, /interactive terminal/i);
+    assert.match(result.stderr, /--agent.*--no-agent/i);
+    await assert.rejects(stat(summaries), /ENOENT/);
+    await assert.rejects(stat(output), /ENOENT/);
+  } finally {
+    await rm(repo, { recursive: true, force: true });
+  }
+});
 
 async function waitFor(read, timeout = 8_000) {
   const deadline = Date.now() + timeout;
@@ -732,6 +769,8 @@ test("runs a discovered provider with the summary process boundary", async () =>
       [
         "--range",
         "HEAD~1..HEAD",
+        "--agent",
+        "codex",
         "--codex-bin",
         codex.bin,
         "--summaries",
@@ -1464,6 +1503,8 @@ test("keeps completed batches after malformed output or a provider exit", async 
       const result = run(repo, [
         "--range",
         "HEAD~1..HEAD",
+        "--agent",
+        "codex",
         "--codex-bin",
         codex.bin,
         "--batch-size",
@@ -1835,6 +1876,8 @@ process.stdout.write(JSON.stringify({
         repo,
         "--range",
         "HEAD~1..HEAD",
+        "--agent",
+        "codex",
         "--codex-bin",
         codexBin,
         "--batch-size",
@@ -1953,6 +1996,8 @@ process.stdout.write(JSON.stringify(
         repo,
         "--range",
         "HEAD~1..HEAD",
+        "--agent",
+        "codex",
         "--codex-bin",
         codexBin,
         "--batch-size",
@@ -2263,19 +2308,20 @@ test("drops removed files without regenerating unchanged file notes", async () =
   }
 });
 
-test("completes an empty review without looking for an agent", async () => {
+test("completes an empty review without calling the selected agent", async () => {
   const repo = await makeRepo();
   const summaries = join(repo, "notes.json");
   const output = join(repo, "diff-data.json");
 
   try {
+    const codex = await fakeCodex(repo, {});
     const result = run(repo, [
       "--base",
       "HEAD",
       "--head",
       "HEAD",
       "--codex-bin",
-      join(repo, "missing-codex"),
+      codex.bin,
       "--summaries",
       summaries,
       "--output",
@@ -2290,6 +2336,7 @@ test("completes an empty review without looking for an agent", async () => {
     assert.deepEqual(snapshot.files, []);
     assert.equal(snapshot.notes.complete, true);
     assert.equal(snapshot.notes.status, "complete");
+    await assert.rejects(stat(codex.argsFile), /ENOENT/);
   } finally {
     await rm(repo, { recursive: true, force: true });
   }
@@ -2386,6 +2433,8 @@ process.stdout.write("{}");
         repo,
         "--range",
         "HEAD~1..HEAD",
+        "--agent",
+        "codex",
         "--codex-bin",
         codexBin,
         "--summaries",

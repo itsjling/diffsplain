@@ -50,7 +50,7 @@ test('documents provider inputs and limits', () => {
   assert.doesNotMatch(agentNotes, /--agent claude[\s\S]{0,100}--reasoning/);
 });
 
-test('documents the provider order and Cursor CLI', () => {
+test('documents the picker order and Cursor CLI', () => {
   const providerNames = enabledCodingAgents.map(
     (agent) => (agent === 'opencode'
       ? 'OpenCode'
@@ -67,6 +67,15 @@ test('documents the provider order and Cursor CLI', () => {
   }
 
   const notes = agentNotes.replace(/\s+/g, ' ');
+  for (const document of [docs, agentNotes]) {
+    const text = document.replace(/\s+/g, ' ');
+    assert.match(text, /interactive terminal/i);
+    assert.match(
+      text,
+      /does not choose an agent for you|pass `--agent NAME` or (use )?`--no-agent`/i,
+    );
+  }
+  assert.doesNotMatch(helpText, /Automatic agent selection/);
   assert.match(notes, /non-interactive Ask mode/i);
   assert.match(notes, /--trust/i);
   assert.match(notes, /--workspace/i);

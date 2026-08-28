@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { chmod, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { PassThrough } from 'node:stream';
 import test from 'node:test';
 import {
   agentCommand,
@@ -62,38 +63,131 @@ test('discovers executable providers on the configured path', async () => {
   }
 });
 
-test('selects the first usable agent during automatic discovery', async () => {
+function terminalInput(value = '') {
+  const input = new PassThrough();
+  input.isTTY = true;
+  input.end(value);
+  return input;
+}
+
+function terminalOutput() {
+  const output = new PassThrough();
+  output.isTTY = true;
+  let text = '';
+  output.on('data', (chunk) => {
+    text += chunk;
+  });
+  return { output, text: () => text };
+}
+
+test('lists usable agents and uses the selected terminal choice', async () => {
   const checked = [];
-  const selected = await selectCodingAgent(undefined, async (agent) => {
-    checked.push(agent);
-    return agent === 'cursor';
+  const input = terminalInput('2\n');
+  const terminal = terminalOutput();
+  const selected = await selectCodingAgent(undefined, {
+    available: async (agent) => {
+      checked.push(agent);
+      return agent === 'claude' || agent === 'cursor';
+    },
+    input,
+    output: terminal.output,
   });
 
   assert.equal(selected, 'cursor');
-  assert.deepEqual(checked, ['codex', 'claude', 'copilot', 'cursor']);
+  assert.deepEqual(checked, ['codex', 'claude', 'copilot', 'cursor', 'opencode']);
+  assert.match(terminal.text(), /1\. claude/);
+  assert.match(terminal.text(), /2\. cursor/);
+  assert.doesNotMatch(terminal.text(), /codex|copilot|opencode/);
 });
 
-test('fails when no coding agent is available', async () => {
+test('fails before discovery without an interactive terminal', async () => {
   const checked = [];
   await assert.rejects(
-    selectCodingAgent(undefined, async (agent) => {
-      checked.push(agent);
-      return false;
+    selectCodingAgent(undefined, {
+      available: async (agent) => {
+        checked.push(agent);
+        return false;
+      },
+      input: new PassThrough(),
+      output: new PassThrough(),
     }),
     (error) => {
-      assert.match(error.message, /no coding agent is available/i);
-      assert.match(error.message, /cursor, opencode/i);
+      assert.match(error.message, /interactive terminal/i);
+      assert.match(error.message, /--agent.*--no-agent/i);
       return true;
     },
   );
-  assert.deepEqual(checked, ['codex', 'claude', 'copilot', 'cursor', 'opencode']);
+  assert.deepEqual(checked, []);
+});
+
+test('fails cleanly when terminal input ends before a choice', async () => {
+  const terminal = terminalOutput();
+  await assert.rejects(
+    selectCodingAgent(undefined, {
+      available: async () => true,
+      input: terminalInput(),
+      output: terminal.output,
+    }),
+    /selection.*cancelled.*--agent.*--no-agent/i,
+  );
+});
+
+test('treats Ctrl+C as a cancelled terminal choice', async () => {
+  const input = new PassThrough();
+  input.isTTY = true;
+  const terminal = terminalOutput();
+  const selection = selectCodingAgent(undefined, {
+    available: async () => true,
+    input,
+    output: terminal.output,
+  });
+  await new Promise((resolve) => setImmediate(resolve));
+  input.end('\u0003');
+
+  await assert.rejects(
+    selection,
+    /selection.*cancelled.*--agent.*--no-agent/i,
+  );
+});
+
+test('fails when no coding agent is usable', async () => {
+  const terminal = terminalOutput();
+  await assert.rejects(
+    selectCodingAgent(undefined, {
+      available: async () => false,
+      input: terminalInput(),
+      output: terminal.output,
+    }),
+    (error) => {
+      assert.match(error.message, /no coding agent is available/i);
+      assert.match(error.message, /--agent.*--no-agent/i);
+      return true;
+    },
+  );
 });
 
 test('fails when the requested coding agent is unavailable', async () => {
   await assert.rejects(
-    selectCodingAgent('claude', async () => false),
+    selectCodingAgent('claude', { available: async () => false }),
     /claude.*not available/i,
   );
+});
+
+test('validates an explicit agent without opening a picker', async () => {
+  const checked = [];
+  const output = new PassThrough();
+  const selected = await selectCodingAgent('claude', {
+    available: async (agent) => {
+      checked.push(agent);
+      return true;
+    },
+    input: new PassThrough(),
+    output,
+  });
+
+  assert.equal(selected, 'claude');
+  assert.deepEqual(checked, ['claude']);
+  assert.equal(output.read(), null);
 });
 
 test('suggests every supported agent for an unknown name', async () => {
@@ -138,10 +232,12 @@ exit 1
       false,
     );
     await assert.rejects(
-      selectCodingAgent('cursor', async () => ({
-        available: false,
-        reason: old.reason,
-      })),
+      selectCodingAgent('cursor', {
+        available: async () => ({
+          available: false,
+          reason: old.reason,
+        }),
+      }),
       /Upgrade Cursor Agent/,
     );
   } finally {
