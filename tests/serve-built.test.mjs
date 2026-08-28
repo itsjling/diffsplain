@@ -69,6 +69,40 @@ function within(promise, message, timeout = 10_000) {
   });
 }
 
+function pause(milliseconds) {
+  return new Promise((resolve) => setTimeout(resolve, milliseconds));
+}
+
+async function providerPid(path) {
+  const deadline = Date.now() + 10_000;
+  while (Date.now() < deadline) {
+    try {
+      return Number((await readFile(path, 'utf8')).trim());
+    } catch {
+      await pause(25);
+    }
+  }
+  throw new Error('Provider did not record its process ID');
+}
+
+function processIsRunning(pid) {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    return error.code === 'EPERM';
+  }
+}
+
+async function waitForProcessExit(pid) {
+  const deadline = Date.now() + 10_000;
+  while (Date.now() < deadline) {
+    if (!processIsRunning(pid)) return;
+    await pause(25);
+  }
+  throw new Error(`Provider process ${pid} did not exit`);
+}
+
 async function stopIfRunning(child) {
   if (child?.exitCode === null) await stop(child);
 }
@@ -450,6 +484,7 @@ test('forces shutdown after a provider ignores SIGTERM', async () => {
   const directory = await mkdtemp(join(tmpdir(), 'diffsplain-chat-shutdown-'));
   const output = join(directory, 'diff-data.json');
   const provider = join(directory, 'codex');
+  const providerPidPath = join(directory, 'provider.pid');
   let child;
 
   try {
@@ -459,6 +494,7 @@ test('forces shutdown after a provider ignores SIGTERM', async () => {
     }));
     await writeFile(provider, [
       '#!/usr/bin/env node',
+      `require('node:fs').writeFileSync(${JSON.stringify(providerPidPath)}, String(process.pid));`,
       "process.on('SIGTERM', () => {});",
       'setInterval(() => {}, 1_000);',
       '',
@@ -488,7 +524,9 @@ test('forces shutdown after a provider ignores SIGTERM', async () => {
       body: JSON.stringify({ type: 'ask', scope: 'review', question: 'Wait?' }),
     });
     assert.equal(ask.status, 202);
+    const pid = await providerPid(providerPidPath);
     await within(stop(child), 'Server did not force-stop the provider', 5_000);
+    await waitForProcessExit(pid);
     assert.equal(child.signalCode, null);
   } finally {
     if (child && child.exitCode === null) await stop(child);

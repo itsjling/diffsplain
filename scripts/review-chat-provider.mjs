@@ -142,6 +142,7 @@ class ChildExecution {
     this.temporary = temporary;
     this.child = undefined;
     this.settled = false;
+    this.closed = false;
     this.forceKillTimer = undefined;
     this.stdout = [];
     this.stderr = [];
@@ -150,13 +151,23 @@ class ChildExecution {
       this.resolvePromise = resolvePromise;
       this.rejectPromise = rejectPromise;
     });
+    this.finished = new Promise((resolveFinished) => {
+      this.resolveFinished = resolveFinished;
+    });
   }
 
   open() {
     const result = spawnProcess(this.invocation);
-    if (result.error) this.reject(result.error);
+    if (result.error) {
+      this.reject(result.error);
+      this.finishClose();
+    }
     else this.openChild(result.child);
-    return { promise: this.promise, cancel: this.cancel.bind(this) };
+    return {
+      promise: this.promise,
+      finished: this.finished,
+      cancel: this.cancel.bind(this),
+    };
   }
 
   openChild(child) {
@@ -169,7 +180,7 @@ class ChildExecution {
     this.child.stdout.on('data', this.receiveStdout.bind(this));
     this.child.stderr.on('data', this.receiveStderr.bind(this));
     this.child.stdin.once('error', this.stdinError.bind(this));
-    this.child.once('error', this.reject.bind(this));
+    this.child.once('error', this.childError.bind(this));
     this.child.once('close', this.closeChild.bind(this));
     this.signal?.addEventListener('abort', this.terminate.bind(this), { once: true });
   }
@@ -202,8 +213,13 @@ class ChildExecution {
     if (error.code !== 'EPIPE') this.reject(error);
   }
 
+  childError(error) {
+    this.reject(error);
+    if (!this.running()) this.finishClose();
+  }
+
   running() {
-    return Boolean(this.child) && this.child.exitCode === null;
+    return Number.isInteger(this.child?.pid) && this.child.exitCode === null;
   }
 
   sendSignal(signal) {
@@ -244,9 +260,15 @@ class ChildExecution {
   settle(callback, value) {
     if (this.settled) return;
     this.settled = true;
+    callback(value);
+  }
+
+  finishClose() {
+    if (this.closed) return;
+    this.closed = true;
     this.clearForceKill();
     removeTemporary(this.temporary);
-    callback(value);
+    this.resolveFinished();
   }
 
   resolve(value) {
@@ -267,13 +289,12 @@ class ChildExecution {
 
   closeChild(status, signal) {
     this.clearForceKill();
-    if (this.settled) return;
-    const error = closeError(this, status, signal);
-    if (error) {
-      this.reject(error);
-      return;
+    if (!this.settled) {
+      const error = closeError(this, status, signal);
+      if (error) this.reject(error);
+      else this.parseOutput();
     }
-    this.parseOutput();
+    this.finishClose();
   }
 
   cancel() {
@@ -289,7 +310,7 @@ function providerChild(options) {
 
 function trackExecution(executions, execution) {
   executions.add(execution);
-  execution.promise.finally(() => executions.delete(execution)).catch(noChange);
+  execution.finished.finally(() => executions.delete(execution)).catch(noChange);
   return execution;
 }
 
@@ -315,7 +336,6 @@ function runRequest(options, executions, request) {
 
 function closeExecutions(executions) {
   for (const execution of executions) execution.cancel();
-  executions.clear();
 }
 
 export function createCodingAgentChatProvider(options = {}) {
