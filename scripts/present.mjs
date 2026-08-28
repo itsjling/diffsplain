@@ -224,6 +224,7 @@ if (isBaseWorktreeTarget({
   }
 }
 let selectedAgent;
+let selectedAgentBinary;
 beginSupportRecord();
 if (agentEnabled) {
   const selectionStarted = performance.now();
@@ -238,10 +239,10 @@ if (agentEnabled) {
       },
     );
     assertReasoningSupported(selectedAgent, cli.reasoning);
-    const agentBinary = codingAgentBinary(selectedAgent, {
+    selectedAgentBinary = codingAgentBinary(selectedAgent, {
       codexBin: cli.codexBin,
     });
-    recordSelectedProvider(selectedAgent, agentBinary);
+    recordSelectedProvider(selectedAgent, selectedAgentBinary);
     supportRecorder?.addStage(
       'agent',
       performance.now() - selectionStarted,
@@ -411,66 +412,98 @@ function scheduleBrowserOpen(match) {
   }, 750);
 }
 
+function optionalSiteArgument(flag, value) {
+  return value ? [flag, value] : [];
+}
+
+function chatAccessArguments() {
+  if (accessMode.mode !== 'checkout-read-only') return [];
+  return ['--chat-access-root', accessMode.root];
+}
+
+function chatAgentArguments() {
+  if (!agentEnabled) return [];
+  return [
+    '--chat-agent',
+    selectedAgent,
+    '--chat-binary',
+    selectedAgentBinary,
+    '--chat-access-mode',
+    accessMode.mode,
+    ...chatAccessArguments(),
+    ...optionalSiteArgument('--chat-model', cli.model),
+    ...optionalSiteArgument('--chat-reasoning', cli.reasoning),
+  ];
+}
+
+function siteArguments() {
+  return [
+    resolve(root, 'scripts/serve-built.mjs'),
+    '--output',
+    outputPath,
+    '--port',
+    String(port),
+    '--host',
+    host,
+    '--project',
+    projectKey,
+    '--access',
+    access,
+    ...optionalSiteArgument('--previous-access', previousAccess),
+    '--chat-snapshot',
+    outputPath,
+    ...chatAgentArguments(),
+    ...(!cli.portWasPassed ? ['--increment-port'] : []),
+  ];
+}
+
+function handleSiteLine(line) {
+  if (handleConnectedTab(line)) return;
+  console.log(line);
+  const match = line.match(/^Diffsplain: (http:\/\/\S+)$/);
+  markSiteReady(match);
+  scheduleBrowserOpen(match);
+}
+
+function listenForSiteLines(child) {
+  if (!child.stdout) return;
+  createInterface({ input: child.stdout }).on('line', handleSiteLine);
+}
+
+function siteFailed(code, signal) {
+  return Boolean(code || signal);
+}
+
+function recordSiteFailure(code) {
+  supportRecorder?.addStage('serve', performance.now() - siteStarted, 'failed');
+  emitSupportRecord(code || 1);
+}
+
+function handleSiteExit(code, signal) {
+  if (closing) return;
+  if (siteFailed(code, signal)) recordSiteFailure(code);
+  stop(code || (signal ? 1 : 0));
+}
+
+function handleSiteError(error) {
+  if (closing) return;
+  supportRecorder?.addStage('serve', performance.now() - siteStarted, 'failed');
+  console.error(`Could not start the local page: ${error.message}`);
+  emitSupportRecord();
+  stop(1);
+}
+
 function startSite() {
   if (closing || site) return;
   siteStarted = performance.now();
-  const child = spawn(
-    process.execPath,
-    [
-      resolve(root, 'scripts/serve-built.mjs'),
-      '--output',
-      outputPath,
-      '--port',
-      String(port),
-      '--host',
-      host,
-      '--project',
-      projectKey,
-      '--access',
-      access,
-      ...(previousAccess ? ['--previous-access', previousAccess] : []),
-      ...(!cli.portWasPassed ? ['--increment-port'] : []),
-    ],
-    { cwd: root, stdio: ['ignore', 'pipe', 'inherit'] },
-  );
+  const child = spawn(process.execPath, siteArguments(), {
+    cwd: root,
+    stdio: ['ignore', 'pipe', 'inherit'],
+  });
   site = child;
-
-  if (child.stdout) {
-    const siteLines = createInterface({ input: child.stdout });
-    siteLines.on('line', (line) => {
-      if (handleConnectedTab(line)) return;
-      console.log(line);
-      const match = line.match(/^Diffsplain: (http:\/\/\S+)$/);
-      markSiteReady(match);
-      scheduleBrowserOpen(match);
-    });
-  }
-
-  child.on('exit', (code, signal) => {
-    if (!closing) {
-      if (code || signal) {
-        supportRecorder?.addStage(
-          'serve',
-          performance.now() - siteStarted,
-          'failed',
-        );
-        emitSupportRecord(code || 1);
-      }
-      stop(code || (signal ? 1 : 0));
-    }
-  });
-  child.on('error', (error) => {
-    if (!closing) {
-      supportRecorder?.addStage(
-        'serve',
-        performance.now() - siteStarted,
-        'failed',
-      );
-      console.error(`Could not start the local page: ${error.message}`);
-      emitSupportRecord();
-      stop(1);
-    }
-  });
+  listenForSiteLines(child);
+  child.on('exit', handleSiteExit);
+  child.on('error', handleSiteError);
 }
 
 function snapshotState() {
