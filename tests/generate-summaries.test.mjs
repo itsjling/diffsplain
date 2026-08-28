@@ -356,6 +356,74 @@ test("requires an agent choice before building a standalone snapshot", async () 
   }
 });
 
+test("exits after SIGTERM while waiting for an interactive agent choice", async () => {
+  const repo = await makeRepo();
+  const bin = join(repo, "bin");
+  const terminalPrelude = join(repo, "terminal-prelude.cjs");
+  let child;
+
+  try {
+    await mkdir(bin);
+    const codex = join(bin, "codex");
+    await writeFile(codex, "#!/bin/sh\nexit 0\n");
+    await chmod(codex, 0o755);
+    await writeFile(
+      terminalPrelude,
+      `Object.defineProperties(process.stdin, {
+  isTTY: { value: true },
+  setRawMode: { value: () => {} },
+});
+Object.defineProperty(process.stderr, "isTTY", { value: true });
+`,
+    );
+
+    child = spawn(
+      process.execPath,
+      [
+        "--require",
+        terminalPrelude,
+        script,
+        "--repo",
+        repo,
+        "--range",
+        "HEAD~1..HEAD",
+      ],
+      {
+        env: { ...process.env, PATH: bin },
+        stdio: "pipe",
+      },
+    );
+    let stderr = "";
+    child.stderr.on("data", (chunk) => {
+      stderr += chunk;
+    });
+    await waitFor(() => /Enter a number/.test(stderr), 2_000);
+
+    const result = await new Promise((resolve, reject) => {
+      const timer = setTimeout(
+        () => reject(new Error("Summary generator did not stop after SIGTERM")),
+        2_000,
+      );
+      child.once("error", reject);
+      child.once("close", (code, signal) => {
+        clearTimeout(timer);
+        resolve({ code, signal });
+      });
+      child.kill("SIGTERM");
+    });
+    child = undefined;
+
+    assert.deepEqual(result, { code: 2, signal: null });
+    assert.match(stderr, /Agent selection was cancelled/i);
+  } finally {
+    if (child?.exitCode === null && child?.signalCode === null) {
+      child.kill("SIGKILL");
+      await new Promise((resolve) => child.once("close", resolve));
+    }
+    await rm(repo, { recursive: true, force: true });
+  }
+});
+
 async function waitFor(read, timeout = 8_000) {
   const deadline = Date.now() + timeout;
   let lastError;

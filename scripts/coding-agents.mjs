@@ -291,7 +291,7 @@ async function usableCodingAgents(available) {
   return { usable, cursorReason };
 }
 
-function selectFromTerminal(agents, { input, output }) {
+function selectFromTerminal(agents, { input, output, signal }) {
   output.write('Choose a coding agent:\n');
   for (const [index, agent] of agents.entries()) {
     output.write(`${index + 1}. ${agent}\n`);
@@ -304,12 +304,18 @@ function selectFromTerminal(agents, { input, output }) {
     const finish = (callback, value) => {
       if (settled) return;
       settled = true;
+      signal?.removeEventListener('abort', onAbort);
       picker.close();
       callback(value);
+    };
+    const onAbort = () => {
+      finish(reject, selectionCancelledError());
     };
     const promptAgain = () => {
       output.write(`Choose a number from 1 to ${agents.length}, or press Ctrl+C to cancel: `);
     };
+    signal?.addEventListener('abort', onAbort, { once: true });
+    if (signal?.aborted) onAbort();
     picker.on('SIGINT', () => {
       finish(reject, selectionCancelledError());
     });
@@ -337,6 +343,7 @@ export async function selectCodingAgent(
     available = commandAvailable,
     input = process.stdin,
     output = process.stderr,
+    signal,
   } = {},
 ) {
   if (requested) {
@@ -348,7 +355,7 @@ export async function selectCodingAgent(
   }
   const { usable, cursorReason } = await usableCodingAgents(available);
   if (!usable.length) throw noAvailableAgentError(cursorReason);
-  return selectFromTerminal(usable, { input, output });
+  return selectFromTerminal(usable, { input, output, signal });
 }
 
 // fallow-ignore-next-line complexity -- each supported agent has one override rule.

@@ -185,6 +185,7 @@ const remote = option('--remote') || 'origin';
 const force = rawArgs.includes('--force');
 const snapshotPath = option('--snapshot');
 const activeAgentProcesses = new Set();
+const selectionAbortController = new AbortController();
 let interrupted = false;
 
 function recordSyncStage(name, action) {
@@ -213,6 +214,7 @@ async function recordAsyncStage(name, action) {
 
 function interrupt() {
   interrupted = true;
+  selectionAbortController.abort();
   for (const child of activeAgentProcesses) child.kill('SIGTERM');
 }
 
@@ -947,6 +949,7 @@ async function selectAgentForNotes() {
           codingAgentAvailability(agent, {
             binary: codingAgentBinary(agent, { codexBin }),
           }),
+        signal: selectionAbortController.signal,
       },
     );
     assertReasoningSupported(selectedAgent, reasoning);
