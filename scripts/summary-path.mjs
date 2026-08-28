@@ -43,7 +43,9 @@ export function summaryPath({
         ? { kind: 'checkout', base: base || 'default', remote }
         : base && head
           ? { kind: 'range', base, head }
-          : { kind: 'worktree' };
+          : base
+            ? { kind: 'base-worktree', base }
+            : { kind: 'worktree' };
   const key = createHash('sha256')
     .update(JSON.stringify({ repo, target }))
     .digest('hex')

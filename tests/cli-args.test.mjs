@@ -178,6 +178,24 @@ test('passes the worktree target to both builders unchanged', () => {
   assert.deepEqual(parsed.agentArgs, parsed.feedArgs);
 });
 
+test('passes a base-only working-tree target to both builders unchanged', () => {
+  const parsed = parseCliArgs(
+    ['--repo', 'repos/widgets', '--base', 'release-1', '--no-agent'],
+    {
+      callerDirectory: cwd,
+      pathExists: (path) => path === resolve(cwd, 'repos/widgets'),
+    },
+  );
+
+  assert.deepEqual(parsed.feedArgs, [
+    '--repo',
+    resolve(cwd, 'repos/widgets'),
+    '--base',
+    'release-1',
+  ]);
+  assert.deepEqual(parsed.agentArgs, parsed.feedArgs);
+});
+
 test('keeps an existing repo path local', () => {
   const parsed = parseCliArgs(['repos/widgets', '--pr', '42'], {
     callerDirectory: cwd,
@@ -509,12 +527,11 @@ test('rejects conflicting review targets', () => {
     ['--worktree', '--branch', 'topic'],
     ['--worktree', '--pr', '42'],
     ['--worktree', '--base', 'main', '--head', 'topic'],
-    ['--base', 'main'],
     ['--head', 'topic'],
   ]) {
     assert.throws(
       () => parseCliArgs(args),
-      /cannot|must be used together/i,
+      /cannot|must be used/i,
       args.join(' '),
     );
   }

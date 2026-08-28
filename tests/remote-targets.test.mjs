@@ -1061,6 +1061,66 @@ test("watches same-size untracked rewrites with a fixed timestamp", async () => 
   }
 });
 
+test("watches a moved base ref and same-size untracked rewrites", async () => {
+  const fixture = await makeRemoteRepo();
+  const output = join(fixture.root, "base-worktree-watch.json");
+  const watchedPath = join(fixture.repo, "same-time.txt");
+  const fixedTime = new Date("2020-01-02T03:04:05.000Z");
+  const firstContent = "first value\n";
+  const secondContent = "later value\n";
+  let watched;
+
+  try {
+    assert.equal(Buffer.byteLength(firstContent), Buffer.byteLength(secondContent));
+    git(fixture.repo, "branch", "watch-base", fixture.baseOid);
+    await writeFile(watchedPath, firstContent);
+    await utimes(watchedPath, fixedTime, fixedTime);
+    watched = startWatcher(fixture.repo, [
+      "--base",
+      "watch-base",
+      "--watch",
+      "--output",
+      output,
+    ]);
+    await waitForSnapshot(
+      output,
+      watched,
+      (payload) =>
+        payload.repo.target.kind === "base-worktree" &&
+        payload.repo.target.base.oid === fixture.baseOid &&
+        payload.files.some((file) => file.path === "main.txt") &&
+        payload.files
+          .find((file) => file.path === "same-time.txt")
+          ?.patch.includes("first value"),
+    );
+
+    git(fixture.repo, "branch", "-f", "watch-base", fixture.mainOid);
+    const moved = await waitForSnapshot(
+      output,
+      watched,
+      (payload) =>
+        payload.repo.target.base.oid === fixture.mainOid &&
+        !payload.files.some((file) => file.path === "main.txt"),
+    );
+    assert.equal(moved.repo.target.base.ref, "watch-base");
+
+    await writeFile(watchedPath, secondContent);
+    await utimes(watchedPath, fixedTime, fixedTime);
+    const rewritten = await waitForSnapshot(
+      output,
+      watched,
+      (payload) =>
+        payload.files
+          .find((file) => file.path === "same-time.txt")
+          ?.patch.includes("later value"),
+    );
+    assert.equal(rewritten.repo.target.kind, "base-worktree");
+  } finally {
+    await stopIfRunning(watched);
+    await rm(fixture.root, { recursive: true, force: true });
+  }
+});
+
 test("watches untracked symlinks without reading their targets", async (t) => {
   const fixture = await makeRemoteRepo();
   const localOutput = join(fixture.root, "symlink-watch.json");

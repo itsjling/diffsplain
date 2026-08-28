@@ -137,6 +137,32 @@ test('requires an agent choice before the presenter starts', () => {
   assert.match(result.stderr, /--agent.*--no-agent/i);
 });
 
+test('rejects a missing base before agent selection or page setup', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'diffsplain-present-missing-base-'));
+  const repo = join(root, 'repo');
+  const output = join(root, 'snapshot.json');
+
+  try {
+    await mkdir(repo);
+    spawnSync('git', ['init', '-q'], { cwd: repo });
+    const result = spawnSync(
+      process.execPath,
+      [script, '--repo', repo, '--base', 'not-a-ref', '--output', output],
+      {
+        encoding: 'utf8',
+        env: { ...process.env, PATH: '' },
+      },
+    );
+
+    assert.equal(result.status, 2, result.stderr);
+    assert.match(result.stderr, /Could not resolve base ref "not-a-ref"/);
+    assert.doesNotMatch(result.stderr, /interactive terminal/i);
+    await assert.rejects(readFile(output, 'utf8'), /ENOENT/);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test('prints a support record when snapshot startup fails', async () => {
   const root = await mkdtemp(join(tmpdir(), 'diffsplain-present-support-'));
   const repo = join(root, 'not-a-repo');

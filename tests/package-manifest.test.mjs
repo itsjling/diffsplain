@@ -14,6 +14,7 @@ const requiredFiles = [
   'scripts/dev.mjs',
   'scripts/doctor.mjs',
   'scripts/generate-summaries.mjs',
+  'scripts/local-target.mjs',
   'scripts/mock-agent.mjs',
   'scripts/present.mjs',
   'scripts/presenter-runtime.mjs',

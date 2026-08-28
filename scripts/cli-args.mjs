@@ -80,8 +80,8 @@ Targets:
   --branch NAME       Show a remote branch against its default branch
   --pr NUMBER|URL     Show a GitHub pull request
   --worktree          Show only worktree changes against HEAD
-  --base REF --head REF
-                      Show an exact local Git range
+  --base REF [--head REF]
+                      Compare a base with the working tree, or show an exact range
 
 Options:
   --repo PATH|URL|OWNER/NAME
@@ -304,8 +304,8 @@ export function parseCliArgs(
   if (worktree && (branch || pullRequest || base || head)) {
     fail('--worktree cannot be combined with another target');
   }
-  if (!branch && !pullRequest && !worktree && Boolean(base) !== Boolean(head)) {
-    fail('--base and --head must be used together');
+  if (!branch && !pullRequest && !worktree && head && !base) {
+    fail('--head must be used with --base');
   }
   if (pullRequest && !validPullRequest(pullRequest)) {
     fail('--pr must be a positive number or a pull request URL');

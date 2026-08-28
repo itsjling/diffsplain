@@ -18,6 +18,10 @@ import {
 } from 'node:fs';
 import { basename, dirname, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import {
+  isBaseWorktreeTarget,
+  resolveBaseWorktreeCommit,
+} from './local-target.mjs';
 import { summaryPath } from './summary-path.mjs';
 
 const args = process.argv.slice(2);
@@ -45,8 +49,8 @@ Targets:
   --pr NUMBER|URL     Fetch and show a GitHub pull request
   --branch NAME       Fetch and show a remote branch
   --checkout          Show the current checkout against its default branch
-  --base REF --head REF
-                      Show an exact local Git range
+  --base REF [--head REF]
+                      Compare a base with the working tree, or show an exact range
   (no target)         Show worktree changes against HEAD
 
 Options:
@@ -88,6 +92,14 @@ const cacheRoot = cacheOption
   ? resolve(cacheOption)
   : resolve(projectRoot, '.cache/git');
 const remoteMode = Boolean(prOption || branchOption);
+const baseWorktreeOption = isBaseWorktreeTarget({
+  base: baseOption,
+  branch: branchOption,
+  checkout: checkoutOption,
+  head: headOption,
+  pullRequest: prOption,
+  worktree: worktreeOption,
+});
 const watching = has('--watch');
 const watchContent = has('--watch-content');
 const ignoreSummaryWatch = has('--ignore-summary-watch');
@@ -117,13 +129,8 @@ if (
 ) {
   fail('--worktree cannot be combined with another target');
 }
-if (
-  !prOption &&
-  !branchOption &&
-  !checkoutOption &&
-  Boolean(baseOption) !== Boolean(headOption)
-) {
-  fail('--base and --head must be used together');
+if (!prOption && !branchOption && !checkoutOption && headOption && !baseOption) {
+  fail('--head must be used with --base');
 }
 
 const repoPath = (file) => {
@@ -832,10 +839,13 @@ function resolveCheckoutTarget() {
 function resolveLocalTarget() {
   const currentHead = tryRepo(['rev-parse', '--verify', 'HEAD']);
   const worktree = !baseOption && !headOption;
+  const baseWorktree = baseWorktreeOption;
   const branch = tryRepo(['branch', '--show-current']) || undefined;
   let range;
   if (worktree) {
     range = currentHead ? [currentHead] : [runRepo(['mktree']).trim()];
+  } else if (baseWorktree) {
+    range = [resolveBaseWorktreeCommit(repo, baseOption)];
   } else {
     range = [
       runRepo(['rev-parse', `${baseOption}^{commit}`]).trim(),
@@ -843,35 +853,44 @@ function resolveLocalTarget() {
     ];
   }
   const resolvedBase = range[0];
-  const resolvedHead = worktree ? currentHead || 'WORKTREE' : range[1];
+  const resolvedHead = worktree || baseWorktree
+    ? currentHead || 'WORKTREE'
+    : range[1];
   const remoteUrl = tryRepo(['remote', 'get-url', 'origin']) || undefined;
   return {
-    kind: worktree ? 'worktree' : 'range',
+    kind: worktree ? 'worktree' : baseWorktree ? 'base-worktree' : 'range',
     runGit: runRepo,
     range,
     base: resolvedBase,
     head: resolvedHead,
     branch,
     remote: remoteUrl ? { name: 'origin', url: remoteUrl } : undefined,
-    sourceRepositoryUrl: worktree
+    sourceRepositoryUrl: worktree || baseWorktree
       ? undefined
       : githubRepository(remoteUrl)?.webUrl,
-    baseRepositoryUrl: worktree
+    baseRepositoryUrl: worktree || baseWorktree
       ? undefined
       : githubRepository(remoteUrl)?.webUrl,
     comparisonCommitsOnRemote:
       !worktree &&
+      !baseWorktree &&
       Boolean(
         remoteUrl &&
           remoteContainsCommits(remoteUrl, [resolvedBase, resolvedHead]),
       ),
     target: worktree
       ? { kind: 'worktree', base: { ref: 'HEAD', oid: currentHead || null } }
-      : {
-          kind: 'range',
-          base: { ref: baseOption, oid: resolvedBase },
-          head: { ref: headOption, oid: resolvedHead },
-        },
+      : baseWorktree
+        ? {
+            kind: 'base-worktree',
+            base: { ref: baseOption, oid: resolvedBase },
+            head: { ref: 'WORKTREE', oid: currentHead || null },
+          }
+        : {
+            kind: 'range',
+            base: { ref: baseOption, oid: resolvedBase },
+            head: { ref: headOption, oid: resolvedHead },
+          },
     changeDefaults: worktree
       ? {
           title: branch
@@ -883,6 +902,14 @@ function resolveLocalTarget() {
           highlights: [],
           risks: [],
         }
+      : baseWorktree
+        ? {
+            title: `Changes since ${baseOption}`,
+            summary: `Shows commits and working-tree changes since ${baseOption}.`,
+            why: 'Reviews the working tree against the chosen base without changing the repo.',
+            highlights: [],
+            risks: [],
+          }
       : {},
   };
 }
@@ -1008,7 +1035,11 @@ function build() {
   );
   const patches = trackedPatches(allTrackedFiles, target);
 
-  if (target.kind === 'worktree' || target.kind === 'checkout') {
+  if (
+    target.kind === 'worktree' ||
+    target.kind === 'base-worktree' ||
+    target.kind === 'checkout'
+  ) {
     const trackedPaths = new Set(nameStatus.map((file) => file.path));
     const untracked = tryRepo([
       'ls-files',
@@ -1268,8 +1299,11 @@ function fingerprint() {
     ].join('|');
   }
   const content = createHash('sha256');
+  const base = baseWorktreeOption
+    ? resolveBaseWorktreeCommit(repo, baseOption)
+    : 'HEAD';
   content.update(
-    tryRepo(['diff', '--no-ext-diff', '--no-textconv', '--binary', 'HEAD', '--']),
+    tryRepo(['diff', '--no-ext-diff', '--no-textconv', '--binary', base, '--']),
   );
   const untracked = tryRepo([
     'ls-files',
@@ -1284,6 +1318,7 @@ function fingerprint() {
     fingerprintUntrackedPath(content, path);
   }
   return [
+    baseWorktreeOption ? base : undefined,
     tryRepo(['rev-parse', 'HEAD']),
     tryRepo(['status', '--porcelain=v1', '--untracked-files=all']),
     content.digest('hex'),

@@ -23,6 +23,7 @@ See the [CLI guide](/cli/) for all review commands.
 | --- | --- | --- | --- | --- |
 | Current checkout (no target flag) | Default-branch merge base through the current checkout | Local commits, staged, unstaged, and untracked files | May query the remote to find its default branch; does not fetch | Local state every two seconds |
 | `--worktree` | `HEAD` through the current worktree | Staged, unstaged, and untracked files; excludes prior commits | No Git network | Local state every two seconds |
+| `--base REF` | The resolved base commit through the current worktree | Later commits, staged, unstaged, and untracked files | No Git network | Local state every two seconds |
 | `--base REF --head REF` | The two resolved commit trees | None | No Git network | Moved refs every two seconds |
 | `--branch NAME` | Remote base/head merge base through the remote branch head | None | Fetches into the Diffsplain bare cache | Remote data every 30 seconds |
 | `--pr NUMBER` | Pull request base/head merge base through the pull request head | None | Reads pull request data with `gh`, then fetches into the bare cache | Remote data every 30 seconds |
@@ -66,6 +67,21 @@ bad or missing refresh leaves the last valid snapshot and selected file on
 screen while the page reconnects.
 
 In watch mode, remote pull requests and branches update every 30 seconds.
+
+## Base through the working tree
+
+Pass `--base REF` without `--head` to compare one exact base commit with the
+live working tree:
+
+```sh
+npx diffsplain --base release-1
+```
+
+Diffsplain resolves `REF` to a commit before it starts the review. The snapshot
+records that ref and commit as `base-worktree`, then records the current `HEAD`
+or `WORKTREE` as its head. It does not add source or comparison links, because
+the working tree has no remote commit. The watcher refreshes if the base ref,
+`HEAD`, tracked changes, untracked content, or saved notes change.
 
 ## Data and cleanup
 

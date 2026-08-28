@@ -20,6 +20,10 @@ import {
   parseAgentResponse,
   selectCodingAgent,
 } from './coding-agents.mjs';
+import {
+  isBaseWorktreeTarget,
+  resolveBaseWorktreeCommit,
+} from './local-target.mjs';
 import { summaryPath } from './summary-path.mjs';
 import {
   acquireLease,
@@ -93,8 +97,8 @@ Targets:
   --pr NUMBER|URL     Fetch and summarize a GitHub pull request
   --branch NAME       Fetch and summarize a remote branch
   --checkout          Summarize the checkout against its default branch
-  --base REF --head REF
-                      Summarize an exact local Git range
+  --base REF [--head REF]
+                      Summarize a base through the working tree, or an exact range
   --range BASE..HEAD  Short form for --base and --head
   (no target)         Summarize worktree changes against HEAD
 
@@ -181,6 +185,7 @@ const head = option('--head');
 const pr = option('--pr');
 const branch = option('--branch');
 const checkout = rawArgs.includes('--checkout');
+const worktree = rawArgs.includes('--worktree');
 const remote = option('--remote') || 'origin';
 const force = rawArgs.includes('--force');
 const snapshotPath = option('--snapshot');
@@ -224,6 +229,18 @@ process.once('SIGTERM', interrupt);
 if (range && (base || head)) {
   fail('--range cannot be used with --base or --head');
 }
+if (pr && branch) fail('--pr and --branch cannot be used together');
+if (pr && (base || head)) fail('--pr cannot be used with --base or --head');
+if (branch && head) fail('--branch cannot be used with --head');
+if (checkout && (pr || branch || head || worktree)) {
+  fail('--checkout cannot be combined with another target');
+}
+if (worktree && (pr || branch || base || head)) {
+  fail('--worktree cannot be combined with another target');
+}
+if (!pr && !branch && !checkout && head && !base) {
+  fail('--head must be used with --base');
+}
 
 let rangeBase;
 let rangeHead;
@@ -237,6 +254,23 @@ if (range) {
   }
   rangeBase = range.slice(0, separator);
   rangeHead = range.slice(separator + 2);
+}
+
+if (isBaseWorktreeTarget({
+  base,
+  branch,
+  checkout,
+  head,
+  pullRequest: pr,
+  worktree,
+})) {
+  try {
+    resolveBaseWorktreeCommit(repo, base);
+  } catch (error) {
+    console.error(error instanceof Error ? error.message : String(error));
+    emitFailedSupportRecord(2);
+    process.exit(2);
+  }
 }
 
 try {
@@ -253,7 +287,7 @@ for (const name of ['--pr', '--branch', '--remote']) {
   if (value) targetArgs.push(name, value);
 }
 if (checkout) targetArgs.push('--checkout');
-if (rawArgs.includes('--worktree')) targetArgs.push('--worktree');
+if (worktree) targetArgs.push('--worktree');
 const selectedBase = rangeBase || base;
 const selectedHead = rangeHead || head;
 const summariesPath = summaryPath({

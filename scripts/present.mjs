@@ -22,6 +22,10 @@ import {
   codingAgentBinary,
   selectCodingAgent,
 } from './coding-agents.mjs';
+import {
+  isBaseWorktreeTarget,
+  resolveBaseWorktreeCommit,
+} from './local-target.mjs';
 import { doctorReport } from './doctor.mjs';
 import { accessTokenDirectory } from './access-token.mjs';
 import { cacheStatus, clearCache, formatCacheStatus, pruneCache } from './cache.mjs';
@@ -178,9 +182,33 @@ function emitSupportRecord(code = 1) {
   }
 }
 
+function targetOption(args, name) {
+  const index = args.indexOf(name);
+  return index === -1 ? undefined : args[index + 1];
+}
+
 const { agentEnabled, browserEnabled, host, port } = cli;
 const feedArgs = [...cli.feedArgs];
 const agentArgs = [...cli.agentArgs];
+const base = targetOption(feedArgs, '--base');
+const head = targetOption(feedArgs, '--head');
+const branch = targetOption(feedArgs, '--branch');
+const checkout = feedArgs.includes('--checkout');
+if (isBaseWorktreeTarget({
+  base,
+  branch,
+  checkout,
+  head,
+  pullRequest: targetOption(feedArgs, '--pr'),
+  worktree: feedArgs.includes('--worktree'),
+})) {
+  try {
+    resolveBaseWorktreeCommit(targetOption(feedArgs, '--repo'), base);
+  } catch (error) {
+    console.error(error.message);
+    process.exit(2);
+  }
+}
 let selectedAgent;
 beginSupportRecord();
 if (agentEnabled) {

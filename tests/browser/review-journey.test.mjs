@@ -477,6 +477,22 @@ test("shows error, empty, binary, truncated, and refreshed review states on desk
     );
     await page.getByText("Written by GPT 5.6 Sol (Codex)").waitFor();
 
+    const baseWorktree = fixture();
+    baseWorktree.version = "base-worktree";
+    baseWorktree.repo.base = "release-base-commit";
+    baseWorktree.repo.target = {
+      kind: "base-worktree",
+      base: { ref: "release-base", oid: "release-base-commit" },
+      head: { ref: "WORKTREE", oid: "fixture-head" },
+    };
+    await writeSnapshot(baseWorktree);
+    await page.getByText("release-base → working tree").waitFor();
+    await page.waitForFunction(
+      () =>
+        document.title ===
+        "browser-fixture · release-base → working tree — Diffsplain",
+    );
+
     const pullRequest = fixture();
     pullRequest.version = "pull-request";
     pullRequest.change.number = 42;

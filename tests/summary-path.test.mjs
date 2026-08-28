@@ -22,6 +22,7 @@ function path(options = {}) {
 test("keeps every implicit target in a target-specific cache file", () => {
   const worktree = path();
   const checkout = path({ checkout: true, remote: "origin" });
+  const baseWorktree = path({ base: "main" });
   const range = path({ base: "main", head: "feature" });
   const branch = path({ branch: "feature", remote: "origin" });
   const pullRequest = path({ pr: "198", remote: "origin" });
@@ -29,6 +30,7 @@ test("keeps every implicit target in a target-specific cache file", () => {
   for (const [kind, value] of Object.entries({
     worktree,
     checkout,
+    "base-worktree": baseWorktree,
     range,
     branch,
     pr: pullRequest,
@@ -49,6 +51,7 @@ test("keeps every implicit target in a target-specific cache file", () => {
   );
   assert.notEqual(worktree, checkout);
   assert.notEqual(checkout, range);
+  assert.notEqual(baseWorktree, range);
   assert.notEqual(range, branch);
   assert.notEqual(branch, pullRequest);
 });

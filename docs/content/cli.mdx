@@ -72,6 +72,19 @@ The watcher refreshes the page as the worktree changes. It keeps notes for
 files whose patches did not change and asks the agent only about new or changed
 files.
 
+## Base through the working tree
+
+Pass `--base` without `--head` to compare that exact commit with the current
+working tree. This includes later commits, staged changes, unstaged changes,
+and untracked files:
+
+```sh
+npx diffsplain --base release-1
+```
+
+The page shows the short base ref followed by `working tree`. If the ref moves,
+the watcher refreshes the review against its new commit.
+
 ## Exact local ranges
 
 Pass two refs that exist in the chosen repo:
@@ -149,6 +162,7 @@ pnpm run doctor
 | `--pr NUMBER\|URL` | Review a GitHub pull request. |
 | `--branch NAME` | Compare a remote branch with its default branch. |
 | `--worktree` | Review tracked and untracked changes against `HEAD`. |
+| `--base REF` | Compare that exact commit with the live working tree. |
 | `--base REF --head REF` | Review an exact local range. |
 | `--agent NAME` | Use `codex`, `claude`, `copilot`, `cursor`, or `opencode`. |
 | `--no-agent` | Show the diff without agent notes. |
@@ -171,9 +185,10 @@ pnpm run doctor
 | `-v`, `--version` | Show the installed version. |
 
 Remote repos need `--branch` or `--pr`. You cannot combine two target options.
-For an exact local range, `--base` and `--head` must appear together. A branch
-can use `--base` without `--head`; it cannot use `--head`. `--worktree` cannot
-use another target. `--no-agent` cannot use `--summaries`. Paths passed to
+`--head` requires `--base`. Without `--head`, local `--base` compares that
+exact commit with the live working tree; a branch can also use `--base` as its
+remote base. `--worktree` cannot use another target. `--no-agent` cannot use
+`--summaries`. Paths passed to
 `--repo`, `--summaries`, `--output`, `--cache-dir`, and `--codex-bin` resolve
 from the current directory. `CODEX_BIN`, `CLAUDE_BIN`, `COPILOT_BIN`,
 `CURSOR_BIN`, and `OPENCODE_BIN` can select provider binaries. Supported agents

@@ -60,7 +60,15 @@ type DiffSnapshot = {
     remote?: string;
     remoteUrl?: string;
     target?: {
-      kind: "worktree" | "checkout" | "range" | "branch" | "pull-request";
+      kind:
+        | "worktree"
+        | "base-worktree"
+        | "checkout"
+        | "range"
+        | "branch"
+        | "pull-request";
+      base?: { ref: string; oid: string | null };
+      head?: { ref: string; oid: string | null };
     };
   };
   change: {
@@ -136,6 +144,9 @@ function changeScope(snapshot: DiffSnapshot) {
       ? "Empty repo → working tree"
       : "HEAD → working tree";
   }
+  if (repo.target?.kind === "base-worktree") {
+    return `${shortRef(repo.target.base?.ref || repo.base)} → working tree`;
+  }
   if (repo.target?.kind === "checkout") {
     if (repo.base === repo.head) {
       return "HEAD → working tree";
@@ -155,7 +166,9 @@ function changeScope(snapshot: DiffSnapshot) {
 function browserTitle(snapshot: DiffSnapshot) {
   const target = snapshot.change.number
     ? `PR #${snapshot.change.number}`
-    : snapshot.repo.branch || changeScope(snapshot);
+    : snapshot.repo.target?.kind === "base-worktree"
+      ? changeScope(snapshot)
+      : snapshot.repo.branch || changeScope(snapshot);
   return `${snapshot.repo.name} · ${target} — Diffsplain`;
 }
 

@@ -424,6 +424,41 @@ Object.defineProperty(process.stderr, "isTTY", { value: true });
   }
 });
 
+test("rejects a missing base before agent selection or snapshot work", async () => {
+  const repo = await makeRepo();
+  const summaries = join(repo, "notes.json");
+  const output = join(repo, "diff-data.json");
+
+  try {
+    const result = spawnSync(
+      process.execPath,
+      [
+        script,
+        "--repo",
+        repo,
+        "--base",
+        "not-a-ref",
+        "--summaries",
+        summaries,
+        "--output",
+        output,
+      ],
+      {
+        encoding: "utf8",
+        env: { ...process.env, PATH: "" },
+      },
+    );
+
+    assert.equal(result.status, 2, result.stderr);
+    assert.match(result.stderr, /Could not resolve base ref "not-a-ref"/);
+    assert.doesNotMatch(result.stderr, /interactive terminal/i);
+    await assert.rejects(stat(summaries), /ENOENT/);
+    await assert.rejects(stat(output), /ENOENT/);
+  } finally {
+    await rm(repo, { recursive: true, force: true });
+  }
+});
+
 async function waitFor(read, timeout = 8_000) {
   const deadline = Date.now() + timeout;
   let lastError;

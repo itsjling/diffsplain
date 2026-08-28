@@ -27,6 +27,7 @@ Common targets:
 npx diffsplain --pr 198
 npx diffsplain owner/repo --branch feature/my-change
 npx diffsplain --worktree
+npx diffsplain --base BASE_REF
 npx diffsplain --base BASE_REF --head HEAD_REF
 ```
 
@@ -45,6 +46,7 @@ Arguments:
 | `--pr NUMBER\|URL` | Review a GitHub pull request. |
 | `--branch NAME` | Compare a remote branch with its default branch. |
 | `--worktree` | Review tracked and untracked changes against `HEAD`. |
+| `--base REF` | Compare that exact commit with the live working tree. |
 | `--base REF --head REF` | Review an exact local range. |
 | `--agent NAME`, `--no-agent` | Choose a coding agent, or show a plain diff. |
 | `--model NAME` | Choose the model used for notes. |
