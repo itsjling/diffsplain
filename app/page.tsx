@@ -133,6 +133,7 @@ function noteWriter(notes?: DiffNotes) {
   return `${model} (${agent})`;
 }
 
+// fallow-ignore-next-line complexity -- This formats every supported review target.
 function changeScope(snapshot: DiffSnapshot) {
   const { repo } = snapshot;
   if (snapshot.change.number) return `PR #${snapshot.change.number}`;

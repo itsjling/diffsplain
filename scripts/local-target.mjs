@@ -8,9 +8,8 @@ export function isBaseWorktreeTarget({
   pullRequest,
   worktree,
 }) {
-  return Boolean(
-    base && !branch && !checkout && !head && !pullRequest && !worktree,
-  );
+  return Boolean(base) && [branch, checkout, head, pullRequest, worktree]
+    .every((value) => !value);
 }
 
 export function resolveBaseWorktreeCommit(repo, base) {

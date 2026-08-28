@@ -836,16 +836,63 @@ function resolveCheckoutTarget() {
   };
 }
 
+function optionalLocalValue(value) {
+  return value || undefined;
+}
+
+function localOrigin(remoteUrl) {
+  if (!remoteUrl) return undefined;
+  return { name: 'origin', url: remoteUrl };
+}
+
+function worktreeCommit(currentHead) {
+  return currentHead || null;
+}
+
+function baseWorktreeTarget(base, resolvedBase, currentHead) {
+  return {
+    kind: 'base-worktree',
+    base: { ref: base, oid: resolvedBase },
+    head: { ref: 'WORKTREE', oid: worktreeCommit(currentHead) },
+  };
+}
+
+function baseWorktreeChangeDefaults(base) {
+  return {
+    title: `Changes since ${base}`,
+    summary: `Shows commits and working-tree changes since ${base}.`,
+    why: 'Reviews the working tree against the chosen base without changing the repo.',
+    highlights: [],
+    risks: [],
+  };
+}
+
+function resolveBaseWorktreeTarget() {
+  const currentHead = tryRepo(['rev-parse', '--verify', 'HEAD']);
+  const resolvedBase = resolveBaseWorktreeCommit(repo, baseOption);
+  return {
+    kind: 'base-worktree',
+    runGit: runRepo,
+    range: [resolvedBase],
+    base: resolvedBase,
+    head: currentHead || 'WORKTREE',
+    branch: optionalLocalValue(tryRepo(['branch', '--show-current'])),
+    remote: localOrigin(tryRepo(['remote', 'get-url', 'origin'])),
+    sourceRepositoryUrl: undefined,
+    baseRepositoryUrl: undefined,
+    comparisonCommitsOnRemote: false,
+    target: baseWorktreeTarget(baseOption, resolvedBase, currentHead),
+    changeDefaults: baseWorktreeChangeDefaults(baseOption),
+  };
+}
+
 function resolveLocalTarget() {
   const currentHead = tryRepo(['rev-parse', '--verify', 'HEAD']);
   const worktree = !baseOption && !headOption;
-  const baseWorktree = baseWorktreeOption;
   const branch = tryRepo(['branch', '--show-current']) || undefined;
   let range;
   if (worktree) {
     range = currentHead ? [currentHead] : [runRepo(['mktree']).trim()];
-  } else if (baseWorktree) {
-    range = [resolveBaseWorktreeCommit(repo, baseOption)];
   } else {
     range = [
       runRepo(['rev-parse', `${baseOption}^{commit}`]).trim(),
@@ -853,44 +900,35 @@ function resolveLocalTarget() {
     ];
   }
   const resolvedBase = range[0];
-  const resolvedHead = worktree || baseWorktree
-    ? currentHead || 'WORKTREE'
-    : range[1];
+  const resolvedHead = worktree ? currentHead || 'WORKTREE' : range[1];
   const remoteUrl = tryRepo(['remote', 'get-url', 'origin']) || undefined;
   return {
-    kind: worktree ? 'worktree' : baseWorktree ? 'base-worktree' : 'range',
+    kind: worktree ? 'worktree' : 'range',
     runGit: runRepo,
     range,
     base: resolvedBase,
     head: resolvedHead,
     branch,
     remote: remoteUrl ? { name: 'origin', url: remoteUrl } : undefined,
-    sourceRepositoryUrl: worktree || baseWorktree
+    sourceRepositoryUrl: worktree
       ? undefined
       : githubRepository(remoteUrl)?.webUrl,
-    baseRepositoryUrl: worktree || baseWorktree
+    baseRepositoryUrl: worktree
       ? undefined
       : githubRepository(remoteUrl)?.webUrl,
     comparisonCommitsOnRemote:
       !worktree &&
-      !baseWorktree &&
       Boolean(
         remoteUrl &&
           remoteContainsCommits(remoteUrl, [resolvedBase, resolvedHead]),
       ),
     target: worktree
       ? { kind: 'worktree', base: { ref: 'HEAD', oid: currentHead || null } }
-      : baseWorktree
-        ? {
-            kind: 'base-worktree',
-            base: { ref: baseOption, oid: resolvedBase },
-            head: { ref: 'WORKTREE', oid: currentHead || null },
-          }
-        : {
-            kind: 'range',
-            base: { ref: baseOption, oid: resolvedBase },
-            head: { ref: headOption, oid: resolvedHead },
-          },
+      : {
+          kind: 'range',
+          base: { ref: baseOption, oid: resolvedBase },
+          head: { ref: headOption, oid: resolvedHead },
+        },
     changeDefaults: worktree
       ? {
           title: branch
@@ -902,14 +940,6 @@ function resolveLocalTarget() {
           highlights: [],
           risks: [],
         }
-      : baseWorktree
-        ? {
-            title: `Changes since ${baseOption}`,
-            summary: `Shows commits and working-tree changes since ${baseOption}.`,
-            why: 'Reviews the working tree against the chosen base without changing the repo.',
-            highlights: [],
-            risks: [],
-          }
       : {},
   };
 }
@@ -918,6 +948,7 @@ function resolveTarget() {
   if (prOption) return resolvePullRequestTarget();
   if (branchOption) return resolveBranchTarget();
   if (checkoutOption) return resolveCheckoutTarget();
+  if (baseWorktreeOption) return resolveBaseWorktreeTarget();
   return resolveLocalTarget();
 }
 
@@ -999,6 +1030,7 @@ function githubComparisonUrl(repositoryUrl, base, head) {
   return `${repositoryUrl}/compare/${encodeURIComponent(base)}...${encodeURIComponent(head)}`;
 }
 
+// fallow-ignore-next-line complexity -- Existing aggregation boundary; target handling stays in resolvers.
 function build() {
   const localWorkspace =
     tryRepo(['rev-parse', '--is-inside-work-tree']) === 'true';
