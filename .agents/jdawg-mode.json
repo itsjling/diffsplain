@@ -1,0 +1,9 @@
+{
+  "schema_version": 1,
+  "mode": "$jdawg-mode",
+  "shared_skills": "~/.agents/skills",
+  "sources": {
+    "mattpocock": "8b78b531ab965735c5dc74f6f7a219e1e37326df",
+    "pstack": "2a8044425c7bddf429c3bdedf3ab61e791d34d65"
+  }
+}

@@ -1,7 +1,12 @@
 # AGENTS.md
 
+## Verification
+
 - Run `pnpm run lint` and `pnpm test` after changes. Run `pnpm run docs:check`
   after docs changes.
+
+## Docs
+
 - Keep the root README limited to command use and local development.
 - Keep the landing page in `site/` and product docs in `docs/`.
 
@@ -35,6 +40,10 @@ maintainer adds the `automation-reviewed` label.
 ### Issue tracker
 
 Issues live in this repo's GitHub Issues. See `docs/agents/issue-tracker.md`.
+
+### Triage labels
+
+Use the default Matt Pocock triage labels. See `docs/agents/triage-labels.md`.
 
 ### Domain docs
 
