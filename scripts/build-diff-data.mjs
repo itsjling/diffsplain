@@ -47,7 +47,11 @@ const option = (name) => {
 };
 const options = (name) =>
   args.flatMap((argument, index) =>
-    argument === name && args[index + 1] ? [args[index + 1]] : [],
+    argument === name && args[index + 1]
+      ? [args[index + 1]]
+      : argument.startsWith(`${name}=`)
+        ? [argument.slice(name.length + 1)]
+        : [],
   );
 const has = (name) => args.includes(name);
 

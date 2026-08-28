@@ -15,6 +15,7 @@ import {
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
+import { parseCliArgs } from "../scripts/cli-args.mjs";
 import { summaryPath } from "../scripts/summary-path.mjs";
 
 const script = new URL("../scripts/generate-summaries.mjs", import.meta.url)
@@ -2900,6 +2901,87 @@ test("keeps excluded files out of automatic agent input and note totals", async 
     assert.equal(snapshot.notes.totalFiles, 1);
     assert.equal(snapshot.notes.completedFiles, 1);
     assert.equal(snapshot.notes.complete, true);
+  } finally {
+    await rm(repo, { recursive: true, force: true });
+  }
+});
+
+test("passes flag-shaped exclusions through the CLI to both builders", async () => {
+  const repo = await makeRepo();
+  const summaries = join(repo, "notes.json");
+  const output = join(repo, "diff-data.json");
+  const base = git(repo, "rev-parse", "HEAD");
+  const patterns = ["--help", "--force", "--worktree"];
+
+  try {
+    for (const pattern of patterns) {
+      await writeFile(join(repo, pattern), "before\n");
+    }
+    await writeFile(join(repo, "visible.txt"), "before\n");
+    git(repo, "add", "--all");
+    git(repo, "commit", "-qm", "add flag-shaped paths");
+    for (const pattern of patterns) {
+      await writeFile(join(repo, pattern), "after\n");
+    }
+    await writeFile(join(repo, "visible.txt"), "after\n");
+    git(repo, "add", "--all");
+    git(repo, "commit", "-qm", "change flag-shaped paths");
+
+    const codex = await recordingCodex(repo);
+    const parsed = parseCliArgs([
+      "--repo", repo,
+      "--base", base,
+      "--head", "HEAD",
+      "--agent", "codex",
+      "--codex-bin", codex.bin,
+      "--summaries", summaries,
+      "--output", output,
+      ...patterns.map((pattern) => `--exclude=${pattern}`),
+    ], { callerDirectory: repo });
+
+    const feed = spawnSync(process.execPath, [builder, ...parsed.feedArgs], {
+      cwd: repo,
+      encoding: "utf8",
+    });
+    assert.equal(feed.status, 0, feed.stderr);
+    const feedSnapshot = JSON.parse(await readFile(output, "utf8"));
+    assert.equal(feedSnapshot.repo.target.kind, "range");
+    for (const pattern of patterns) {
+      assert.equal(
+        feedSnapshot.files.find((file) => file.path === pattern).agentExcluded,
+        true,
+      );
+    }
+
+    const first = spawnSync(
+      process.execPath,
+      [script, ...parsed.agentArgs, "--agent", "codex"],
+      { cwd: repo, encoding: "utf8" },
+    );
+    assert.equal(first.status, 0, first.stderr);
+    const firstCalls = await recordedCalls(codex.calls);
+    assert.ok(firstCalls.length > 0);
+    const firstSnapshot = JSON.parse(await readFile(output, "utf8"));
+    assert.equal(firstSnapshot.repo.target.kind, "range");
+    for (const pattern of patterns) {
+      assert.equal(
+        firstSnapshot.files.find((file) => file.path === pattern).agentExcluded,
+        true,
+      );
+    }
+
+    const second = spawnSync(
+      process.execPath,
+      [script, ...parsed.agentArgs, "--agent", "codex"],
+      { cwd: repo, encoding: "utf8" },
+    );
+    assert.equal(second.status, 0, second.stderr);
+    assert.equal((await recordedCalls(codex.calls)).length, firstCalls.length);
+    const secondSnapshot = JSON.parse(await readFile(output, "utf8"));
+    assert.equal(
+      secondSnapshot.notes.agentReviewFingerprint,
+      firstSnapshot.notes.agentReviewFingerprint,
+    );
   } finally {
     await rm(repo, { recursive: true, force: true });
   }

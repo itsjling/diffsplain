@@ -10,7 +10,11 @@ const missing = () => false;
 
 function valuesFor(args, name) {
   return args.flatMap((argument, index) =>
-    argument === name ? [args[index + 1]] : []);
+    argument === name
+      ? [args[index + 1]]
+      : argument.startsWith(`${name}=`)
+        ? [argument.slice(name.length + 1)]
+        : []);
 }
 
 test('leaves agent selection open when no agent is passed', () => {
@@ -65,6 +69,32 @@ test('keeps repeated exclusion rules in encounter order for both builders', () =
   const expected = ['private/**', '!private/keep.txt', '\\!literal.txt'];
   assert.deepEqual(valuesFor(parsed.feedArgs, '--exclude'), expected);
   assert.deepEqual(valuesFor(parsed.agentArgs, '--exclude'), expected);
+  assert.equal(parsed.excludePatterns.join('\0'), expected.join('\0'));
+});
+
+test('forwards flag-shaped exclusion patterns as values for both builders', () => {
+  const parsed = parseCliArgs([
+    '--exclude',
+    'private/**',
+    '--exclude=--help',
+    '--exclude=--force',
+    '--exclude=--worktree',
+  ], {
+    callerDirectory: cwd,
+    pathExists: missing,
+  });
+
+  const expected = ['private/**', '--help', '--force', '--worktree'];
+  for (const args of [parsed.feedArgs, parsed.agentArgs]) {
+    assert.deepEqual(valuesFor(args, '--exclude'), expected);
+    assert.deepEqual(
+      args.filter((argument) => argument.startsWith('--exclude')),
+      expected.map((pattern) => `--exclude=${pattern}`),
+    );
+    for (const pattern of expected.slice(1)) {
+      assert.ok(!args.includes(pattern), `${pattern} must stay an exclusion value`);
+    }
+  }
   assert.equal(parsed.excludePatterns.join('\0'), expected.join('\0'));
 });
 

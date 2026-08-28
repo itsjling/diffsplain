@@ -97,12 +97,17 @@ function option(name) {
 
 function options(name) {
   return rawArgs.flatMap((argument, index) =>
-    argument === name ? [rawArgs[index + 1]] : [],
+    argument === name
+      ? [rawArgs[index + 1]]
+      : argument.startsWith(`${name}=`)
+        ? [argument.slice(name.length + 1)]
+        : [],
   );
 }
 
 for (let index = 0; index < rawArgs.length; index += 1) {
   const argument = rawArgs[index];
+  if (argument.startsWith('--exclude=')) continue;
   if (argument === '--help') continue;
   if (booleanFlags.has(argument)) continue;
   if (!valueFlags.has(argument)) fail(`Unknown option: ${argument}`);
@@ -379,7 +384,7 @@ function acquireOwnership() {
 }
 if (selectedBase) targetArgs.push('--base', selectedBase);
 if (selectedHead) targetArgs.push('--head', selectedHead);
-for (const rule of agentExcludeRules) targetArgs.push('--exclude', rule);
+for (const rule of agentExcludeRules) targetArgs.push(`--exclude=${rule}`);
 if (supportRecordPath) {
   targetArgs.push('--exclude-output', supportRecordPath);
 }

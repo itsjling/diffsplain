@@ -376,7 +376,7 @@ export function parseCliArgs(
 
   const feedArgs = [...commonArgs];
   for (const pattern of excludePatterns) {
-    feedArgs.push('--exclude', pattern);
+    feedArgs.push(`--exclude=${pattern}`);
   }
   const supportRecordFile = options.get('--support-record-file');
   if (supportRecordFile) {
@@ -387,7 +387,7 @@ export function parseCliArgs(
   }
   const agentArgs = [...commonArgs];
   for (const pattern of excludePatterns) {
-    agentArgs.push('--exclude', pattern);
+    agentArgs.push(`--exclude=${pattern}`);
   }
   if (options.has('--force')) agentArgs.push('--force');
   for (const name of [
