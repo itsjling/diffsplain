@@ -922,12 +922,14 @@ function notesWithoutFailures(notes = {}) {
 function publishSnapshot(snapshot, summaries) {
   const current = readJson(outputPath, null);
   const reviewFingerprint = snapshot.notes?.reviewFingerprint;
+  if (!reviewFingerprint) {
+    throw new Error('The supplied snapshot has no review fingerprint');
+  }
   if (
-    !reviewFingerprint ||
-    (current?.notes?.reviewFingerprint &&
-      current.notes.reviewFingerprint !== reviewFingerprint)
+    current?.notes?.reviewFingerprint &&
+    current.notes.reviewFingerprint !== reviewFingerprint
   ) {
-    throw new ReviewChangedError();
+    throw new Error('The published review does not match the supplied snapshot');
   }
 
   const lockPath = pathInsideRepo(summariesPath);
@@ -1297,7 +1299,10 @@ function currentReviewSnapshot() {
 function assertReviewFresh(snapshot) {
   const expected = snapshotFingerprint(snapshot);
   const current = snapshotFingerprint(currentReviewSnapshot());
-  if (!expected || current !== expected) throw new ReviewChangedError();
+  if (!expected || !current) {
+    throw new Error('The supplied snapshot has no review fingerprint');
+  }
+  if (current !== expected) throw new ReviewChangedError();
 }
 
 try {

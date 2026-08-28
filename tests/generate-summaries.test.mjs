@@ -347,10 +347,12 @@ if (call === 1 && scenario.replaceSnapshot) {
     scenario.replaceSnapshot.inputPath,
     JSON.stringify(replacement),
   );
-  writeFileSync(
-    scenario.replaceSnapshot.outputPath,
-    JSON.stringify(replacement),
-  );
+  if (scenario.replaceSnapshot.outputPath) {
+    writeFileSync(
+      scenario.replaceSnapshot.outputPath,
+      JSON.stringify(replacement),
+    );
+  }
 }
 const note = (path) => ({
   path,
@@ -1710,6 +1712,109 @@ test("rereads a supplied snapshot before it accepts provider output", async () =
     assert.equal(published.notes.reviewFingerprint, replacement.notes.reviewFingerprint);
     assert.equal(saved.files["changed.txt"].title, "Note 2 for changed.txt");
     assert.doesNotMatch(JSON.stringify(saved), /Note 1 for changed\.txt/);
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("stops when published output does not match a supplied snapshot", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "diffsplain-agent-snapshot-"));
+  const input = join(directory, "input.json");
+  const output = join(directory, "output.json");
+  const summaries = join(directory, "notes.json");
+
+  try {
+    const supplied = snapshot([
+      { path: "changed.txt", patch: "supplied", snippet: "supplied" },
+    ]);
+    const published = snapshot([
+      { path: "changed.txt", patch: "published", snippet: "published" },
+    ]);
+    published.notes.reviewFingerprint = "b".repeat(64);
+    await writeFile(input, JSON.stringify(supplied));
+    await writeFile(output, JSON.stringify(published));
+    const codex = await accessRecordingCodex(directory, directory);
+
+    const result = run(
+      directory,
+      [
+        "--snapshot",
+        input,
+        "--no-checkout-access",
+        "--codex-bin",
+        codex.bin,
+        "--jobs",
+        "1",
+        "--summaries",
+        summaries,
+        "--output",
+        output,
+      ],
+      { timeout: 5_000 },
+    );
+
+    assert.equal(result.status, 1, result.stderr);
+    assert.equal(result.error, undefined);
+    assert.match(result.stderr, /published review does not match/i);
+    assert.doesNotMatch(result.stdout, /Rebuilding the snapshot/);
+    const unchanged = JSON.parse(await readFile(output, "utf8"));
+    assert.equal(
+      unchanged.notes.reviewFingerprint,
+      published.notes.reviewFingerprint,
+    );
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("stops after only a supplied snapshot changes", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "diffsplain-agent-snapshot-"));
+  const input = join(directory, "input.json");
+  const output = join(directory, "output.json");
+  const summaries = join(directory, "notes.json");
+
+  try {
+    const initial = snapshot([
+      { path: "changed.txt", patch: "before", snippet: "before" },
+    ]);
+    const replacement = snapshot([
+      { path: "changed.txt", patch: "after", snippet: "after" },
+    ]);
+    replacement.notes.reviewFingerprint = "b".repeat(64);
+    await writeFile(input, JSON.stringify(initial));
+    await writeFile(output, JSON.stringify(initial));
+    const codex = await accessRecordingCodex(directory, directory, {
+      replaceSnapshot: { inputPath: input, value: replacement },
+    });
+
+    const result = run(
+      directory,
+      [
+        "--snapshot",
+        input,
+        "--no-checkout-access",
+        "--codex-bin",
+        codex.bin,
+        "--jobs",
+        "1",
+        "--summaries",
+        summaries,
+        "--output",
+        output,
+      ],
+      { timeout: 5_000 },
+    );
+
+    assert.equal(result.status, 1, result.stderr);
+    assert.equal(result.error, undefined);
+    assert.match(result.stdout, /review changed while notes were generated/i);
+    assert.match(result.stderr, /published review does not match/i);
+    assert.equal((await recordedCalls(codex.calls)).length, 1);
+    const unchanged = JSON.parse(await readFile(output, "utf8"));
+    assert.equal(
+      unchanged.notes.reviewFingerprint,
+      initial.notes.reviewFingerprint,
+    );
   } finally {
     await rm(directory, { recursive: true, force: true });
   }
