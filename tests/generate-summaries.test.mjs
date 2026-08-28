@@ -2469,6 +2469,7 @@ process.stdout.write(JSON.stringify(input.files.length ? { files: input.files.ma
     const capped = requests.find((value) => value.files.length === 0);
     const cappedContext = capped.existingFileNotes;
     const cappedPaths = Object.keys(cappedContext);
+    assert.deepEqual(capped.files, []);
     assert.ok(Buffer.byteLength(JSON.stringify(cappedContext)) <= 250_000);
     assert.ok(cappedPaths.length > 0);
     assert.ok(cappedPaths.length < files.length);
@@ -2476,6 +2477,9 @@ process.stdout.write(JSON.stringify(input.files.length ? { files: input.files.ma
       cappedPaths,
       files.slice(0, cappedPaths.length).map((file) => file.path),
     );
+    assert.ok(Object.values(cappedContext).every((note) =>
+      JSON.stringify(Object.keys(note).sort()) === JSON.stringify(["risks", "title", "what", "why"]),
+    ));
     const selected = requests.findLast((value) => value.files.length === 1);
     const context = selected.existingFileNotes;
     const contextPaths = Object.keys(context);

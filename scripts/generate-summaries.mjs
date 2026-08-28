@@ -382,7 +382,12 @@ function compactExistingFileNotes(snapshot, existingFiles, selected, baseBytes) 
     const path = file.path;
     const note = existingFiles[path];
     if (selected.has(path) || !note) continue;
-    const compactNote = { title: note.title, what: note.what, risks: note.risks };
+    const compactNote = {
+      title: note.title,
+      what: note.what,
+      ...(selected.size === 0 ? { why: note.why } : {}),
+      risks: note.risks,
+    };
     const entryBytes = Buffer.byteLength(
       `${hasEntries ? ',' : ''}${JSON.stringify(path)}:${JSON.stringify(compactNote)}`,
     );
