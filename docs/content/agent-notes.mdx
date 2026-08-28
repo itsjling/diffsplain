@@ -25,7 +25,7 @@ Pull requests, remote branches, and exact local ranges use `snapshot-only`
 because they may not map to the live checkout. In that mode, the agent gets
 only the supplied snapshot. It must not run commands, read other files, use the
 network, or edit anything. Pass `--no-checkout-access` to use this mode for any
-target. This option affects agent notes only.
+target. It limits both agent notes and review chat to the supplied snapshot.
 
 Codex uses its read-only sandbox. Claude uses permission mode `plan`. Cursor
 uses non-interactive Ask mode, its sandbox, `--trust`, and `--workspace`. In
@@ -59,6 +59,35 @@ npx diffsplain \
 The default batch size is 12 files. Smaller batches add the first notes to
 the open page sooner. All supported agents accept `--model`; only Codex and
 OpenCode accept `--reasoning`.
+
+## Ask the review agent
+
+When a review starts with a coding agent, the note pane also has **Ask agent**.
+It starts on **This file**. Choose **Review** to ask about the whole change.
+The note tab stays available, so chat does not replace the file note.
+
+Chat threads live only in the local review server's memory. Reloading the page
+keeps them while that server runs. Stopping the review clears them. Each thread
+belongs to one review fingerprint. When the snapshot changes, Diffsplain keeps
+the old history as stale and asks you to start a new thread before you ask
+again. A short snapshot read fault keeps visible history, blocks the composer,
+and shows a recovery message until the review is ready again.
+
+The page shows a running answer, lets you cancel it, and shows **Retry** only
+when the server allows a failed or cancelled question to run again. A blocked
+history can show **Retry compaction** when the server can compact it; otherwise
+start a new thread. Moving to another file or scope does not stop work. The
+page shows a small notice and a cancel control for work still running elsewhere.
+
+Answers use Markdown and carry path and line-range citations. The page renders
+headings, lists, links, inline and fenced code, block quotes, and line breaks.
+It does not render raw HTML or images. It also drops unsafe link schemes,
+including `javascript:` and `data:`.
+
+The chat endpoint accepts only the current access token from the local review
+page. A missing or old token cannot read or change its threads. Review-wide
+questions respect `--exclude` rules. A direct question about an excluded file
+may include that file, but this does not change the rules for review-wide chat.
 
 ## Exclude files from automatic notes
 

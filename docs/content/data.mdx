@@ -70,6 +70,24 @@ screen while the page reconnects.
 
 In watch mode, remote pull requests and branches update every 30 seconds.
 
+## Chat state and refresh
+
+When a review has a selected coding agent, the local server also keeps its
+chat threads in memory. The browser reads them from `/api/chat` with the active
+access token in the page URL. The server sends a `chat` event when a thread
+changes, while normal `update` events still refresh the diff snapshot.
+
+A thread records its review fingerprint. If a new snapshot has a different
+fingerprint, Diffsplain marks that thread stale and keeps it as prior history.
+It does not send another question with the old evidence. Start a new thread to
+ask against the new review. File navigation and switching between file and
+review scopes do not cancel a running answer.
+
+A missing or bad snapshot can leave prior chat history on screen. The page
+blocks new questions until the server reads a complete current snapshot again.
+Chat state is not part of `diff-data.json`, the note cache, or support records.
+It ends when the local review server stops.
+
 ## Base through the working tree
 
 Pass `--base REF` without `--head` to compare one exact base commit with the
