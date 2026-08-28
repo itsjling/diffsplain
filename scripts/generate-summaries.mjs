@@ -526,11 +526,13 @@ anything.
 ${responseInstruction} fileOverview lists the full change, files contains the
 patches that need new notes, and existingFileNotes contains completed notes.
 ${includeChange ? 'Use all three to cover the full review set in the change note.' : ''}
-State what changed and its likely purpose. Do not invent intent: when the reason
-is not clear, say what purpose the change appears to serve. Keep titles short,
-each prose field to one or two sentences, details to at most four items, and
-risks to at most three concrete items. Use an empty list when there is no useful
-detail or risk. For binary files, describe only the change shown by the metadata.`;
+State what changed. When the supplied patch or review evidence supports a
+purpose, state it directly. Do not invent intent: when the evidence does not
+establish the reason, say that the patch does not establish the reason. Keep
+titles short, each prose field to one or two sentences, details to at most four
+items, and risks to at most three concrete items. Use an empty list when there
+is no useful detail or risk. For binary files, describe only the change shown
+by the metadata.`;
 }
 
 function normalizedText(value, field, limit) {

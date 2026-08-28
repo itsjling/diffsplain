@@ -529,6 +529,59 @@ test("generates notes with Codex and rebuilds a selected range", async () => {
 
 });
 
+test("states supported purpose directly and names missing evidence", async () => {
+  const repo = await makeRepo();
+  const summaries = join(repo, "notes.json");
+  const output = join(repo, "diff-data.json");
+
+  try {
+    const codex = await fakeCodex(repo, notes({
+      "added.txt": {
+        title: "Add a text file",
+        what: "Adds the new file.",
+        why: "Makes the new content available.",
+        details: [],
+        risks: [],
+      },
+      "changed.txt": {
+        title: "Update text",
+        what: "Replaces the old line.",
+        why: "The patch does not establish the reason.",
+        details: [],
+        risks: [],
+      },
+    }));
+    const result = run(repo, [
+      "--range", "HEAD~1..HEAD", "--codex-bin", codex.bin,
+      "--summaries", summaries, "--output", output,
+    ]);
+    assert.equal(result.status, 0, result.stderr);
+
+    const args = JSON.parse(await readFile(codex.argsFile, "utf8"));
+    assert.match(
+      args.at(-1),
+      /When the supplied patch or review evidence supports a\npurpose, state it directly\./,
+    );
+    assert.doesNotMatch(args.at(-1), /appears to/i);
+    assert.match(
+      args.at(-1),
+      /when the evidence does not\nestablish the reason, say that the patch does not establish the reason\./i,
+    );
+
+    const writtenNotes = JSON.parse(await readFile(summaries, "utf8"));
+    assert.equal(
+      writtenNotes.files["added.txt"].why,
+      "Makes the new content available.",
+    );
+    assert.equal(
+      writtenNotes.files["changed.txt"].why,
+      "The patch does not establish the reason.",
+    );
+  } finally {
+    await rm(repo, { recursive: true, force: true });
+  }
+});
+
 test("enforces note output limits in schemas and saved file notes", async () => {
   const cases = [
     ["title", "x".repeat(161), /added\.txt\.title.*160/],
