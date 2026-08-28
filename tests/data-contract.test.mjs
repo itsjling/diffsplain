@@ -31,7 +31,12 @@ test('documents each supported target and its settled refresh contract', async (
     assert.match(data, new RegExp(target.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
   }
   assert.match(data, /Remote data every 30 seconds/);
-  assert.match(data, /It does not receive files\s+outside that snapshot/);
+  assert.match(data, /`snapshot-only`/);
+  assert.match(data, /`checkout-read-only`/);
+  assert.match(data, /`notes\.accessMode`/);
+  assert.match(data, /--no-checkout-access/);
+  assert.match(data, /ignored files, Git history, and symlink targets/);
+  assert.doesNotMatch(data, /does not receive files\s+outside that snapshot/i);
   assert.match(data, /--output FILE[\s\S]*stays at the chosen path until you delete it/);
   assert.match(data, /platform user cache/);
   assert.match(data, /installed package's\s+`\.cache\/git` folder/);

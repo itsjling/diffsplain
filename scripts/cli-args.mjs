@@ -39,6 +39,7 @@ export const cliOptions = defineCliOptions({
   '--version': { kind: 'flag' },
   '--agent': { kind: 'agent' },
   '--no-agent': { kind: 'no-agent' },
+  '--no-checkout-access': { kind: 'flag' },
   '--force': { kind: 'flag' },
   '--worktree': { kind: 'flag' },
   '--no-browser': { kind: 'flag' },
@@ -88,6 +89,8 @@ Options:
                       Repo to review (default: current repo)
   --agent NAME        Use codex, claude, copilot, cursor, or opencode
   --no-agent          Do not write agent notes
+  --no-checkout-access
+                      Limit agent notes to the supplied snapshot
   --model NAME        Model for agent notes
   --reasoning LEVEL   Agent reasoning effort when supported
   --batch-size COUNT  Maximum files per agent pass (default: ${batchSizeOption.default})
@@ -383,6 +386,9 @@ export function parseCliArgs(
     }
   }
   if (!noAgent) {
+    if (options.has('--no-checkout-access')) {
+      agentArgs.push('--no-checkout-access');
+    }
     for (const name of ['--batch-size', '--jobs']) {
       agentArgs.push(
         name,
@@ -459,6 +465,7 @@ export function parseCliArgs(
     version: false,
     agentEnabled: !noAgent,
     agent,
+    noCheckoutAccess: options.has('--no-checkout-access'),
     model: options.get('--model'),
     reasoning,
     codexBin: options.get('--codex-bin'),

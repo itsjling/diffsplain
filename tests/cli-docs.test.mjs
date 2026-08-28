@@ -50,6 +50,20 @@ test('documents provider inputs and limits', () => {
   assert.doesNotMatch(agentNotes, /--agent claude[\s\S]{0,100}--reasoning/);
 });
 
+test('documents checkout access and provider limits', () => {
+  for (const document of [docs, agentNotes, development]) {
+    assert.match(document, /--no-checkout-access/);
+    assert.match(document, /snapshot-only/);
+    assert.match(document, /checkout-read-only/);
+  }
+  const notes = agentNotes.replace(/\s+/g, ' ');
+  assert.match(notes, /ignored files, Git history, and symlink targets/);
+  assert.match(notes, /Copilot and OpenCode.*no proven native read-only mode/i);
+  assert.match(notes, /approval.*user/i);
+  assert.match(notes, /Diffsplain itself does not edit the review target/i);
+  assert.match(notes, /Agents run under your user permissions/i);
+});
+
 test('documents the picker order and Cursor CLI', () => {
   const providerNames = enabledCodingAgents.map(
     (agent) => (agent === 'opencode'

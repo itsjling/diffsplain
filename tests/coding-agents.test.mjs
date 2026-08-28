@@ -6,6 +6,7 @@ import { PassThrough } from 'node:stream';
 import test from 'node:test';
 import {
   agentCommand,
+  agentReadOnlyWarning,
   agentSupportsReasoning,
   codingAgentAvailability,
   codingAgentCapabilities,
@@ -245,7 +246,14 @@ exit 1
   }
 });
 
-test('builds non-interactive commands for each coding agent', () => {
+test('builds exact snapshot-only plans for each coding agent', () => {
+  const environment = {
+    HOME: '/Users/reviewer',
+    PATH: '/usr/bin',
+    XDG_CONFIG_HOME: '/custom/config',
+    APPDATA: '/custom/appdata',
+    PRIVATE_AGENT_TOKEN: 'must-not-pass',
+  };
   const common = {
     binary: '/agent',
     model: 'test-model',
@@ -254,110 +262,237 @@ test('builds non-interactive commands for each coding agent', () => {
     schema: { type: 'object' },
     schemaPath: '/tmp/schema.json',
     inputPath: '/tmp/input.json',
-    workingDirectory: '/work',
-    env: {},
+    accessMode: { mode: 'snapshot-only', reason: 'target-mismatch' },
+    env: environment,
   };
+  const snapshotEnvironment = { HOME: '/Users/reviewer', PATH: '/usr/bin' };
 
-  const codex = agentCommand({ ...common, agent: 'codex' });
-  assert.deepEqual(codex.args.slice(0, 2), ['exec', '--ephemeral']);
-  assert.ok(codex.args.includes('--output-schema'));
-  assert.ok(codex.args.includes('--skip-git-repo-check'));
-  assert.ok(codex.args.includes('--ignore-user-config'));
-  assert.ok(codex.args.includes('--ignore-rules'));
-  assert.ok(!codex.args.includes('agents.enabled=false'));
-  assert.ok(codex.args.includes('mcp_servers={}'));
-  assert.ok(codex.args.includes('plugins={}'));
-  assert.ok(codex.args.includes('sandbox_workspace_write.network_access=false'));
-  assert.ok(codex.args.includes('web_search="disabled"'));
-  assert.equal(codex.cwd, '/tmp');
-  assert.equal(codex.input, 'stdin');
-
-  const claude = agentCommand({ ...common, agent: 'claude' });
-  assert.ok(claude.args.includes('--json-schema'));
-  assert.ok(claude.args.includes('--no-session-persistence'));
-  assert.equal(claude.cwd, '/tmp');
-  assert.equal(claude.input, 'stdin');
-
-  const copilot = agentCommand({ ...common, agent: 'copilot' });
-  assert.ok(copilot.args.includes('--silent'));
-  assert.ok(copilot.args.includes('--no-ask-user'));
-  assert.match(copilot.args.at(-1), /@\/tmp\/input\.json/);
-  assert.equal(copilot.cwd, '/tmp');
-
-  const cursor = agentCommand({
-    ...common,
-    agent: 'cursor',
+  assert.deepEqual(agentCommand({ ...common, agent: 'codex' }), {
+    command: '/agent',
+    args: [
+      'exec', '--ephemeral', '--sandbox', 'read-only',
+      '--ignore-user-config', '--ignore-rules', '--color', 'never',
+      '--skip-git-repo-check', '-C', '/tmp', '--output-schema',
+      '/tmp/schema.json', '--config', 'mcp_servers={}', '--config',
+      'plugins={}', '--config', 'shell_environment_policy.inherit="none"',
+      '--config', 'sandbox_workspace_write.network_access=false', '--config',
+      'web_search="disabled"', '--model', 'test-model', '--config',
+      'model_reasoning_effort="low"', 'Write JSON.',
+    ],
+    input: 'stdin',
+    cwd: '/tmp',
+    env: snapshotEnvironment,
+  });
+  assert.deepEqual(agentCommand({ ...common, agent: 'claude' }), {
+    command: '/agent',
+    args: [
+      '--print', '--output-format', 'json', '--json-schema',
+      '{"type":"object"}', '--tools', '', '--no-session-persistence',
+      '--model', 'test-model', 'Write JSON.',
+    ],
+    input: 'stdin',
+    cwd: '/tmp',
+    env: snapshotEnvironment,
+  });
+  assert.deepEqual(agentCommand({ ...common, agent: 'copilot' }), {
+    command: '/agent',
+    args: [
+      '--silent', '--no-ask-user', '--no-color', '--no-custom-instructions',
+      '--no-remote', '--no-remote-export', '--add-dir=/tmp', '--model',
+      'test-model', '--prompt',
+      'Write JSON.\n\nRead the snapshot from @/tmp/input.json. Return JSON that matches this schema:\n{"type":"object"}',
+    ],
+    input: 'none',
+    cwd: '/tmp',
+    env: snapshotEnvironment,
+  });
+  assert.deepEqual(agentCommand({ ...common, agent: 'cursor' }), {
+    command: '/agent',
+    args: [
+      '--print', '--output-format', 'stream-json', '--mode', 'ask',
+      '--sandbox', 'enabled', '--trust', '--workspace', '/tmp', '--model',
+      'test-model',
+      'Write JSON.\n\nThe snapshot JSON follows this prompt on standard input. Return JSON that matches this schema:\n{"type":"object"}',
+    ],
+    input: 'stdin',
+    cwd: '/tmp',
     env: {
-      HOME: '/Users/reviewer',
-      PATH: '/usr/bin',
+      ...snapshotEnvironment,
       XDG_CONFIG_HOME: '/custom/config',
       APPDATA: '/custom/appdata',
     },
   });
-  assert.ok(cursor.args.includes('--print'));
-  assert.deepEqual(
-    cursor.args.slice(cursor.args.indexOf('--mode'), cursor.args.indexOf('--mode') + 2),
-    ['--mode', 'ask'],
-  );
-  assert.deepEqual(
-    cursor.args.slice(cursor.args.indexOf('--sandbox'), cursor.args.indexOf('--sandbox') + 2),
-    ['--sandbox', 'enabled'],
-  );
-  assert.deepEqual(
-    cursor.args.slice(cursor.args.indexOf('--output-format'), cursor.args.indexOf('--output-format') + 2),
-    ['--output-format', 'stream-json'],
-  );
-  assert.deepEqual(
-    cursor.args.slice(
-      cursor.args.indexOf('--workspace'),
-      cursor.args.indexOf('--workspace') + 2,
-    ),
-    ['--workspace', '/tmp'],
-  );
-  assert.ok(cursor.args.includes('--trust'));
-  for (const unsafe of ['--force', '--yolo', '--approve-mcps', '--auto-review']) {
-    assert.ok(!cursor.args.includes(unsafe));
-  }
-  assert.equal(cursor.cwd, '/tmp');
-  assert.equal(cursor.input, 'stdin');
-  assert.match(cursor.args.at(-1), /Read the snapshot JSON from input\.json/);
-  assert.equal(cursor.env.HOME, '/Users/reviewer');
-  assert.equal(cursor.env.PATH, '/usr/bin');
-  assert.equal(cursor.env.XDG_CONFIG_HOME, '/custom/config');
-  assert.equal(cursor.env.APPDATA, '/custom/appdata');
-  assert.equal(cursor.env.CURSOR_CONFIG_DIR, undefined);
-  assert.equal(cursor.env.AGENT_CLI_CREDENTIAL_STORE, undefined);
+  assert.deepEqual(agentCommand({ ...common, agent: 'opencode' }), {
+    command: '/agent',
+    args: [
+      'run', '--pure', '--format', 'json', '--dir', '/tmp', '--agent',
+      'build', '--model', 'test-model', '--variant', 'low',
+      'Write JSON.\n\nThe snapshot JSON follows this prompt on standard input. Return JSON that matches this schema:\n{"type":"object"}',
+    ],
+    input: 'stdin',
+    cwd: '/tmp',
+    env: {
+      ...snapshotEnvironment,
+      OPENCODE_DB: ':memory:',
+      OPENCODE_CONFIG_CONTENT:
+        '{"permission":{"*":"deny"},"agent":{"build":{"permission":{"*":"deny"}}}}',
+    },
+  });
+});
+
+test('builds checkout-read-only provider plans with the real repo and normal environment', () => {
+  const environment = {
+    HOME: '/Users/reviewer',
+    PATH: '/usr/bin',
+    PRIVATE_AGENT_TOKEN: 'available-to-the-user-agent',
+  };
+  const common = {
+    binary: '/agent',
+    model: 'test-model',
+    reasoning: 'low',
+    prompt: 'Write JSON.',
+    schema: { type: 'object' },
+    schemaPath: '/tmp/diffsplain-agent/schema.json',
+    inputPath: '/tmp/diffsplain-agent/input.json',
+    accessMode: { mode: 'checkout-read-only', root: '/work/repo' },
+    env: environment,
+  };
+
+  const codex = agentCommand({ ...common, agent: 'codex' });
+  assert.deepEqual(codex, {
+    command: '/agent',
+    args: [
+      'exec',
+      '--ephemeral',
+      '--sandbox',
+      'read-only',
+      '--color',
+      'never',
+      '-C',
+      '/work/repo',
+      '--output-schema',
+      '/tmp/diffsplain-agent/schema.json',
+      '--model',
+      'test-model',
+      '--config',
+      'model_reasoning_effort="low"',
+      'Write JSON.',
+    ],
+    input: 'stdin',
+    cwd: '/work/repo',
+    env: environment,
+  });
+
+  const claude = agentCommand({ ...common, agent: 'claude' });
+  assert.deepEqual(claude, {
+    command: '/agent',
+    args: [
+      '--print',
+      '--output-format',
+      'json',
+      '--json-schema',
+      '{"type":"object"}',
+      '--permission-mode',
+      'plan',
+      '--no-session-persistence',
+      '--model',
+      'test-model',
+      'Write JSON.',
+    ],
+    input: 'stdin',
+    cwd: '/work/repo',
+    env: environment,
+  });
+
+  const copilot = agentCommand({ ...common, agent: 'copilot' });
+  assert.deepEqual(copilot, {
+    command: '/agent',
+    args: [
+      '--silent', '--no-color', '--no-remote', '--no-remote-export',
+      '--add-dir=/tmp/diffsplain-agent', '--model', 'test-model', '--prompt',
+      'Write JSON.\n\nRead the snapshot from @/tmp/diffsplain-agent/input.json. Return JSON that matches this schema:\n{"type":"object"}',
+    ],
+    input: 'none',
+    cwd: '/work/repo',
+    env: environment,
+  });
+
+  const cursor = agentCommand({ ...common, agent: 'cursor' });
+  assert.deepEqual(cursor, {
+    command: '/agent',
+    args: [
+      '--print', '--output-format', 'stream-json', '--mode', 'ask',
+      '--sandbox', 'enabled', '--trust', '--workspace', '/work/repo',
+      '--model', 'test-model',
+      'Write JSON.\n\nThe snapshot JSON follows this prompt on standard input. Return JSON that matches this schema:\n{"type":"object"}',
+    ],
+    input: 'stdin',
+    cwd: '/work/repo',
+    env: environment,
+  });
 
   const opencode = agentCommand({ ...common, agent: 'opencode' });
-  assert.deepEqual(opencode.args.slice(0, 4), [
-    'run',
-    '--pure',
-    '--format',
-    'json',
-  ]);
-  assert.ok(!opencode.args.includes('--file'));
-  assert.ok(opencode.args.includes('--variant'));
-  assert.deepEqual(
-    opencode.args.slice(
-      opencode.args.indexOf('--agent'),
-      opencode.args.indexOf('--agent') + 2,
-    ),
-    ['--agent', 'build'],
-  );
-  assert.deepEqual(
-    opencode.args.slice(
-      opencode.args.indexOf('--dir'),
-      opencode.args.indexOf('--dir') + 2,
-    ),
-    ['--dir', '/tmp'],
-  );
-  assert.equal(opencode.cwd, '/tmp');
-  assert.equal(opencode.input, 'stdin');
-  assert.equal(opencode.env.OPENCODE_DB, ':memory:');
+  assert.deepEqual(opencode, {
+    command: '/agent',
+    args: [
+      'run', '--format', 'json', '--dir', '/work/repo', '--agent', 'build',
+      '--model', 'test-model', '--variant', 'low',
+      'Write JSON.\n\nThe snapshot JSON follows this prompt on standard input. Return JSON that matches this schema:\n{"type":"object"}',
+    ],
+    input: 'stdin',
+    cwd: '/work/repo',
+    env: environment,
+  });
+  for (const plan of [codex, claude, copilot, cursor, opencode]) {
+    for (const flag of [
+      '--approve-for-me',
+      '--dangerously-bypass-approvals-and-sandbox',
+      '--dangerously-skip-permissions',
+      '--force',
+      '--approve-mcps',
+      '--auto',
+    ]) {
+      assert.ok(!plan.args.includes(flag), `${plan.command} includes ${flag}`);
+    }
+  }
+});
+
+test('keeps snapshot-only provider plans in the temporary input directory', () => {
+  const environment = {
+    HOME: '/Users/reviewer',
+    PATH: '/usr/bin',
+    PRIVATE_AGENT_TOKEN: 'must-not-pass',
+  };
+  const plan = agentCommand({
+    agent: 'codex',
+    binary: '/agent',
+    prompt: 'Write JSON.',
+    schema: { type: 'object' },
+    schemaPath: '/tmp/diffsplain-agent/schema.json',
+    inputPath: '/tmp/diffsplain-agent/input.json',
+    accessMode: { mode: 'snapshot-only', reason: 'target-mismatch' },
+    env: environment,
+  });
+
+  assert.equal(plan.cwd, '/tmp/diffsplain-agent');
   assert.equal(
-    opencode.env.OPENCODE_CONFIG_CONTENT,
-    '{"permission":{"*":"deny"},"agent":{"build":{"permission":{"*":"deny"}}}}',
+    plan.args[plan.args.indexOf('-C') + 1],
+    '/tmp/diffsplain-agent',
   );
+  assert.deepEqual(plan.env, {
+    HOME: '/Users/reviewer',
+    PATH: '/usr/bin',
+  });
+});
+
+test('warns only for checkout providers without a proven native read-only mode', () => {
+  const checkout = { mode: 'checkout-read-only', root: '/work/repo' };
+  const snapshot = { mode: 'snapshot-only', reason: 'target-mismatch' };
+  assert.match(agentReadOnlyWarning('copilot', checkout), /Copilot.*read-only/i);
+  assert.match(agentReadOnlyWarning('opencode', checkout), /OpenCode.*read-only/i);
+  assert.equal(agentReadOnlyWarning('codex', checkout), undefined);
+  assert.equal(agentReadOnlyWarning('copilot', snapshot), undefined);
+  assert.equal(agentReadOnlyWarning('opencode', snapshot), undefined);
 });
 
 test('passes only runtime variables to product summary agents', () => {

@@ -3,6 +3,7 @@ import { readFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import test from 'node:test';
 import { parseCliArgs } from '../scripts/cli-args.mjs';
+import { reviewAccessMode } from '../scripts/local-target.mjs';
 
 const cwd = '/work/project';
 const missing = () => false;
@@ -29,6 +30,57 @@ test('leaves agent selection open when no agent is passed', () => {
     '--jobs',
     '3',
   ]);
+});
+
+test('passes no-checkout-access only to agent notes', () => {
+  const parsed = parseCliArgs(['--no-checkout-access'], {
+    callerDirectory: cwd,
+    pathExists: missing,
+  });
+
+  assert.equal(parsed.noCheckoutAccess, true);
+  assert.ok(parsed.agentArgs.includes('--no-checkout-access'));
+  assert.ok(!parsed.feedArgs.includes('--no-checkout-access'));
+});
+
+test('classifies local targets for checkout access and remote targets for snapshots', () => {
+  const local = { repo: cwd };
+  assert.deepEqual(reviewAccessMode(local), {
+    mode: 'checkout-read-only',
+    root: cwd,
+  });
+  for (const target of [
+    { ...local, checkout: true },
+    { ...local, worktree: true },
+    { ...local, base: 'release-1' },
+  ]) {
+    assert.deepEqual(reviewAccessMode(target), {
+      mode: 'checkout-read-only',
+      root: cwd,
+    });
+  }
+  for (const target of [
+    { ...local, branch: 'topic' },
+    { ...local, pullRequest: '42' },
+    { ...local, base: 'main', head: 'topic' },
+    { ...local, range: 'main..topic' },
+    { ...local, snapshotSupplied: true, snapshotTargetKind: 'checkout' },
+    { ...local, snapshotSupplied: true, snapshotTargetKind: 'worktree' },
+    { ...local, snapshotSupplied: true, snapshotTargetKind: 'base-worktree' },
+    { ...local, snapshotSupplied: true, snapshotTargetKind: 'range' },
+    { ...local, snapshotSupplied: true, snapshotTargetKind: 'branch' },
+    { ...local, snapshotSupplied: true, snapshotTargetKind: 'pr' },
+    { ...local, snapshotSupplied: true },
+  ]) {
+    assert.deepEqual(reviewAccessMode(target), {
+      mode: 'snapshot-only',
+      reason: 'target-mismatch',
+    });
+  }
+  assert.deepEqual(reviewAccessMode({ ...local, noCheckoutAccess: true }), {
+    mode: 'snapshot-only',
+    reason: 'disabled',
+  });
 });
 
 test('accepts headless browser and explicit bind options', () => {

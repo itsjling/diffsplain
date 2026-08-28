@@ -83,13 +83,25 @@ or `WORKTREE` as its head. It does not add source or comparison links, because
 the working tree has no remote commit. The watcher refreshes if the base ref,
 `HEAD`, tracked changes, untracked content, or saved notes change.
 
-## Data and cleanup
+## Agent data and cleanup
 
-The agent receives the target metadata, change metadata, changed-file paths,
-selected patches or excerpts, and reusable notes. It does not receive files
-outside that snapshot. By default, each run uses a temporary snapshot, which
-normal shutdown removes. Agent input files are also temporary. If you pass
-`--output FILE`, that snapshot stays at the chosen path until you delete it.
+The agent always receives target and change metadata, selected patches or
+excerpts, and reusable notes. Its completed snapshot records the plan in
+`notes.accessMode`: `checkout-read-only` or `snapshot-only`.
+
+The current checkout, `--worktree`, and `--base REF` without `--head` use
+`checkout-read-only` access. The agent uses the chosen repo as its working
+folder and may inspect ignored files, Git history, and symlink targets. The
+prompt forbids edits and mutating commands, and approval stays with the user.
+
+Pull requests, remote branches, and exact local ranges use `snapshot-only`
+access. The agent runs from a temporary input folder and may use only the
+supplied snapshot. The prompt tells it not to run commands or read other files.
+Pass `--no-checkout-access` to use this plan for any target.
+
+By default, each run uses a temporary snapshot, which normal shutdown removes.
+Agent input files are also temporary. If you pass `--output FILE`, that
+snapshot stays at the chosen path until you delete it.
 
 Notes for every target persist in the platform user cache described in
 [Agent notes](/agent-notes/). Fetched Git objects use the installed package's

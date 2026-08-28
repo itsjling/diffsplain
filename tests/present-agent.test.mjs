@@ -85,6 +85,13 @@ async function stopIfRunning(child) {
   }
 }
 
+function captureOutput(child) {
+  let output = "";
+  child.stdout.on("data", (chunk) => { output += chunk.toString(); });
+  child.stderr.on("data", (chunk) => { output += chunk.toString(); });
+  return () => output;
+}
+
 test("starts the note agent after the watch snapshot and stops cleanly", async () => {
   const root = await mkdtemp(join(tmpdir(), "diffsplain-present-"));
   const repo = join(root, "repo");
@@ -300,6 +307,296 @@ test("starts the note agent after the watch snapshot and stops cleanly", async (
     presenter = undefined;
     assert.equal(reuseResult.code, 0);
     assert.equal(reuseResult.signal, null);
+
+    let expectedAgentCalls = firstRunCalls + 2;
+    for (const [accessArgs, accessMode] of [
+      [["--no-checkout-access"], "snapshot-only"],
+      [[], "checkout-read-only"],
+    ]) {
+      presenter = spawn(
+        process.execPath,
+        [
+          script,
+          "--repo",
+          repo,
+          "--worktree",
+          "--agent",
+          "codex",
+          "--model",
+          "changed-model",
+          ...accessArgs,
+          "--output",
+          output,
+          "--port",
+          "0",
+        ],
+        {
+          cwd: root,
+          env: {
+            ...process.env,
+            BROWSER: join(bin, "browser"),
+            PATH: `${bin}:${process.env.PATH}`,
+            PRESENTER_EVENTS: events,
+            PRESENTER_OUTPUT: output,
+            PRESENTER_RESPONSE: response,
+            XDG_CACHE_HOME: cacheBase,
+          },
+          stdio: "pipe",
+        },
+      );
+      expectedAgentCalls += 2;
+      const accessLog = await waitFor(async () => {
+        const value = await readFile(events, "utf8");
+        return agentCallCount(value) === expectedAgentCalls ? value : undefined;
+      });
+      assert.equal(agentCallCount(accessLog), expectedAgentCalls);
+      const accessSnapshot = await waitFor(async () => {
+        const value = JSON.parse(await readFile(output, "utf8"));
+        const noteState = value.notes;
+        if (noteState?.complete && noteState.accessMode === accessMode) {
+          return value;
+        }
+      });
+      assert.equal(accessSnapshot.notes.accessMode, accessMode);
+
+      const accessResult = await stop(presenter);
+      presenter = undefined;
+      assert.equal(accessResult.code, 0);
+      assert.equal(accessResult.signal, null);
+    }
+  } finally {
+    await stopIfRunning(presenter);
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("warns once and passes snapshot-only access to a mismatched range", async () => {
+  const root = await mkdtemp(join(tmpdir(), "diffsplain-present-access-"));
+  const repo = join(root, "repo");
+  const bin = join(root, "bin");
+  const output = join(root, "diff-data.json");
+  const summaries = join(root, "notes.json");
+  const response = join(root, "response.json");
+  const calls = join(root, "agent-calls.log");
+  let presenter;
+
+  try {
+    await mkdir(repo);
+    await mkdir(bin);
+    git(repo, "init", "-q");
+    git(repo, "config", "user.email", "diffsplain@example.test");
+    git(repo, "config", "user.name", "Diffsplain");
+    git(repo, "config", "commit.gpgsign", "false");
+    await writeFile(join(repo, "changed.txt"), "before\n");
+    git(repo, "add", "changed.txt");
+    git(repo, "commit", "-qm", "base");
+    await writeFile(join(repo, "changed.txt"), "after\n");
+    git(repo, "add", "changed.txt");
+    git(repo, "commit", "-qm", "change");
+    await writeFile(response, JSON.stringify({
+      change: {
+        title: "Change text",
+        summary: "Updates one file.",
+        why: "Exercises the range access plan.",
+        highlights: [],
+        risks: [],
+      },
+      files: [{
+        path: "changed.txt",
+        title: "Update text",
+        what: "Replaces the old line.",
+        why: "Changes the fixture value.",
+        details: [],
+        risks: [],
+      }],
+    }));
+    await writeFile(
+      join(bin, "codex"),
+      "#!/bin/sh\n" +
+        `flags=no\ncase \"$*\" in *--ignore-user-config*) flags=yes;; esac\n` +
+        `printf '%s\\t%s\\n' \"$PWD\" \"$flags\" >> ${JSON.stringify(calls)}\n` +
+        `cat ${JSON.stringify(response)}\n`,
+    );
+    await writeFile(
+      join(bin, "npm"),
+      "#!/bin/sh\ntrap 'exit 0' TERM INT\nwhile :; do sleep 1; done\n",
+    );
+    await writeFile(join(bin, "browser"), "#!/bin/sh\nexit 0\n");
+    await chmod(join(bin, "codex"), 0o755);
+    await chmod(join(bin, "npm"), 0o755);
+    await chmod(join(bin, "browser"), 0o755);
+
+    presenter = spawn(
+      process.execPath,
+      [
+        script,
+        "--repo",
+        repo,
+        "--base",
+        "HEAD~1",
+        "--head",
+        "HEAD",
+        "--agent",
+        "codex",
+        "--summaries",
+        summaries,
+        "--output",
+        output,
+        "--port",
+        "0",
+      ],
+      {
+        cwd: root,
+        env: {
+          ...process.env,
+          BROWSER: join(bin, "browser"),
+          PATH: `${bin}:${process.env.PATH}`,
+        },
+        stdio: "pipe",
+      },
+    );
+    const outputText = captureOutput(presenter);
+    const snapshot = await waitFor(async () => {
+      const value = JSON.parse(await readFile(output, "utf8"));
+      return value.notes?.complete ? value : undefined;
+    });
+
+    const warning = "Warning: This target does not map to the live checkout. Agent notes will use the supplied snapshot only.";
+    assert.equal(outputText().split(warning).length - 1, 1);
+    assert.equal(snapshot.notes.accessMode, "snapshot-only");
+    const agentCalls = (await readFile(calls, "utf8"))
+      .trim()
+      .split("\n")
+      .map((line) => line.split("\t"));
+    assert.equal(agentCalls.length, 2);
+    assert.ok(agentCalls.every(([cwd, flags]) =>
+      cwd.includes("diffsplain-agent-") && flags === "yes"
+    ));
+
+    const result = await stop(presenter);
+    presenter = undefined;
+    assert.equal(result.code, 0);
+    assert.equal(result.signal, null);
+  } finally {
+    await stopIfRunning(presenter);
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("rebuilds a checkout review when a provider sees a worktree edit", async () => {
+  const root = await mkdtemp(join(tmpdir(), "diffsplain-present-freshness-"));
+  const repo = join(root, "repo");
+  const bin = join(root, "bin");
+  const output = join(root, "diff-data.json");
+  const calls = join(root, "agent-calls.jsonl");
+  let presenter;
+
+  try {
+    await mkdir(repo);
+    await mkdir(bin);
+    git(repo, "init", "-q");
+    git(repo, "config", "user.email", "diffsplain@example.test");
+    git(repo, "config", "user.name", "Diffsplain");
+    git(repo, "config", "commit.gpgsign", "false");
+    await writeFile(join(repo, "changed.txt"), "before\n");
+    git(repo, "add", "changed.txt");
+    git(repo, "commit", "-qm", "base");
+    await writeFile(join(repo, "changed.txt"), "committed\n");
+    git(repo, "add", "changed.txt");
+    git(repo, "commit", "-qm", "change");
+    await writeFile(join(repo, "changed.txt"), "before provider\n");
+    await writeFile(
+      join(bin, "codex"),
+      `#!/usr/bin/env node
+import {
+  appendFileSync,
+  existsSync,
+  readFileSync,
+  writeFileSync,
+} from "node:fs";
+const input = JSON.parse(readFileSync(0, "utf8"));
+const call = existsSync(${JSON.stringify(calls)})
+  ? readFileSync(${JSON.stringify(calls)}, "utf8").trim().split("\\n").length + 1
+  : 1;
+appendFileSync(${JSON.stringify(calls)}, String(call) + "\\n");
+if (call === 1 && input.files.length) {
+  writeFileSync(${JSON.stringify(join(repo, "changed.txt"))}, "after provider\\n");
+}
+const note = (path) => ({
+  path,
+  title: "Note " + call + " for " + path,
+  what: "Explains the changed file.",
+  why: "Checks fresh checkout data.",
+  details: [],
+  risks: [],
+});
+process.stdout.write(JSON.stringify(input.files.length
+  ? { files: input.files.map((file) => note(file.path)) }
+  : {
+      change: {
+        title: "Change " + call,
+        summary: "Checks fresh checkout data.",
+        why: "Keeps notes tied to the current review.",
+        highlights: [],
+        risks: [],
+      },
+    }));
+`,
+    );
+    await writeFile(
+      join(bin, "npm"),
+      "#!/bin/sh\ntrap 'exit 0' TERM INT\nwhile :; do sleep 1; done\n",
+    );
+    await writeFile(join(bin, "browser"), "#!/bin/sh\nexit 0\n");
+    await chmod(join(bin, "codex"), 0o755);
+    await chmod(join(bin, "npm"), 0o755);
+    await chmod(join(bin, "browser"), 0o755);
+
+    presenter = spawn(
+      process.execPath,
+      [
+        script,
+        "--repo",
+        repo,
+        "--worktree",
+        "--agent",
+        "codex",
+        "--output",
+        output,
+        "--port",
+        "0",
+      ],
+      {
+        cwd: root,
+        env: {
+          ...process.env,
+          BROWSER: join(bin, "browser"),
+          PATH: `${bin}:${process.env.PATH}`,
+          XDG_CACHE_HOME: join(root, "cache"),
+        },
+        stdio: "pipe",
+      },
+    );
+    const outputText = captureOutput(presenter);
+    const snapshot = await waitFor(async () => {
+      const value = JSON.parse(await readFile(output, "utf8"));
+      return value.notes?.complete &&
+        value.files?.[0]?.summary?.title === "Note 2 for changed.txt"
+        ? value
+        : undefined;
+    });
+
+    assert.equal(snapshot.notes.accessMode, "checkout-read-only");
+    assert.match(outputText(), /review changed while notes were generated/i);
+    assert.deepEqual(
+      (await readFile(calls, "utf8")).trim().split("\n"),
+      ["1", "2", "3"],
+    );
+
+    const result = await stop(presenter);
+    presenter = undefined;
+    assert.equal(result.code, 0);
+    assert.equal(result.signal, null);
   } finally {
     await stopIfRunning(presenter);
     await rm(root, { recursive: true, force: true });

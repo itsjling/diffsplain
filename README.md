@@ -49,6 +49,7 @@ Arguments:
 | `--base REF` | Compare that exact commit with the live working tree. |
 | `--base REF --head REF` | Review an exact local range. |
 | `--agent NAME`, `--no-agent` | Choose a coding agent, or show a plain diff. |
+| `--no-checkout-access` | Limit agent notes to the supplied snapshot. |
 | `--model NAME` | Choose the model used for notes. |
 | `--reasoning LEVEL` | Set `minimal`, `low`, `medium`, `high`, or `xhigh`. |
 | `--batch-size COUNT` | Set the most files per agent pass. The default is `12`; large patches use smaller batches. |

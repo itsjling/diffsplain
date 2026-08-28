@@ -1287,6 +1287,9 @@ function build() {
       ...(typeof summaryDoc.meta?.reasoning === 'string'
         ? { reasoning: summaryDoc.meta.reasoning }
         : {}),
+      ...(typeof summaryDoc.meta?.accessMode === 'string'
+        ? { accessMode: summaryDoc.meta.accessMode }
+        : {}),
     },
   };
   const version = createHash('sha256')

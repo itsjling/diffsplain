@@ -96,6 +96,24 @@ npx diffsplain \
   --head HEAD_REF
 ```
 
+## Agent checkout access
+
+For the current checkout, `--worktree`, and `--base REF` without `--head`, a
+selected agent uses `checkout-read-only` access. Its working folder is the
+chosen repo, so it can inspect ignored files, Git history, and symlink targets
+when the note needs them. Diffsplain tells it not to edit files or run mutating
+commands. Diffsplain itself does not edit the review target. Agents run under
+your user permissions, and approval stays with you.
+
+Pull requests, remote branches, and exact local ranges use `snapshot-only`
+access because their target may not match the live checkout. The agent gets the
+temporary review input and must use only that input; it must not run commands
+or read other files. Diffsplain prints one warning when a selected agent uses
+this mode because of a target mismatch.
+
+Pass `--no-checkout-access` to use `snapshot-only` access for any target. This
+option affects agent notes only. It does not change the diff or the page.
+
 ## Check your setup
 
 Run the doctor command to see the separate local review, agent note, and pull
@@ -166,6 +184,7 @@ pnpm run doctor
 | `--base REF --head REF` | Review an exact local range. |
 | `--agent NAME` | Use `codex`, `claude`, `copilot`, `cursor`, or `opencode`. |
 | `--no-agent` | Show the diff without agent notes. |
+| `--no-checkout-access` | Limit agent notes to the supplied snapshot. |
 | `--model NAME` | Choose the model used for notes. |
 | `--reasoning LEVEL` | Set `minimal`, `low`, `medium`, `high`, or `xhigh`. |
 | `--batch-size COUNT` | Set the most files per agent pass, from `1` to `50`. Large patches use smaller batches. |
@@ -210,6 +229,12 @@ service.
 the CLI is too old or missing required flags. Once Diffsplain chooses an
 agent, a failed check or run ends the command; Diffsplain does not switch
 agents.
+
+For `checkout-read-only` access, agents run with the chosen repo as their
+working folder and their normal user settings. Diffsplain keeps approval with
+you. Copilot and OpenCode do not have a proven native read-only mode, so
+Diffsplain warns before either uses checkout access. See [Agent
+notes](/agent-notes/) for the provider details.
 
 The two support record options are opt-in and cannot be combined. They include
 the selected agent, so you cannot use them with `--no-agent`. See

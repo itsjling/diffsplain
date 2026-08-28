@@ -229,11 +229,20 @@ codex exec --ephemeral --ignore-user-config --ignore-rules \
   --config 'web_search="disabled"'
 ```
 
-`diffsplain` enforces the summary boundary for product notes even when a
-developer profile is active. It runs agents in the temporary snapshot folder,
-with a read-only sandbox, no user config or rules, no MCP or plugins, no web
-search, and a small runtime-only environment. Authentication remains available
-to the client itself, but the agent receives no credential variables.
+`diffsplain` uses `snapshot-only` access for remote targets, exact ranges, and
+`--no-checkout-access`. It runs agents in the temporary snapshot folder with
+provider-specific snapshot safeguards, a small runtime-only environment, and
+no credential variables. Authentication remains available to the client
+itself.
+
+For the current checkout, `--worktree`, and `--base REF` without `--head`, it
+uses `checkout-read-only` access. The agent runs in the chosen repo with normal
+user settings so it can inspect ignored files, Git history, and symlink
+targets. The prompt forbids edits and mutating commands; approval stays with
+the user. Codex keeps its read-only sandbox, Claude uses permission mode
+`plan`, and Cursor uses Ask mode with its sandbox, trust, and workspace.
+Copilot and OpenCode have no proven native read-only mode, so Diffsplain warns
+before either gets checkout access.
 
 ## Measure the pipeline
 
