@@ -19,6 +19,8 @@ import { summaryPath } from "../scripts/summary-path.mjs";
 
 const script = new URL("../scripts/generate-summaries.mjs", import.meta.url)
   .pathname;
+const builder = new URL("../scripts/build-diff-data.mjs", import.meta.url)
+  .pathname;
 const summaryEnvironmentNames = new Set([
   "CODEX_HOME",
   "COMSPEC",
@@ -108,7 +110,7 @@ async function ignoreProviderArtifacts(root, names) {
   } catch {}
 }
 
-async function recordingCodex(root) {
+async function recordingCodex(root, { captureInput = false } = {}) {
   const bin = join(root, "recording-codex.mjs");
   const calls = join(root, "codex-calls.jsonl");
   await writeFile(
@@ -128,6 +130,7 @@ appendFileSync(
   JSON.stringify({
     files: input.files.map((file) => file.path),
     existing: Object.keys(input.existingFileNotes || {}).sort(),
+    ${captureInput ? 'input,' : ''}
   }) + "\\n",
 );
 const response = {
@@ -766,7 +769,7 @@ test("generates notes with Codex and rebuilds a selected range", async () => {
     assert.equal(snapshot.files[1].summary.title, "Update text");
     assert.equal(
       snapshot.notes.generatedFor,
-      snapshot.notes.reviewFingerprint,
+      snapshot.notes.agentReviewFingerprint,
     );
     assert.equal(snapshot.notes.fresh, true);
     assert.equal(snapshot.notes.complete, true);
@@ -1662,6 +1665,51 @@ test("discards delayed provider output after a local review changes", async () =
     assert.equal(
       saved.meta.reviewFingerprint,
       published.notes.reviewFingerprint,
+    );
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+    await rm(repo, { recursive: true, force: true });
+  }
+});
+
+test("keeps provider output when only an excluded patch changes", async () => {
+  const repo = await makeRepo();
+  const directory = await mkdtemp(join(tmpdir(), "diffsplain-agent-excluded-freshness-"));
+  const summaries = join(repo, "notes.json");
+  const output = join(repo, "diff-data.json");
+
+  try {
+    await writeFile(join(repo, "added.txt"), "included before provider\n");
+    await writeFile(join(repo, "changed.txt"), "excluded before provider\n");
+    const codex = await accessRecordingCodex(directory, repo, {
+      changeOnFirstCall: "after excluded provider\n",
+    });
+    const result = run(repo, [
+      "--worktree",
+      "--exclude",
+      "changed.txt",
+      "--codex-bin",
+      codex.bin,
+      "--jobs",
+      "1",
+      "--summaries",
+      summaries,
+      "--output",
+      output,
+    ]);
+
+    assert.equal(result.status, 0, result.stderr);
+    assert.doesNotMatch(result.stdout, /review changed while notes were generated/i);
+    const calls = await recordedCalls(codex.calls);
+    assert.deepEqual(calls.map((call) => call.paths), [["added.txt"], []]);
+    const published = JSON.parse(await readFile(output, "utf8"));
+    const excluded = published.files.find((file) => file.path === "changed.txt");
+    assert.equal(excluded.agentExcluded, true);
+    assert.equal(excluded.noteReady, false);
+    assert.match(excluded.patch, /\+after excluded provider/);
+    assert.equal(
+      published.files.find((file) => file.path === "added.txt").summary.title,
+      "Note 1 for added.txt",
     );
   } finally {
     await rm(directory, { recursive: true, force: true });
@@ -2813,6 +2861,303 @@ test("regenerates notes only for changed and added files", async () => {
     const snapshot = JSON.parse(await readFile(output, "utf8"));
     assert.equal(snapshot.notes.complete, true);
     assert.ok(snapshot.files.every((file) => file.noteReady));
+  } finally {
+    await rm(repo, { recursive: true, force: true });
+  }
+});
+
+test("keeps excluded files out of automatic agent input and note totals", async () => {
+  const repo = await makeRepo();
+  const summaries = join(repo, "notes.json");
+  const output = join(repo, "diff-data.json");
+  const base = git(repo, "rev-parse", "HEAD~1");
+
+  try {
+    const codex = await recordingCodex(repo, { captureInput: true });
+    const result = run(repo, [
+      "--base", base, "--head", "HEAD", "--codex-bin", codex.bin,
+      "--summaries", summaries, "--output", output,
+      "--exclude", "changed.txt", "--force",
+    ]);
+    assert.equal(result.status, 0, result.stderr);
+
+    const calls = await recordedCalls(codex.calls);
+    assert.deepEqual(calls.map((call) => call.files), [["added.txt"], []]);
+    for (const call of calls) {
+      assert.doesNotMatch(JSON.stringify(call.input), /changed\.txt/);
+      assert.doesNotMatch(JSON.stringify(call.input), /after\\n/);
+    }
+
+    const saved = JSON.parse(await readFile(summaries, "utf8"));
+    assert.deepEqual(Object.keys(saved.files), ["added.txt"]);
+    assert.deepEqual(Object.keys(saved.meta.fileFingerprints), ["added.txt"]);
+
+    const snapshot = JSON.parse(await readFile(output, "utf8"));
+    const excluded = snapshot.files.find((file) => file.path === "changed.txt");
+    assert.equal(excluded.agentExcluded, true);
+    assert.equal(excluded.noteReady, false);
+    assert.ok(excluded.patch.includes("+after"));
+    assert.equal(snapshot.notes.totalFiles, 1);
+    assert.equal(snapshot.notes.completedFiles, 1);
+    assert.equal(snapshot.notes.complete, true);
+  } finally {
+    await rm(repo, { recursive: true, force: true });
+  }
+});
+
+test("hides cached excluded notes and reuses only matching hidden patches", async () => {
+  const repo = await makeRepo();
+  const summaries = join(repo, "notes.json");
+  const output = join(repo, "diff-data.json");
+  const base = git(repo, "rev-parse", "HEAD~1");
+  const common = [
+    "--base", base, "--head", "HEAD", "--codex-bin", "",
+    "--summaries", summaries, "--output", output,
+  ];
+
+  try {
+    const codex = await recordingCodex(repo, { captureInput: true });
+    const args = common.map((value) => value || codex.bin);
+    const first = run(repo, args);
+    assert.equal(first.status, 0, first.stderr);
+    const initial = JSON.parse(await readFile(summaries, "utf8"));
+
+    const hidden = run(repo, [...args, "--exclude", "changed.txt", "--force"]);
+    assert.equal(hidden.status, 0, hidden.stderr);
+    const hiddenNotes = JSON.parse(await readFile(summaries, "utf8"));
+    assert.equal(
+      hiddenNotes.files["changed.txt"].title,
+      initial.files["changed.txt"].title,
+    );
+    assert.deepEqual(Object.keys(hiddenNotes.meta.fileFingerprints), ["added.txt"]);
+    assert.deepEqual(
+      Object.keys(hiddenNotes.meta.hiddenFileFingerprints),
+      ["changed.txt"],
+    );
+    for (const call of (await recordedCalls(codex.calls)).slice(2)) {
+      assert.doesNotMatch(JSON.stringify(call.input), /changed\.txt/);
+      assert.doesNotMatch(JSON.stringify(call.input), /Note 1 for changed\.txt/);
+    }
+
+    const beforeHiddenChange = (await recordedCalls(codex.calls)).length;
+    await writeFile(join(repo, "changed.txt"), "changed while hidden\n");
+    git(repo, "add", "changed.txt");
+    git(repo, "commit", "-qm", "change hidden path");
+
+    const changedWhileHidden = run(repo, [...args, "--exclude", "changed.txt"]);
+    assert.equal(changedWhileHidden.status, 0, changedWhileHidden.stderr);
+    assert.equal((await recordedCalls(codex.calls)).length, beforeHiddenChange);
+    const dropped = JSON.parse(await readFile(summaries, "utf8"));
+    assert.equal(dropped.files["changed.txt"], undefined);
+    assert.equal(dropped.meta.hiddenFileFingerprints?.["changed.txt"], undefined);
+
+    const reveal = run(repo, args);
+    assert.equal(reveal.status, 0, reveal.stderr);
+    const revealedCalls = (await recordedCalls(codex.calls)).slice(beforeHiddenChange);
+    assert.deepEqual(revealedCalls.map((call) => call.files), [["changed.txt"], []]);
+  } finally {
+    await rm(repo, { recursive: true, force: true });
+  }
+});
+
+test("does not reuse a hidden note after the agent settings change", async () => {
+  const repo = await makeRepo();
+  const summaries = join(repo, "notes.json");
+  const output = join(repo, "diff-data.json");
+  const base = git(repo, "rev-parse", "HEAD~1");
+
+  try {
+    const codex = await recordingCodex(repo);
+    const args = [
+      "--base", base, "--head", "HEAD", "--codex-bin", codex.bin,
+      "--summaries", summaries, "--output", output,
+    ];
+    assert.equal(run(repo, args).status, 0);
+    const callsBeforeSettingsChange = (await recordedCalls(codex.calls)).length;
+
+    const hidden = run(repo, [
+      ...args, "--exclude", "changed.txt", "--model", "new-model",
+    ]);
+    assert.equal(hidden.status, 0, hidden.stderr);
+    const hiddenNotes = JSON.parse(await readFile(summaries, "utf8"));
+    assert.equal(hiddenNotes.files["changed.txt"], undefined);
+
+    const reveal = run(repo, [...args, "--model", "new-model"]);
+    assert.equal(reveal.status, 0, reveal.stderr);
+    const revealCalls = (await recordedCalls(codex.calls)).slice(
+      callsBeforeSettingsChange + 2,
+    );
+    assert.deepEqual(revealCalls.map((call) => call.files), [["changed.txt"], []]);
+  } finally {
+    await rm(repo, { recursive: true, force: true });
+  }
+});
+
+test("recomputes a supplied snapshot agent fingerprint after exclusions change", async () => {
+  const repo = await makeRepo();
+  const input = join(repo, "input.json");
+  const summaries = join(repo, "notes.json");
+  const output = join(repo, "output.json");
+
+  try {
+    const source = snapshot([
+      { path: "added.txt", patch: "added", snippet: "added" },
+      { path: "changed.txt", patch: "changed", snippet: "changed" },
+    ]);
+    source.notes.agentReviewFingerprint = "b".repeat(64);
+    await writeFile(input, JSON.stringify(source));
+    await writeFile(output, JSON.stringify(source));
+    const codex = await recordingCodex(repo, { captureInput: true });
+    const result = run(repo, [
+      "--snapshot", input, "--codex-bin", codex.bin,
+      "--summaries", summaries, "--output", output,
+      "--exclude", "changed.txt",
+    ]);
+    assert.equal(result.status, 0, result.stderr);
+
+    const rebuilt = JSON.parse(await readFile(output, "utf8"));
+    assert.equal(rebuilt.notes.reviewFingerprint, source.notes.reviewFingerprint);
+    assert.notEqual(
+      rebuilt.notes.agentReviewFingerprint,
+      source.notes.agentReviewFingerprint,
+    );
+    assert.match(rebuilt.notes.agentReviewFingerprint, /^[a-f0-9]{64}$/);
+    for (const call of await recordedCalls(codex.calls)) {
+      assert.doesNotMatch(JSON.stringify(call.input), /changed\.txt/);
+    }
+  } finally {
+    await rm(repo, { recursive: true, force: true });
+  }
+});
+
+test("clears stale snapshot exclusions when this run has no rules", async () => {
+  const repo = await makeRepo();
+  const input = join(repo, "input.json");
+  const summaries = join(repo, "notes.json");
+  const output = join(repo, "output.json");
+
+  try {
+    const source = snapshot([
+      { path: "added.txt", patch: "added", snippet: "added" },
+      { path: "changed.txt", patch: "changed", snippet: "changed" },
+    ]);
+    source.files.find((file) => file.path === "changed.txt").agentExcluded = true;
+    source.notes.agentReviewFingerprint = "b".repeat(64);
+    await writeFile(input, JSON.stringify(source));
+    await writeFile(output, JSON.stringify(source));
+    const codex = await recordingCodex(repo, { captureInput: true });
+    const result = run(repo, [
+      "--snapshot", input, "--codex-bin", codex.bin,
+      "--summaries", summaries, "--output", output,
+    ]);
+    assert.equal(result.status, 0, result.stderr);
+
+    const calls = await recordedCalls(codex.calls);
+    assert.deepEqual(calls.map((call) => call.files), [
+      ["added.txt", "changed.txt"],
+      [],
+    ]);
+    assert.ok(calls.every((call) => JSON.stringify(call.input).includes("changed.txt")));
+    const rebuilt = JSON.parse(await readFile(output, "utf8"));
+    const changed = rebuilt.files.find((file) => file.path === "changed.txt");
+    assert.equal(changed.agentExcluded, undefined);
+    assert.equal(changed.noteReady, true);
+  } finally {
+    await rm(repo, { recursive: true, force: true });
+  }
+});
+
+test("rebuilds notes from legacy cache metadata once", async () => {
+  const repo = await makeRepo();
+  const summaries = join(repo, "notes.json");
+  const output = join(repo, "diff-data.json");
+  const base = git(repo, "rev-parse", "HEAD~1");
+
+  try {
+    const codex = await recordingCodex(repo);
+    const args = [
+      "--base", base, "--head", "HEAD", "--codex-bin", codex.bin,
+      "--summaries", summaries, "--output", output,
+    ];
+    assert.equal(run(repo, args).status, 0);
+    const legacy = JSON.parse(await readFile(summaries, "utf8"));
+    delete legacy.meta.agentReviewFingerprint;
+    await writeFile(summaries, JSON.stringify(legacy));
+
+    const rebuilt = run(repo, args);
+    assert.equal(rebuilt.status, 0, rebuilt.stderr);
+    const calls = await recordedCalls(codex.calls);
+    assert.deepEqual(calls.slice(2).map((call) => call.files), [
+      ["added.txt", "changed.txt"],
+      [],
+    ]);
+    const saved = JSON.parse(await readFile(summaries, "utf8"));
+    assert.match(saved.meta.agentReviewFingerprint, /^[a-f0-9]{64}$/);
+    assert.equal(saved.files["changed.txt"].title, "Note 3 for changed.txt");
+  } finally {
+    await rm(repo, { recursive: true, force: true });
+  }
+});
+
+test("does no agent work when every file is excluded, even with force", async () => {
+  const repo = await makeRepo();
+  const summaries = join(repo, "notes.json");
+  const output = join(repo, "diff-data.json");
+  const base = git(repo, "rev-parse", "HEAD~1");
+
+  try {
+    const codex = await recordingCodex(repo);
+    const args = [
+      "--base", base, "--head", "HEAD", "--codex-bin", codex.bin,
+      "--summaries", summaries, "--output", output,
+    ];
+    assert.equal(run(repo, args).status, 0);
+    const prior = JSON.parse(await readFile(summaries, "utf8"));
+    const priorCalls = (await recordedCalls(codex.calls)).length;
+
+    const allExcluded = run(repo, [...args, "--exclude", "*.txt", "--force"]);
+    assert.equal(allExcluded.status, 0, allExcluded.stderr);
+    assert.equal((await recordedCalls(codex.calls)).length, priorCalls);
+    const snapshot = JSON.parse(await readFile(output, "utf8"));
+    assert.ok(snapshot.files.every((file) => file.agentExcluded));
+    assert.ok(snapshot.files.every((file) => !file.noteReady));
+    assert.equal(snapshot.notes.totalFiles, 0);
+    assert.equal(snapshot.notes.completedFiles, 0);
+    assert.equal(snapshot.notes.complete, true);
+    assert.notEqual(snapshot.change.title, prior.change.title);
+
+    const hidden = JSON.parse(await readFile(summaries, "utf8"));
+    assert.deepEqual(hidden.files, prior.files);
+    assert.equal(hidden.change.title, prior.change.title);
+    assert.equal(hidden.meta.reviewFingerprint, prior.meta.reviewFingerprint);
+
+    const rebuiltOutput = join(repo, "all-excluded-rebuild.json");
+    const rebuild = spawnSync(process.execPath, [
+      builder,
+      "--repo",
+      repo,
+      "--base",
+      base,
+      "--head",
+      "HEAD",
+      "--exclude",
+      "*.txt",
+      "--summaries",
+      summaries,
+      "--output",
+      rebuiltOutput,
+    ], { encoding: "utf8" });
+    assert.equal(rebuild.status, 0, rebuild.stderr);
+    const rebuilt = JSON.parse(await readFile(rebuiltOutput, "utf8"));
+    assert.equal(rebuilt.notes.fresh, true);
+    assert.equal(rebuilt.notes.complete, true);
+    assert.equal(
+      rebuilt.notes.generatedFor,
+      rebuilt.notes.agentReviewFingerprint,
+    );
+
+    assert.equal(run(repo, args).status, 0);
+    assert.equal((await recordedCalls(codex.calls)).length, priorCalls);
   } finally {
     await rm(repo, { recursive: true, force: true });
   }

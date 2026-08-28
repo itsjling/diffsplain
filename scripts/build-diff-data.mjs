@@ -25,6 +25,12 @@ import {
   isBaseWorktreeTarget,
   resolveBaseWorktreeCommit,
 } from './local-target.mjs';
+import { createAgentExclusionMatcher } from './agent-exclusions.mjs';
+import {
+  agentReviewContext,
+  agentReviewFile,
+  createAgentReviewFingerprint,
+} from './agent-review.mjs';
 import { summaryPath } from './summary-path.mjs';
 
 const args = process.argv.slice(2);
@@ -70,6 +76,7 @@ Options:
 const repo = resolve(option('--repo') || process.cwd());
 const output = resolve(option('--output') || '.cache/diff-data.json');
 const excludedOutputs = options('--exclude-output');
+const agentExcludeRules = options('--exclude');
 const baseOption = option('--base');
 const headOption = option('--head');
 const prOption = option('--pr');
@@ -1067,6 +1074,10 @@ function githubComparisonUrl(repositoryUrl, base, head) {
   return `${repositoryUrl}/compare/${encodeURIComponent(base)}...${encodeURIComponent(head)}`;
 }
 
+function fingerprintFile(file) {
+  return agentReviewFile(file);
+}
+
 // fallow-ignore-next-line complexity -- Existing aggregation boundary; target handling stays in resolvers.
 function build() {
   const localWorkspace =
@@ -1075,6 +1086,9 @@ function build() {
     throw new Error(`${repo} is not a Git checkout`);
   }
   const target = resolveTarget();
+  const agentExcluded = createAgentExclusionMatcher(agentExcludeRules, {
+    ignoreCase: tryRepo(['config', '--bool', 'core.ignoreCase']) === 'true',
+  });
   const remoteRepository = githubRepository(target.remote?.url);
   const summaryDoc = noSummaries ? {} : readJson(summariesPath, {}) || {};
   const allTrackedFiles = parseNameStatus(
@@ -1169,10 +1183,15 @@ function build() {
       totalDiffLines: textPatch ? textPatch.split('\n').length - 1 : 0,
       patch: textPatch,
       snippet: binary ? '' : compactSnippet(textPatch),
+      ...(agentExcluded(file.path) ? { agentExcluded: true } : {}),
       ...(sourceUrl ? { sourceUrl } : {}),
       ...(comparisonUrl ? { comparisonUrl } : {}),
     };
   });
+
+  const agentFiles = filesWithoutSummaries.filter(
+    (file) => !file.agentExcluded,
+  );
 
   const reviewFingerprint = createHash('sha256')
     .update(
@@ -1185,38 +1204,55 @@ function build() {
           remote: target.remote?.name,
           targetKind: target.kind,
         },
-        files: filesWithoutSummaries.map((file) => ({
-          path: file.path,
-          oldPath: file.oldPath,
-          status: file.status,
-          additions: file.additions,
-          deletions: file.deletions,
-          isBinary: file.isBinary,
-          patch: file.patch,
-        })),
+        files: filesWithoutSummaries.map(fingerprintFile),
       }),
     )
     .digest('hex');
-  const generatedFor =
-    !noSummaries &&
-    typeof summaryDoc.meta?.reviewFingerprint === 'string'
-      ? summaryDoc.meta.reviewFingerprint
+  const agentReviewFingerprint = createAgentReviewFingerprint({
+    context: agentReviewContext({
+      name: remoteRepository?.name || basename(repo),
+      selector: remoteRepository?.selector,
+      target: target.target,
+      branch: target.branch,
+      baseBranch: target.baseBranch,
+    }),
+    files: agentFiles,
+  });
+  const hasAgentReviewFingerprint =
+    typeof summaryDoc.meta?.agentReviewFingerprint === 'string';
+  const hasLegacyReviewFingerprint =
+    !hasAgentReviewFingerprint &&
+    typeof summaryDoc.meta?.reviewFingerprint === 'string';
+  const emptyAgentReviewFingerprint =
+    typeof summaryDoc.meta?.emptyAgentReviewFingerprint === 'string'
+      ? summaryDoc.meta.emptyAgentReviewFingerprint
       : undefined;
+  const generatedFor = !noSummaries && hasAgentReviewFingerprint
+    ? agentFiles.length === 0 && emptyAgentReviewFingerprint
+      ? emptyAgentReviewFingerprint
+      : summaryDoc.meta.agentReviewFingerprint
+    : undefined;
   const summariesAreFresh =
-    !noSummaries && (!generatedFor || generatedFor === reviewFingerprint);
+    !noSummaries &&
+    !hasLegacyReviewFingerprint &&
+    (!generatedFor || generatedFor === agentReviewFingerprint);
   const sourceSummaries = summariesAreFresh ? summaryDoc : {};
+  const agentPaths = new Set(agentFiles.map((file) => file.path));
+  const reviewPaths = new Set(filesWithoutSummaries.map((file) => file.path));
   const failedFiles = summariesAreFresh
-    ? failedFileRecords(summaryDoc.meta?.failedFiles)
+    ? failedFileRecords(summaryDoc.meta?.failedFiles).filter((failure) =>
+        agentPaths.has(failure.path) || !reviewPaths.has(failure.path),
+      )
     : [];
-  const summaryErrors = summariesAreFresh
+  const summaryErrors = summariesAreFresh && agentFiles.length
     ? cleanList(summaryDoc.meta?.errors)
     : [];
   const failureByPath = new Map(
     failedFiles.map((failure) => [failure.path, failure.reason]),
   );
   const emptyReviewComplete =
-    filesWithoutSummaries.length === 0 &&
-    generatedFor === reviewFingerprint &&
+    agentFiles.length === 0 &&
+    generatedFor === agentReviewFingerprint &&
     sourceSummaries.meta?.status === 'complete';
   const summariesAreComplete =
     summariesAreFresh &&
@@ -1224,12 +1260,12 @@ function build() {
     summaryErrors.length === 0 &&
     (emptyReviewComplete ||
       (completeChangeSummary(sourceSummaries.change) &&
-        filesWithoutSummaries.every((file) =>
+        agentFiles.every((file) =>
           completeFileSummary(sourceSummaries.files?.[file.path]),
         )));
   const completedFiles = noSummaries
     ? 0
-    : filesWithoutSummaries.filter((file) =>
+    : agentFiles.filter((file) =>
         completeFileSummary(sourceSummaries.files?.[file.path]),
       ).length;
   const storedStatus = summaryDoc.meta?.status;
@@ -1244,18 +1280,28 @@ function build() {
           : 'idle';
   const files = filesWithoutSummaries.map((file) => ({
     ...file,
-    summary: fileSummary(file.path, sourceSummaries.files?.[file.path]),
-    noteReady: Boolean(
-      completeFileSummary(sourceSummaries.files?.[file.path]),
+    summary: fileSummary(
+      file.path,
+      file.agentExcluded ? undefined : sourceSummaries.files?.[file.path],
     ),
-    ...(failureByPath.has(file.path)
+    noteReady: Boolean(
+      !file.agentExcluded &&
+        completeFileSummary(sourceSummaries.files?.[file.path]),
+    ),
+    ...(!file.agentExcluded && failureByPath.has(file.path)
       ? { noteFailure: failureByPath.get(file.path) }
       : {}),
   }));
-  const change = changeSummary(sourceSummaries.change, target.changeDefaults);
+  const change = changeSummary(
+    agentFiles.length ? sourceSummaries.change : undefined,
+    target.changeDefaults,
+  );
   const content = {
     repo: {
       name: remoteRepository?.name || basename(repo),
+      ...(remoteRepository?.selector
+        ? { repository: remoteRepository.selector }
+        : {}),
       root: localWorkspace ? repo : target.remote?.url || repo,
       base: target.base,
       head: target.head,
@@ -1270,12 +1316,13 @@ function build() {
     files,
     notes: {
       reviewFingerprint,
+      agentReviewFingerprint,
       ...(generatedFor ? { generatedFor } : {}),
       fresh: summariesAreFresh,
       complete: summariesAreComplete,
       status: noteStatus,
       completedFiles,
-      totalFiles: filesWithoutSummaries.length,
+      totalFiles: agentFiles.length,
       ...(failedFiles.length ? { failedFiles } : {}),
       ...(summaryErrors.length ? { errors: summaryErrors } : {}),
       ...(typeof summaryDoc.meta?.model === 'string'

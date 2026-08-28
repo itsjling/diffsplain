@@ -477,7 +477,9 @@ function snapshotState() {
   try {
     const snapshot = JSON.parse(readFileSync(reviewSnapshotPath, 'utf8'));
     if (snapshot.notes?.reviewFingerprint) {
-      const fingerprint = snapshot.notes.reviewFingerprint;
+      const fingerprint =
+        snapshot.notes.agentReviewFingerprint ||
+        snapshot.notes.reviewFingerprint;
       const emptyReview =
         Array.isArray(snapshot.files) && snapshot.files.length === 0;
       return {

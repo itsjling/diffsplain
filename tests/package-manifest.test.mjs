@@ -7,6 +7,8 @@ const requiredFiles = [
   'package.json',
   'dist/index.html',
   'scripts/access-token.mjs',
+  'scripts/agent-exclusions.mjs',
+  'scripts/agent-review.mjs',
   'scripts/build-diff-data.mjs',
   'scripts/cache.mjs',
   'scripts/cli-args.mjs',

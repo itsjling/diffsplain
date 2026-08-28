@@ -239,3 +239,93 @@ test('rejects a missing base before it writes a snapshot', async () => {
     await rm(root, { recursive: true, force: true });
   }
 });
+
+test('marks ordered agent exclusions without removing local review files', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'diffsplain-agent-exclusions-'));
+  const repo = join(root, 'repo');
+
+  try {
+    execFileSync('git', ['init', '-q', '-b', 'main', repo]);
+    git(repo, 'config', 'user.email', 'diffsplain@example.test');
+    git(repo, 'config', 'user.name', 'Diffsplain');
+    git(repo, 'config', 'core.ignoreCase', 'true');
+    await writeFile(join(repo, 'old-secret.txt'), 'secret\n');
+    await writeFile(join(repo, 'private-drop.txt'), 'old\n');
+    await writeFile(join(repo, 'private-keep.txt'), 'old\n');
+    git(repo, 'add', '.');
+    git(repo, 'commit', '-qm', 'base');
+    const base = git(repo, 'rev-parse', 'HEAD');
+
+    git(repo, 'mv', 'old-secret.txt', 'new-visible.txt');
+    await writeFile(join(repo, 'private-drop.txt'), 'new\n');
+    await writeFile(join(repo, 'private-keep.txt'), 'new\n');
+    git(repo, 'add', '.');
+    git(repo, 'commit', '-qm', 'change');
+
+    const snapshot = await build(repo, root, 'ordered', [
+      '--base',
+      base,
+      '--head',
+      'HEAD',
+      '--exclude',
+      'PRIVATE-*.TXT',
+      '--exclude',
+      '!private-keep.txt',
+      '--exclude',
+      'old-secret.txt',
+    ]);
+    const byPath = new Map(snapshot.files.map((file) => [file.path, file]));
+
+    assert.deepEqual([...byPath.keys()].sort(), [
+      'new-visible.txt',
+      'private-drop.txt',
+      'private-keep.txt',
+    ]);
+    assert.equal(byPath.get('private-drop.txt').agentExcluded, true);
+    assert.equal(byPath.get('private-keep.txt').agentExcluded, undefined);
+    assert.equal(byPath.get('new-visible.txt').oldPath, 'old-secret.txt');
+    assert.equal(byPath.get('new-visible.txt').agentExcluded, undefined);
+    assert.ok(byPath.get('private-drop.txt').patch.includes('+new'));
+    assert.equal(snapshot.notes.totalFiles, 2);
+
+    const renamed = await build(repo, root, 'renamed', [
+      '--base',
+      base,
+      '--head',
+      'HEAD',
+      '--exclude',
+      'new-visible.txt',
+    ]);
+    assert.equal(
+      renamed.files.find((file) => file.path === 'new-visible.txt').agentExcluded,
+      true,
+    );
+
+    await writeFile(join(repo, 'private-drop.txt'), 'excluded again\n');
+    git(repo, 'add', 'private-drop.txt');
+    git(repo, 'commit', '-qm', 'excluded only');
+    const excludedOnly = await build(repo, root, 'excluded-only', [
+      '--base',
+      base,
+      '--head',
+      'HEAD',
+      '--exclude',
+      'PRIVATE-*.TXT',
+      '--exclude',
+      '!private-keep.txt',
+      '--exclude',
+      'old-secret.txt',
+    ]);
+    assert.notEqual(
+      excludedOnly.notes.reviewFingerprint,
+      snapshot.notes.reviewFingerprint,
+    );
+    assert.equal(
+      excludedOnly.notes.agentReviewFingerprint,
+      snapshot.notes.agentReviewFingerprint,
+    );
+    assert.notEqual(excludedOnly.version, snapshot.version);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});

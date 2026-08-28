@@ -15,9 +15,12 @@ import { promisify } from 'node:util';
 
 const execFileAsync = promisify(execFile);
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
-const packageManager = process.env.npm_execpath
-  ? { command: process.execPath, prefix: [process.env.npm_execpath] }
-  : { command: 'corepack', prefix: ['pnpm'] };
+const packageManager = (() => {
+  if (process.env.npm_execpath) {
+    return { command: process.execPath, prefix: [process.env.npm_execpath] };
+  }
+  return { command: 'corepack', prefix: ['pnpm'] };
+})();
 
 async function runCommand(command, args) {
   await new Promise((resolveCommand, rejectCommand) => {
@@ -67,6 +70,8 @@ const requiredPackageFiles = [
   'package.json',
   'dist/index.html',
   'scripts/access-token.mjs',
+  'scripts/agent-exclusions.mjs',
+  'scripts/agent-review.mjs',
   'scripts/build-diff-data.mjs',
   'scripts/cache.mjs',
   'scripts/cli-args.mjs',
@@ -82,7 +87,7 @@ const requiredPackageFiles = [
   'scripts/summary-path.mjs',
   'scripts/support-record.mjs',
 ];
-const allowedPackageFile = /^(README(?:\.md)?|LICENSE(?:\.md)?|NOTICE(?:\.md)?|package\.json|dist\/.+|scripts\/(?:access-token|build-diff-data|cache|cli-args|coding-agents|dev|doctor|generate-summaries|local-target|mock-agent|present|presenter-runtime|serve-built|summary-path|support-record)\.mjs)$/;
+const allowedPackageFile = /^(README(?:\.md)?|LICENSE(?:\.md)?|NOTICE(?:\.md)?|package\.json|dist\/.+|scripts\/(?:access-token|agent-exclusions|agent-review|build-diff-data|cache|cli-args|coding-agents|dev|doctor|generate-summaries|local-target|mock-agent|present|presenter-runtime|serve-built|summary-path|support-record)\.mjs)$/;
 const privatePackageFile = /(^|\/)(?:\.env|\.npmrc|\.git|\.github|\.agents|\.codex)(?:\/|$)|\.(?:pem|key)$/i;
 
 export function validatePackageManifest(pack) {

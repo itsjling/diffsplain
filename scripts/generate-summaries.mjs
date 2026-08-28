@@ -26,6 +26,12 @@ import {
   reviewAccessMode,
   resolveBaseWorktreeCommit,
 } from './local-target.mjs';
+import { createAgentExclusionMatcher } from './agent-exclusions.mjs';
+import {
+  agentReviewContextFromSnapshot,
+  agentReviewFile,
+  agentReviewFingerprintFromSnapshot,
+} from './agent-review.mjs';
 import { summaryPath } from './summary-path.mjs';
 import {
   acquireLease,
@@ -64,6 +70,7 @@ const valueFlags = new Set([
   '--support-record-file',
   '--access-mode',
   '--access-reason',
+  '--exclude',
 ]);
 const booleanFlags = new Set([
   '--checkout',
@@ -86,6 +93,12 @@ function option(name) {
   const value = rawArgs[index + 1];
   if (!value || value.startsWith('--')) fail(`${name} needs a value`);
   return value;
+}
+
+function options(name) {
+  return rawArgs.flatMap((argument, index) =>
+    argument === name ? [rawArgs[index + 1]] : [],
+  );
 }
 
 for (let index = 0; index < rawArgs.length; index += 1) {
@@ -199,6 +212,7 @@ const remote = option('--remote') || 'origin';
 const force = rawArgs.includes('--force');
 const snapshotPath = option('--snapshot');
 const noCheckoutAccess = rawArgs.includes('--no-checkout-access');
+const agentExcludeRules = options('--exclude');
 const activeAgentProcesses = new Set();
 const selectionAbortController = new AbortController();
 let interrupted = false;
@@ -365,6 +379,7 @@ function acquireOwnership() {
 }
 if (selectedBase) targetArgs.push('--base', selectedBase);
 if (selectedHead) targetArgs.push('--head', selectedHead);
+for (const rule of agentExcludeRules) targetArgs.push('--exclude', rule);
 if (supportRecordPath) {
   targetArgs.push('--exclude-output', supportRecordPath);
 }
@@ -414,13 +429,44 @@ function pathInsideRepo(file) {
   return path && path !== '..' && !path.startsWith('../') ? path : undefined;
 }
 
+function snapshotExclusions(snapshot) {
+  let excludes = () => false;
+  if (agentExcludeRules.length) {
+    const result = spawnSync(
+      'git',
+      ['-C', repo, 'config', '--bool', 'core.ignoreCase'],
+      { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] },
+    );
+    excludes = createAgentExclusionMatcher(agentExcludeRules, {
+      ignoreCase: result.status === 0 && result.stdout.trim() === 'true',
+    });
+  }
+  const nextSnapshot = {
+    ...snapshot,
+    files: snapshot.files.map((file) => {
+      const next = { ...file };
+      if (excludes(file.path)) next.agentExcluded = true;
+      else delete next.agentExcluded;
+      return next;
+    }),
+  };
+  return {
+    ...nextSnapshot,
+    notes: {
+      ...snapshot.notes,
+      agentReviewFingerprint:
+        agentReviewFingerprintFromSnapshot(nextSnapshot),
+    },
+  };
+}
+
 function cleanSnapshot(snapshot) {
   const summaryFile = pathInsideRepo(summariesPath);
   const excluded = new Set(
     [summaryFile, summaryFile && `${summaryFile}.lock`, pathInsideRepo(outputPath)].filter(Boolean),
   );
   const files = snapshot.files
-    .filter((file) => !excluded.has(file.path))
+    .filter((file) => !excluded.has(file.path) && !file.agentExcluded)
     .map((file) => {
       const fullPatch = typeof file.patch === 'string' ? file.patch : '';
       const useSnippet =
@@ -448,20 +494,11 @@ function cleanSnapshot(snapshot) {
     });
 
   return {
-    repo: {
-      name: snapshot.repo.name,
-      base: snapshot.repo.base,
-      head: snapshot.repo.head,
-      ...(snapshot.repo.branch ? { branch: snapshot.repo.branch } : {}),
-      ...(snapshot.repo.baseBranch
-        ? { baseBranch: snapshot.repo.baseBranch }
-        : {}),
-      target: snapshot.repo.target,
-    },
+    repo: agentReviewContextFromSnapshot(snapshot),
     change: {
-      title: snapshot.change.title,
-      ...(snapshot.change.number ? { number: snapshot.change.number } : {}),
-      ...(snapshot.change.url ? { url: snapshot.change.url } : {}),
+      ...(snapshot.repo.target?.pullRequest?.number
+        ? { number: snapshot.repo.target.pullRequest.number }
+        : {}),
     },
     files,
   };
@@ -877,22 +914,42 @@ function metadataList(value) {
   return Array.isArray(value) ? value : [];
 }
 
+function includedAgentFiles(snapshot) {
+  return snapshot.files.filter((file) => !file.agentExcluded);
+}
+
+function relevantSummaryFailures(snapshot, summaries, files) {
+  const agentPaths = new Set(files.map((file) => file.path));
+  const reviewPaths = new Set(snapshot.files.map((file) => file.path));
+  return metadataList(summaries.meta?.failedFiles).filter(
+    (failure) =>
+      agentPaths.has(failure.path) || !reviewPaths.has(failure.path),
+  );
+}
+
+function summaryContentComplete(snapshot, summaries, files) {
+  if (files.length === 0) {
+    return (
+      summaries.meta?.status === 'complete' &&
+      summaries.meta?.agentReviewFingerprint ===
+        agentSnapshotFingerprint(snapshot)
+    );
+  }
+  const summaryFiles = savedFiles(summaries);
+  return (
+    completeChangeNote(summaries.change) &&
+    files.every((file) => completeFileNote(summaryFiles[file.path]))
+  );
+}
+
 function summaryFailureState(snapshot, summaries) {
-  const failedFiles = metadataList(summaries.meta?.failedFiles);
-  const errors = metadataList(summaries.meta?.errors);
-  const emptyReviewComplete =
-    snapshot.files.length === 0 &&
-    summaries.meta?.status === 'complete' &&
-    summaries.meta?.reviewFingerprint ===
-      snapshot.notes?.reviewFingerprint;
+  const files = includedAgentFiles(snapshot);
+  const failedFiles = relevantSummaryFailures(snapshot, summaries, files);
+  const errors = files.length ? metadataList(summaries.meta?.errors) : [];
   const complete = [
     failedFiles.length === 0,
     errors.length === 0,
-    emptyReviewComplete ||
-      (completeChangeNote(summaries.change) &&
-        snapshot.files.every((file) =>
-          completeFileNote(summaries.files?.[file.path]),
-        )),
+    summaryContentComplete(snapshot, summaries, files),
   ].every(Boolean);
   return { failedFiles, errors, complete };
 }
@@ -900,6 +957,7 @@ function summaryFailureState(snapshot, summaries) {
 function snapshotFileWithNote(file, summaries, failureByPath) {
   const nextFile = { ...file };
   delete nextFile.noteFailure;
+  if (file.agentExcluded) return { ...nextFile, noteReady: false };
   const note = summaries.files?.[file.path];
   if (completeFileNote(note)) {
     return { ...nextFile, summary: note, noteReady: true };
@@ -919,15 +977,21 @@ function notesWithoutFailures(notes = {}) {
   return nextNotes;
 }
 
-function publishSnapshot(snapshot, summaries) {
+function publishSnapshot(
+  snapshot,
+  summaries,
+  { previousReviewFingerprint } = {},
+) {
   const current = readJson(outputPath, null);
   const reviewFingerprint = snapshot.notes?.reviewFingerprint;
+  const agentReviewFingerprint = agentSnapshotFingerprint(snapshot);
   if (!reviewFingerprint) {
     throw new Error('The supplied snapshot has no review fingerprint');
   }
   if (
     current?.notes?.reviewFingerprint &&
-    current.notes.reviewFingerprint !== reviewFingerprint
+    current.notes.reviewFingerprint !== reviewFingerprint &&
+    current.notes.reviewFingerprint !== previousReviewFingerprint
   ) {
     throw new Error('The published review does not match the supplied snapshot');
   }
@@ -946,21 +1010,22 @@ function publishSnapshot(snapshot, summaries) {
   );
   const content = {
     ...snapshot,
-    ...(completeChangeNote(summaries.change)
+    ...(includedAgentFiles(publishedSnapshot).length &&
+    completeChangeNote(summaries.change)
       ? { change: { ...snapshot.change, ...summaries.change } }
       : {}),
     files,
     notes: {
       ...notesWithoutFailures(snapshot.notes),
       agent: selectedAgent,
-      generatedFor: reviewFingerprint,
+      generatedFor: agentReviewFingerprint,
       fresh: true,
       complete: state.complete,
       status: state.complete
         ? 'complete'
         : summaries.meta?.status || 'generating',
       completedFiles: files.filter((file) => file.noteReady).length,
-      totalFiles: files.length,
+      totalFiles: includedAgentFiles(publishedSnapshot).length,
       ...(state.failedFiles.length
         ? { failedFiles: state.failedFiles }
         : {}),
@@ -976,7 +1041,6 @@ function publishSnapshot(snapshot, summaries) {
     .update(JSON.stringify(content))
     .digest('hex')
     .slice(0, 12);
-  assertReviewFresh(snapshot);
   writeJsonAtomic(
     outputPath,
     {
@@ -988,33 +1052,100 @@ function publishSnapshot(snapshot, summaries) {
   );
 }
 
-function storeProgress(snapshot, summaries) {
+function summariesForSnapshot(summaries, snapshot) {
+  return {
+    ...summaries,
+    meta: {
+      ...summaries.meta,
+      reviewFingerprint: snapshot.notes.reviewFingerprint,
+    },
+  };
+}
+
+function storeCachedSummaries(cacheSummaries, snapshot) {
+  if (!cacheSummaries) return;
+  writeJsonAtomic(
+    summariesPath,
+    summariesForSnapshot(cacheSummaries, snapshot),
+  );
+}
+
+function publishSuppliedProgress({
+  cacheSummaries,
+  current,
+  currentSummaries,
+  currentReviewFingerprint,
+  expectedSnapshot,
+  initialReviewFingerprint,
+}) {
+  publishSnapshot(current, currentSummaries, {
+    previousReviewFingerprint: initialReviewFingerprint,
+  });
+  const afterPublish = currentSnapshotForAgent(expectedSnapshot);
+  if (snapshotFingerprint(afterPublish) !== currentReviewFingerprint) {
+    return afterPublish;
+  }
+  storeCachedSummaries(cacheSummaries, current);
+}
+
+function publishBuiltProgress({
+  cacheSummaries,
+  currentSummaries,
+  expectedSnapshot,
+}) {
+  const pendingSummariesPath = agentTemporaryPath('pending-summaries.json');
+  const pendingOutputPath = agentTemporaryPath('pending-diff-data.json');
+  writeFileSync(
+    pendingSummariesPath,
+    `${JSON.stringify(currentSummaries, null, 2)}\n`,
+  );
+  runBuilder(pendingOutputPath, true, pendingSummariesPath);
+  const pendingSnapshot = readJson(pendingOutputPath, null);
+  if (
+    agentSnapshotFingerprint(pendingSnapshot) !==
+    agentSnapshotFingerprint(expectedSnapshot)
+  ) {
+    throw new ReviewChangedError();
+  }
+  const afterBuild = currentSnapshotForAgent(expectedSnapshot);
+  if (snapshotFingerprint(pendingSnapshot) !== snapshotFingerprint(afterBuild)) {
+    return afterBuild;
+  }
+  writeJsonAtomic(outputPath, pendingSnapshot, { privateFile: false });
+  const afterPublish = currentSnapshotForAgent(expectedSnapshot);
+  if (
+    snapshotFingerprint(pendingSnapshot) !== snapshotFingerprint(afterPublish)
+  ) {
+    return afterPublish;
+  }
+  storeCachedSummaries(cacheSummaries, pendingSnapshot);
+}
+
+function storeProgress(snapshot, summaries, { cacheSummaries = summaries } = {}) {
   recordSyncStage('publish', () => {
-    assertReviewFresh(snapshot);
-    if (snapshotPath) {
-      publishSnapshot(snapshot, summaries);
-      assertReviewFresh(snapshot);
-      writeJsonAtomic(summariesPath, summaries);
-      return;
+    const initialReviewFingerprint = snapshotFingerprint(snapshot);
+    let expectedSnapshot = snapshot;
+    for (;;) {
+      const current = currentSnapshotForAgent(expectedSnapshot);
+      const currentReviewFingerprint = snapshotFingerprint(current);
+      const currentSummaries = summariesForSnapshot(summaries, current);
+      const nextSnapshot = snapshotPath
+        ? publishSuppliedProgress({
+            cacheSummaries,
+            current,
+            currentSummaries,
+            currentReviewFingerprint,
+            expectedSnapshot,
+            initialReviewFingerprint,
+          })
+        : publishBuiltProgress({
+            cacheSummaries,
+            currentSummaries,
+            expectedSnapshot,
+          });
+      if (!nextSnapshot) return;
+      expectedSnapshot = nextSnapshot;
     }
-    const pendingSummariesPath = agentTemporaryPath('pending-summaries.json');
-    const pendingOutputPath = agentTemporaryPath('pending-diff-data.json');
-    writeFileSync(
-      pendingSummariesPath,
-      `${JSON.stringify(summaries, null, 2)}\n`,
-    );
-    runBuilder(pendingOutputPath, true, pendingSummariesPath);
-    const pendingSnapshot = readJson(pendingOutputPath, null);
-    if (
-      snapshotFingerprint(pendingSnapshot) !==
-      snapshotFingerprint(snapshot)
-    ) {
-      throw new ReviewChangedError();
-    }
-    assertReviewFresh(snapshot);
-    writeJsonAtomic(outputPath, pendingSnapshot, { privateFile: false });
-    assertReviewFresh(snapshot);
-    writeJsonAtomic(summariesPath, summaries);
   });
 }
 
@@ -1191,7 +1322,7 @@ async function requestAgent(invocation, input, normalize, snapshot) {
   supportRecorder?.addBytes('agentInput', Buffer.byteLength(input));
   return recordAsyncStage('agent', async () => {
     const result = await runAgent(invocation, input);
-    assertReviewFresh(snapshot);
+    assertAgentReviewFresh(snapshot);
     if (result.stderr.trim()) {
       console.error(
         `${selectedAgent} wrote diagnostic output:\n${result.stderr.trim()}`,
@@ -1238,18 +1369,33 @@ function completeChangeNote(value) {
 
 function fileFingerprint(file) {
   return createHash('sha256')
-    .update(
-      JSON.stringify({
-        path: file.path,
-        oldPath: file.oldPath,
-        status: file.status,
-        additions: file.additions,
-        deletions: file.deletions,
-        isBinary: file.isBinary,
-        patch: file.patch,
-      }),
-    )
+    .update(JSON.stringify(agentReviewFile(file)))
     .digest('hex');
+}
+
+function savedFiles(summaries) {
+  return isObject(summaries.files) ? summaries.files : {};
+}
+
+function savedFingerprints(summaries, field) {
+  return isObject(summaries.meta?.[field]) ? summaries.meta[field] : {};
+}
+
+function matchingHiddenNotes(snapshot, files, active, hidden) {
+  const notes = {};
+  const fingerprints = {};
+  for (const file of snapshot.files) {
+    if (!file.agentExcluded) continue;
+    const fingerprint = fileFingerprint(file);
+    if (
+      (hidden[file.path] || active[file.path]) === fingerprint &&
+      completeFileNote(files[file.path])
+    ) {
+      notes[file.path] = files[file.path];
+      fingerprints[file.path] = fingerprint;
+    }
+  }
+  return { notes, fingerprints };
 }
 
 function generationSettingsMatch(meta, generationSettings) {
@@ -1263,6 +1409,35 @@ function generationSettingsMatch(meta, generationSettings) {
     accessMode: Object.hasOwn(meta, 'accessMode') ? meta.accessMode : null,
   };
   return JSON.stringify(previousSettings) === JSON.stringify(generationSettings);
+}
+
+function cachedSummaryContext(previousSummaries, snapshot, generationSettings) {
+  const files = savedFiles(previousSummaries);
+  const fingerprints = savedFingerprints(
+    previousSummaries,
+    'fileFingerprints',
+  );
+  const hiddenFingerprints = savedFingerprints(
+    previousSummaries,
+    'hiddenFileFingerprints',
+  );
+  const settingsMatch =
+    typeof previousSummaries.meta?.agentReviewFingerprint === 'string' &&
+    generationSettingsMatch(previousSummaries.meta, generationSettings);
+  return {
+    files,
+    fingerprints,
+    hiddenFingerprints,
+    settingsMatch,
+    hidden: settingsMatch
+      ? matchingHiddenNotes(
+          snapshot,
+          files,
+          fingerprints,
+          hiddenFingerprints,
+        )
+      : { notes: {}, fingerprints: {} },
+  };
 }
 
 const temporaryDirectory = mkdtempSync(
@@ -1287,22 +1462,37 @@ function snapshotFingerprint(snapshot) {
   return typeof fingerprint === 'string' && fingerprint ? fingerprint : undefined;
 }
 
+function agentSnapshotFingerprint(snapshot) {
+  const fingerprint = snapshot?.notes?.agentReviewFingerprint;
+  return typeof fingerprint === 'string' && fingerprint
+    ? fingerprint
+    : snapshotFingerprint(snapshot);
+}
+
 function currentReviewSnapshot() {
   if (snapshotPath) {
-    return JSON.parse(readFileSync(snapshotPath, 'utf8'));
+    return snapshotExclusions(JSON.parse(readFileSync(snapshotPath, 'utf8')));
   }
   const freshSnapshotPath = agentTemporaryPath('fresh-diff-data.json');
   runBuilder(freshSnapshotPath, true);
-  return JSON.parse(readFileSync(freshSnapshotPath, 'utf8'));
+  return snapshotExclusions(JSON.parse(readFileSync(freshSnapshotPath, 'utf8')));
 }
 
-function assertReviewFresh(snapshot) {
-  const expected = snapshotFingerprint(snapshot);
-  const current = snapshotFingerprint(currentReviewSnapshot());
-  if (!expected || !current) {
+function currentSnapshotForAgent(snapshot) {
+  const expected = agentSnapshotFingerprint(snapshot);
+  const current = currentReviewSnapshot();
+  const currentFingerprint = agentSnapshotFingerprint(current);
+  if (!expected || !currentFingerprint) {
     throw new Error('The supplied snapshot has no review fingerprint');
   }
-  if (current !== expected) throw new ReviewChangedError();
+  if (currentFingerprint !== expected) {
+    throw new ReviewChangedError();
+  }
+  return current;
+}
+
+function assertAgentReviewFresh(snapshot) {
+  currentSnapshotForAgent(snapshot);
 }
 
 try {
@@ -1322,7 +1512,7 @@ try {
           'snapshot',
           Buffer.byteLength(rawSnapshotText),
         );
-        const value = JSON.parse(rawSnapshotText);
+        const value = snapshotExclusions(JSON.parse(rawSnapshotText));
         return { rawSnapshot: value, snapshot: cleanSnapshot(value) };
       });
       const paths = snapshot.files.map((file) => file.path);
@@ -1333,13 +1523,79 @@ try {
           `Saved notes at ${summariesPath} are damaged. Rebuilding them from the current review.`,
         );
       }
-      if (paths.length === 0) {
+      const excludedFileCount = rawSnapshot.files.filter(
+        (file) => file.agentExcluded,
+      ).length;
+      const generationSettings = {
+        agent: selectedAgent,
+        model: model || null,
+        reasoning: reasoning || null,
+        accessMode: accessMode.mode,
+      };
+      if (paths.length === 0 && excludedFileCount > 0) {
+        const {
+          files: previousFiles,
+          hidden,
+        } = cachedSummaryContext(
+          previousSummaries,
+          rawSnapshot,
+          generationSettings,
+        );
+        const displaySummaries = {
+          files: hidden.notes,
+          meta: {
+            agent: selectedAgent,
+            reviewFingerprint: rawSnapshot.notes.reviewFingerprint,
+            agentReviewFingerprint: agentSnapshotFingerprint(rawSnapshot),
+            fileFingerprints: {},
+            ...(Object.keys(hidden.fingerprints).length
+              ? { hiddenFileFingerprints: hidden.fingerprints }
+              : {}),
+            status: 'complete',
+            generatedAt: new Date().toISOString(),
+            ...(model ? { model } : {}),
+            ...(reasoning ? { reasoning } : {}),
+            accessMode: accessMode.mode,
+          },
+        };
+        const cacheMeta = { ...previousSummaries.meta };
+        delete cacheMeta.hiddenFileFingerprints;
+        delete cacheMeta.emptyAgentReviewFingerprint;
+        const preservedCache = {
+          ...previousSummaries,
+          ...(completeChangeNote(previousSummaries.change)
+            ? { change: previousSummaries.change }
+            : {}),
+          files: hidden.notes,
+          meta: {
+            ...cacheMeta,
+            fileFingerprints: {},
+            emptyAgentReviewFingerprint:
+              agentSnapshotFingerprint(rawSnapshot),
+            ...(Object.keys(hidden.fingerprints).length
+              ? { hiddenFileFingerprints: hidden.fingerprints }
+              : {}),
+          },
+        };
+        const cacheSummaries = previousState.damaged ||
+          (!Object.keys(previousFiles).length &&
+            !completeChangeNote(previousSummaries.change))
+          ? displaySummaries
+          : JSON.stringify(preservedCache) === JSON.stringify(previousSummaries)
+            ? false
+            : preservedCache;
+        workingSnapshot = rawSnapshot;
+        workingSummaries = displaySummaries;
+        storeProgress(rawSnapshot, workingSummaries, { cacheSummaries });
+        console.log('No files are included in agent context.');
+      } else if (paths.length === 0) {
         workingSnapshot = rawSnapshot;
         workingSummaries = {
           files: {},
           meta: {
             agent: selectedAgent,
             reviewFingerprint: rawSnapshot.notes.reviewFingerprint,
+            agentReviewFingerprint: agentSnapshotFingerprint(rawSnapshot),
             fileFingerprints: {},
             status: 'complete',
             generatedAt: new Date().toISOString(),
@@ -1351,34 +1607,23 @@ try {
         storeProgress(rawSnapshot, workingSummaries);
         console.log('No changed files to summarize.');
       } else {
-        const generationSettings = {
-          agent: selectedAgent,
-          model: model || null,
-          reasoning: reasoning || null,
-          accessMode: accessMode.mode,
-        };
         const startedAt = new Date().toISOString();
-        const previousFiles =
-          previousSummaries.files &&
-          typeof previousSummaries.files === 'object' &&
-          !Array.isArray(previousSummaries.files)
-            ? previousSummaries.files
-            : {};
-        const previousFingerprints =
-          previousSummaries.meta?.fileFingerprints &&
-          typeof previousSummaries.meta.fileFingerprints === 'object' &&
-          !Array.isArray(previousSummaries.meta.fileFingerprints)
-            ? previousSummaries.meta.fileFingerprints
-            : {};
+        const {
+          files: previousFiles,
+          fingerprints: previousFingerprints,
+          hiddenFingerprints: previousHiddenFingerprints,
+          settingsMatch,
+          hidden,
+        } = cachedSummaryContext(
+          previousSummaries,
+          rawSnapshot,
+          generationSettings,
+        );
         const rawFiles = new Map(
           rawSnapshot.files.map((file) => [file.path, file]),
         );
         const fileFingerprints = Object.fromEntries(
           paths.map((path) => [path, fileFingerprint(rawFiles.get(path))]),
-        );
-        const settingsMatch = generationSettingsMatch(
-          previousSummaries.meta,
-          generationSettings,
         );
         const summaryFiles = new Map(
           snapshot.files.map((file) => [file.path, file]),
@@ -1390,7 +1635,8 @@ try {
           if (
             !force &&
             settingsMatch &&
-            previousFingerprints[path] === fileFingerprints[path] &&
+            (previousFingerprints[path] || previousHiddenFingerprints[path]) ===
+              fileFingerprints[path] &&
             completeFileNote(previousFiles[path])
           ) {
             reusableFiles[path] = previousFiles[path];
@@ -1406,8 +1652,8 @@ try {
         const changeNeedsRefresh =
           force ||
           !settingsMatch ||
-          previousSummaries.meta?.reviewFingerprint !==
-            rawSnapshot.notes.reviewFingerprint ||
+          previousSummaries.meta?.agentReviewFingerprint !==
+            agentSnapshotFingerprint(rawSnapshot) ||
           !completeChangeNote(previousSummaries.change);
         const needsGeneration = changedPaths.length > 0 || changeNeedsRefresh;
 
@@ -1415,11 +1661,15 @@ try {
         workingSummaries = addFailures(
           {
             ...(!changeNeedsRefresh ? { change: previousSummaries.change } : {}),
-            files: reusableFiles,
+            files: { ...hidden.notes, ...reusableFiles },
             meta: {
               agent: selectedAgent,
               reviewFingerprint: rawSnapshot.notes.reviewFingerprint,
+              agentReviewFingerprint: agentSnapshotFingerprint(rawSnapshot),
               fileFingerprints,
+              ...(Object.keys(hidden.fingerprints).length
+                ? { hiddenFileFingerprints: hidden.fingerprints }
+                : {}),
               ...(needsGeneration
                 ? { startedAt }
                 : previousSummaries.meta?.generatedAt
@@ -1548,7 +1798,7 @@ try {
                   ? finalAttempt
                   : !completeFileNote(workingSummaries.files[failure.path]),
             );
-            assertReviewFresh(rawSnapshot);
+            assertAgentReviewFresh(rawSnapshot);
             workingSummaries = {
               ...(workingSummaries.change
                 ? { change: workingSummaries.change }
@@ -1629,7 +1879,7 @@ try {
                 ),
               rawSnapshot,
             );
-            assertReviewFresh(rawSnapshot);
+            assertAgentReviewFresh(rawSnapshot);
             workingSummaries = {
               change: normalized,
               files: workingSummaries.files,
