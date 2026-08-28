@@ -9,14 +9,17 @@ import {
   fstatSync,
   lstatSync,
   mkdirSync,
+  mkdtempSync,
   openSync,
   readFileSync,
   readlinkSync,
   renameSync,
+  rmSync,
   statSync,
   writeFileSync,
 } from 'node:fs';
-import { basename, dirname, relative, resolve } from 'node:path';
+import { tmpdir } from 'node:os';
+import { basename, dirname, join, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
   isBaseWorktreeTarget,
@@ -997,6 +1000,60 @@ function untrackedStat(path) {
   };
 }
 
+function baseWorktreeReplacement(path, target) {
+  const directory = mkdtempSync(join(tmpdir(), 'diffsplain-base-index-'));
+  const env = { ...process.env, GIT_INDEX_FILE: join(directory, 'index') };
+  const diff = (args) => command('git', ['-C', repo, 'diff', ...args], { env });
+
+  try {
+    command('git', ['-C', repo, 'read-tree', target.base], { env });
+    const patch = diff([
+      '--no-ext-diff',
+      '--no-textconv',
+      '--binary',
+      '--find-renames',
+      target.base,
+      '--',
+      path,
+    ]);
+    const stat = parseNumstat(
+      diff([
+        '--no-ext-diff',
+        '--no-textconv',
+        '--numstat',
+        '-z',
+        '--find-renames',
+        target.base,
+        '--',
+        path,
+      ]),
+    ).get(path) || {
+      additions: 0,
+      deletions: 0,
+      isBinary: false,
+    };
+    return { patch, stat };
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
+}
+
+function reviewFileStat(file, numstat) {
+  if (file.replacement) return file.replacement.stat;
+  if (file.untracked) return untrackedStat(file.path);
+  return (
+    numstat.get(file.path) || {
+      additions: 0,
+      deletions: 0,
+      isBinary: false,
+    }
+  );
+}
+
+function reviewFilePatch(file, target, patches) {
+  return file.replacement?.patch ?? filePatch(file, target, patches);
+}
+
 function githubFileUrl(repositoryUrl, ref, path) {
   if (!repositoryUrl || !ref || ref === 'WORKTREE') return undefined;
   const filePath = path.split('/').map(encodeURIComponent).join('/');
@@ -1052,7 +1109,7 @@ function build() {
     target.kind === 'base-worktree' ||
     target.kind === 'checkout'
   ) {
-    const trackedPaths = new Set(nameStatus.map((file) => file.path));
+    const trackedByPath = new Map(nameStatus.map((file) => [file.path, file]));
     const untracked = tryRepo([
       'ls-files',
       '--others',
@@ -1062,22 +1119,26 @@ function build() {
       .split('\0')
       .filter((path) => path && !excludedPaths.has(path));
     for (const path of untracked) {
-      if (!trackedPaths.has(path)) {
+      const tracked = trackedByPath.get(path);
+      if (target.kind === 'base-worktree' && tracked?.status === 'deleted') {
+        const replacement = baseWorktreeReplacement(path, target);
+        if (replacement.patch) {
+          tracked.status = 'modified';
+          tracked.replacement = replacement;
+        } else {
+          tracked.omit = true;
+        }
+      } else if (!tracked) {
         nameStatus.push({ path, status: 'added', untracked: true });
       }
     }
     nameStatus.sort((left, right) => left.path.localeCompare(right.path));
   }
 
-  const filesWithoutSummaries = nameStatus.map((file) => {
-    const stat = file.untracked
-      ? untrackedStat(file.path)
-      : numstat.get(file.path) || {
-          additions: 0,
-          deletions: 0,
-          isBinary: false,
-        };
-    const patch = filePatch(file, target, patches);
+  const reviewFiles = nameStatus.filter((file) => !file.omit);
+  const filesWithoutSummaries = reviewFiles.map((file) => {
+    const stat = reviewFileStat(file, numstat);
+    const patch = reviewFilePatch(file, target, patches);
     const binary =
       stat.isBinary ||
       patch.includes('Binary files ') ||

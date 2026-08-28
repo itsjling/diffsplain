@@ -126,6 +126,51 @@ test('keeps checkout, worktree, base-worktree, and exact-range Git semantics dis
   }
 });
 
+test('coalesces a base file deletion with an untracked live replacement', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'diffsplain-untracked-replacement-'));
+  const repo = join(root, 'repo');
+
+  try {
+    execFileSync('git', ['init', '-q', '-b', 'main', repo]);
+    git(repo, 'config', 'user.email', 'diffsplain@example.test');
+    git(repo, 'config', 'user.name', 'Diffsplain');
+    git(repo, 'config', 'commit.gpgsign', 'false');
+    await writeFile(join(repo, 'recreated.txt'), 'base contents\n');
+    git(repo, 'add', 'recreated.txt');
+    git(repo, 'commit', '-qm', 'base');
+    const base = git(repo, 'rev-parse', 'HEAD');
+
+    git(repo, 'rm', 'recreated.txt');
+    git(repo, 'commit', '-qm', 'delete tracked file');
+    await writeFile(join(repo, 'recreated.txt'), 'live replacement\n');
+
+    const snapshot = await build(repo, root, 'base-untracked-replacement', [
+      '--base',
+      base,
+    ]);
+
+    assert.deepEqual(snapshot.files.map((file) => file.path), ['recreated.txt']);
+    const [file] = snapshot.files;
+    assert.equal(file.status, 'modified');
+    assert.equal(file.additions, 1);
+    assert.equal(file.deletions, 1);
+    assert.equal(file.isBinary, false);
+    assert.match(file.patch, /^diff --git a\/recreated\.txt b\/recreated\.txt\n/);
+    assert.match(file.patch, /--- a\/recreated\.txt\n\+\+\+ b\/recreated\.txt\n/);
+    assert.match(file.patch, /-base contents\n\+live replacement\n/);
+    assert.equal(file.snippet, file.patch);
+
+    await writeFile(join(repo, 'recreated.txt'), 'base contents\n');
+    const unchanged = await build(repo, root, 'base-untracked-replacement', [
+      '--base',
+      base,
+    ]);
+    assert.deepEqual(unchanged.files, []);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test('compares the exact base tree instead of a merge base', async () => {
   const root = await mkdtemp(join(tmpdir(), 'diffsplain-exact-base-'));
   const repo = join(root, 'repo');
