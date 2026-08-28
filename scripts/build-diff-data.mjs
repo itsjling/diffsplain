@@ -836,53 +836,33 @@ function resolveCheckoutTarget() {
   };
 }
 
-function optionalLocalValue(value) {
-  return value || undefined;
-}
-
-function localOrigin(remoteUrl) {
-  if (!remoteUrl) return undefined;
-  return { name: 'origin', url: remoteUrl };
-}
-
-function worktreeCommit(currentHead) {
-  return currentHead || null;
-}
-
-function baseWorktreeTarget(base, resolvedBase, currentHead) {
-  return {
-    kind: 'base-worktree',
-    base: { ref: base, oid: resolvedBase },
-    head: { ref: 'WORKTREE', oid: worktreeCommit(currentHead) },
-  };
-}
-
-function baseWorktreeChangeDefaults(base) {
-  return {
-    title: `Changes since ${base}`,
-    summary: `Shows commits and working-tree changes since ${base}.`,
-    why: 'Reviews the working tree against the chosen base without changing the repo.',
-    highlights: [],
-    risks: [],
-  };
-}
-
 function resolveBaseWorktreeTarget() {
   const currentHead = tryRepo(['rev-parse', '--verify', 'HEAD']);
   const resolvedBase = resolveBaseWorktreeCommit(repo, baseOption);
+  const remoteUrl = tryRepo(['remote', 'get-url', 'origin']) || undefined;
   return {
     kind: 'base-worktree',
     runGit: runRepo,
     range: [resolvedBase],
     base: resolvedBase,
     head: currentHead || 'WORKTREE',
-    branch: optionalLocalValue(tryRepo(['branch', '--show-current'])),
-    remote: localOrigin(tryRepo(['remote', 'get-url', 'origin'])),
+    branch: tryRepo(['branch', '--show-current']) || undefined,
+    remote: remoteUrl ? { name: 'origin', url: remoteUrl } : undefined,
     sourceRepositoryUrl: undefined,
     baseRepositoryUrl: undefined,
     comparisonCommitsOnRemote: false,
-    target: baseWorktreeTarget(baseOption, resolvedBase, currentHead),
-    changeDefaults: baseWorktreeChangeDefaults(baseOption),
+    target: {
+      kind: 'base-worktree',
+      base: { ref: baseOption, oid: resolvedBase },
+      head: { ref: 'WORKTREE', oid: currentHead || null },
+    },
+    changeDefaults: {
+      title: `Changes since ${baseOption}`,
+      summary: `Shows commits and working-tree changes since ${baseOption}.`,
+      why: 'Reviews the working tree against the chosen base without changing the repo.',
+      highlights: [],
+      risks: [],
+    },
   };
 }
 
