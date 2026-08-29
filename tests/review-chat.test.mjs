@@ -127,6 +127,34 @@ test('keeps file and review threads separate and withholds excluded context', as
   }
 });
 
+test('keeps large changed path sets out of the provider response schema', async () => {
+  const fixture = await createFixture();
+  const provider = controlledProvider();
+  const largeSnapshot = snapshot();
+  largeSnapshot.files = Array.from({ length: 1_000 }, (_, index) => ({
+    path: `changed-${String(index).padStart(4, '0')}.txt`,
+    status: 'modified',
+    additions: 1,
+    deletions: 0,
+    isBinary: false,
+    patch: '@@ -1 +1 @@\n+after\n',
+  }));
+  await writeFile(fixture.snapshotPath, JSON.stringify(largeSnapshot));
+  const chat = createReviewChat({ snapshotPath: fixture.snapshotPath, provider });
+
+  try {
+    chat.command({ type: 'new', scope: 'review' });
+    chat.command({ type: 'ask', scope: 'review', question: 'What changed?' });
+    const schema = provider.calls[0].input.responseSchema;
+    const citationPathSchema = schema.properties.citations.items.properties.path;
+    assert.deepEqual(citationPathSchema, { type: 'string' });
+    assert.doesNotMatch(JSON.stringify(schema), /changed-\d{4}\.txt/);
+  } finally {
+    chat.close();
+    await rm(fixture.directory, { recursive: true, force: true });
+  }
+});
+
 test('uses the full review fingerprint to stale threads and fences late output', async () => {
   const fixture = await createFixture();
   const provider = controlledProvider();
@@ -491,11 +519,13 @@ test('rejects bad citations and preserves a failed question for retry', async ()
     chat.command({ type: 'ask', scope: 'review', question: 'Cite it.' });
     provider.calls[0].resolve({
       markdown: 'Bad citation.',
-      citations: [{ path: 'missing.txt', startLine: 0, endLine: 1 }],
+      citations: [{ path: 'missing.txt', startLine: 1, endLine: 1 }],
     });
     await flush();
-    assert.equal(thread(chat.getState(), 'review').status, 'failed');
-    assert.equal(thread(chat.getState(), 'review').pendingQuestion, 'Cite it.');
+    const failed = thread(chat.getState(), 'review');
+    assert.equal(failed.status, 'failed');
+    assert.match(failed.error, /current visible file path/);
+    assert.equal(failed.pendingQuestion, 'Cite it.');
     chat.command({ type: 'retry', scope: 'review' });
     provider.calls[1].resolve(answer());
     await flush();

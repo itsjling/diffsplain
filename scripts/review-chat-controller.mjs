@@ -354,7 +354,6 @@ export class ReviewChatController {
       context: evidence.context,
       messages: history,
       question,
-      paths: evidence.paths,
       accessMode: this.accessMode,
     }));
   }
@@ -389,7 +388,6 @@ export class ReviewChatController {
       kind: 'compact',
       context: evidence.context,
       messages: parts.older,
-      paths: evidence.paths,
       accessMode: this.accessMode,
     }));
     return true;

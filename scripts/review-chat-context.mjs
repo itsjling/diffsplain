@@ -228,7 +228,7 @@ export function validateReviewChatAnswer(value, paths) {
   };
 }
 
-function answerSchema(paths) {
+function answerSchema() {
   return {
     type: 'object',
     properties: {
@@ -238,7 +238,7 @@ function answerSchema(paths) {
         items: {
           type: 'object',
           properties: {
-            path: { type: 'string', enum: paths },
+            path: { type: 'string' },
             startLine: { type: 'integer', minimum: 1 },
             endLine: { type: 'integer', minimum: 1 },
           },
@@ -296,14 +296,14 @@ function responsePrompt(kind, accessMode) {
   ].join('\n');
 }
 
-export function makeInput({ kind, context, messages, question, paths, accessMode }) {
+export function makeInput({ kind, context, messages, question, accessMode }) {
   return {
     kind,
     prompt: responsePrompt(kind, accessMode),
     review: context,
     history: messages,
     ...(question === undefined ? {} : { question }),
-    responseSchema: answerSchema(paths),
+    responseSchema: answerSchema(),
   };
 }
 
