@@ -10,13 +10,24 @@ import {
   enabledCodingAgents,
 } from '../scripts/coding-agents.mjs';
 
-const [docs, agentNotes, development, index, packageText, product] = await Promise.all([
+const [
+  docs,
+  agentNotes,
+  development,
+  index,
+  packageText,
+  product,
+  data,
+  readme,
+] = await Promise.all([
   readFile(new URL('../docs/content/cli.mdx', import.meta.url), 'utf8'),
   readFile(new URL('../docs/content/agent-notes.mdx', import.meta.url), 'utf8'),
   readFile(new URL('../docs/content/development.mdx', import.meta.url), 'utf8'),
   readFile(new URL('../docs/content/index.mdx', import.meta.url), 'utf8'),
   readFile(new URL('../package.json', import.meta.url), 'utf8'),
   readFile(new URL('../PRODUCT.md', import.meta.url), 'utf8'),
+  readFile(new URL('../docs/content/data.mdx', import.meta.url), 'utf8'),
+  readFile(new URL('../README.md', import.meta.url), 'utf8'),
 ]);
 
 test('lists each accepted option in public help and the CLI reference', () => {
@@ -50,7 +61,40 @@ test('documents provider inputs and limits', () => {
   assert.doesNotMatch(agentNotes, /--agent claude[\s\S]{0,100}--reasoning/);
 });
 
-test('documents the provider order and Cursor CLI', () => {
+test('documents checkout access and provider limits', () => {
+  for (const document of [docs, agentNotes, development]) {
+    assert.match(document, /--no-checkout-access/);
+    assert.match(document, /snapshot-only/);
+    assert.match(document, /checkout-read-only/);
+  }
+  const notes = agentNotes.replace(/\s+/g, ' ');
+  assert.match(notes, /ignored files, Git history, and symlink targets/);
+  assert.match(notes, /Copilot and OpenCode.*no proven native read-only mode/i);
+  assert.match(notes, /approval.*user/i);
+  assert.match(notes, /Diffsplain itself does not edit the review target/i);
+  assert.match(notes, /Agents run under your user permissions/i);
+});
+
+test('documents ordered agent-context exclusions', () => {
+  const cli = docs.replace(/\s+/g, ' ');
+  const notes = agentNotes.replace(/\s+/g, ' ');
+  const snapshot = data.replace(/\s+/g, ' ');
+  assert.match(helpText, /--exclude PATTERN/);
+  assert.match(readme, /--exclude PATTERN/);
+  assert.match(cli, /gitignore-style rules in the order you pass them/i);
+  assert.match(cli, /!private\/keep\.txt/);
+  assert.match(cli, /current path.*renamed file/i);
+  assert.match(cli, /--force.*does not override/i);
+  assert.match(cli, /not a privacy boundary/i);
+  assert.match(cli, /does not change checkout access/i);
+  assert.match(notes, /automatic agent input/i);
+  assert.match(notes, /hides a cached note/i);
+  assert.match(notes, /all files.*excluded/i);
+  assert.match(snapshot, /agentExcluded/);
+  assert.match(snapshot, /full patch/i);
+});
+
+test('documents the picker order and Cursor CLI', () => {
   const providerNames = enabledCodingAgents.map(
     (agent) => (agent === 'opencode'
       ? 'OpenCode'
@@ -67,6 +111,15 @@ test('documents the provider order and Cursor CLI', () => {
   }
 
   const notes = agentNotes.replace(/\s+/g, ' ');
+  for (const document of [docs, agentNotes]) {
+    const text = document.replace(/\s+/g, ' ');
+    assert.match(text, /interactive terminal/i);
+    assert.match(
+      text,
+      /does not choose an agent for you|pass `--agent NAME` or (use )?`--no-agent`/i,
+    );
+  }
+  assert.doesNotMatch(helpText, /Automatic agent selection/);
   assert.match(notes, /non-interactive Ask mode/i);
   assert.match(notes, /--trust/i);
   assert.match(notes, /--workspace/i);

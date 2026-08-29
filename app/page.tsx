@@ -7,7 +7,12 @@ import {
 } from "react";
 import type { FileDiffOptions } from "@pierre/diffs";
 import { PatchDiff, Virtualizer } from "@pierre/diffs/react";
+import {
+  ReviewChat,
+  ReviewChatRunningNotice,
+} from "./review-chat";
 import { useLiveSnapshot } from "./use-live-snapshot";
+import { type ChatScope, useReviewChat } from "./use-review-chat";
 
 type FileStatus = "added" | "modified" | "deleted" | "renamed" | "binary";
 
@@ -34,6 +39,7 @@ type DiffFile = {
   comparisonUrl?: string;
   summary: FileSummary;
   noteReady?: boolean;
+  agentExcluded?: boolean;
 };
 
 type DiffNotes = {
@@ -60,7 +66,15 @@ type DiffSnapshot = {
     remote?: string;
     remoteUrl?: string;
     target?: {
-      kind: "worktree" | "checkout" | "range" | "branch" | "pull-request";
+      kind:
+        | "worktree"
+        | "base-worktree"
+        | "checkout"
+        | "range"
+        | "branch"
+        | "pull-request";
+      base?: { ref: string; oid: string | null };
+      head?: { ref: string; oid: string | null };
     };
   };
   change: {
@@ -125,6 +139,7 @@ function noteWriter(notes?: DiffNotes) {
   return `${model} (${agent})`;
 }
 
+// fallow-ignore-next-line complexity -- This formats every supported review target.
 function changeScope(snapshot: DiffSnapshot) {
   const { repo } = snapshot;
   if (snapshot.change.number) return `PR #${snapshot.change.number}`;
@@ -135,6 +150,9 @@ function changeScope(snapshot: DiffSnapshot) {
     return repo.head === "WORKTREE"
       ? "Empty repo → working tree"
       : "HEAD → working tree";
+  }
+  if (repo.target?.kind === "base-worktree") {
+    return `${shortRef(repo.target.base?.ref || repo.base)} → working tree`;
   }
   if (repo.target?.kind === "checkout") {
     if (repo.base === repo.head) {
@@ -155,7 +173,9 @@ function changeScope(snapshot: DiffSnapshot) {
 function browserTitle(snapshot: DiffSnapshot) {
   const target = snapshot.change.number
     ? `PR #${snapshot.change.number}`
-    : snapshot.repo.branch || changeScope(snapshot);
+    : snapshot.repo.target?.kind === "base-worktree"
+      ? changeScope(snapshot)
+      : snapshot.repo.branch || changeScope(snapshot);
   return `${snapshot.repo.name} · ${target} — Diffsplain`;
 }
 
@@ -187,6 +207,17 @@ function statusLabel(status: FileStatus) {
 
 function hasSelectedText() {
   return window.getSelection()?.isCollapsed === false;
+}
+
+function isTextEntryTarget(target: EventTarget | null) {
+  return (
+    target instanceof Element &&
+    Boolean(
+      target.closest(
+        "input, textarea, select, [contenteditable]:not([contenteditable='false']), [role='textbox']",
+      ),
+    )
+  );
 }
 
 function canStartSwipe(target: EventTarget | null) {
@@ -255,7 +286,7 @@ function trapPickerFocus(event: KeyboardEvent, dialog: HTMLElement | null) {
 function fileNavigationStep(event: KeyboardEvent) {
   const target = event.target;
   if (!(target instanceof HTMLElement)) return 0;
-  if (["INPUT", "TEXTAREA", "SELECT"].includes(target.tagName)) return 0;
+  if (isTextEntryTarget(target)) return 0;
   const focusedFileControl = target.closest(
     ".nav-button, .file-picker-trigger",
   );
@@ -385,14 +416,17 @@ function ConnectionNotice({
 }
 
 export default function Home() {
-  const { demoUnavailable, loadError, snapshot } =
+  const { access, chatRevision, demoUnavailable, loadError, snapshot } =
     useLiveSnapshot<DiffSnapshot>();
+  const chat = useReviewChat({ access, refreshKey: chatRevision });
   const [selectedPath, setSelectedPath] = useState<string | null>(null);
   const [expandedFiles, setExpandedFiles] = useState<Set<string>>(new Set());
   const [pickerOpen, setPickerOpen] = useState(false);
   const [query, setQuery] = useState("");
   const [motion, setMotion] = useState<"next" | "previous" | "pick">("pick");
   const [motionKey, setMotionKey] = useState(0);
+  const [summaryMode, setSummaryMode] = useState<"note" | "chat">("note");
+  const [chatScope, setChatScope] = useState<ChatScope>("file");
   const [clock, setClock] = useState(0);
   const touchStart = useRef<{ x: number; y: number } | null>(null);
   const pickerDialogRef = useRef<HTMLElement | null>(null);
@@ -469,6 +503,7 @@ export default function Home() {
   useEffect(() => {
     function onKeyDown(event: KeyboardEvent) {
       if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "k") {
+        if (isTextEntryTarget(event.target)) return;
         event.preventDefault();
         if (!pickerOpen) openPicker();
         return;
@@ -563,14 +598,16 @@ export default function Home() {
   const changeLabel = changeScope(snapshot);
   const noteReady =
     currentFile.noteReady ?? snapshot.notes?.complete ?? true;
+  const agentExcluded = currentFile.agentExcluded === true;
   const notesGenerating = snapshot.notes?.status === "generating";
   const notesFailed = snapshot.notes?.status === "failed";
-  const notesInProgress = notesGenerating && !noteReady;
-  const noteUnavailable = notesFailed && !noteReady;
+  const notesInProgress = !agentExcluded && notesGenerating && !noteReady;
+  const noteUnavailable = !agentExcluded && notesFailed && !noteReady;
   const noteProgress = snapshot.notes
     ? `${snapshot.notes.completedFiles} of ${snapshot.notes.totalFiles} ready`
     : "";
-  const hasFreshNote = noteReady && snapshot.notes?.fresh === true;
+  const hasFreshNote =
+    !agentExcluded && noteReady && snapshot.notes?.fresh === true;
   const writer = noteWriter(snapshot.notes);
   const syncLabel = loadError
     ? "Reconnecting"
@@ -794,17 +831,56 @@ export default function Home() {
             </footer>
           </section>
 
-          <aside className="summary-pane" aria-labelledby="summary-heading">
+          <aside className="summary-pane" aria-label="Review details">
             <div className="summary-scroll">
               <div
+                aria-label="Review details view"
+                className="summary-mode-switch"
+                role="group"
+              >
+                <button
+                  aria-pressed={summaryMode === "note"}
+                  className={summaryMode === "note" ? "is-selected" : ""}
+                  id="agent-note-tab"
+                  onClick={() => setSummaryMode("note")}
+                  type="button"
+                >
+                  Agent note
+                </button>
+                <button
+                  aria-pressed={summaryMode === "chat"}
+                  className={summaryMode === "chat" ? "is-selected" : ""}
+                  id="review-chat-tab"
+                  onClick={() => setSummaryMode("chat")}
+                  type="button"
+                >
+                  Ask agent
+                </button>
+              </div>
+              <ReviewChatRunningNotice
+                chat={chat}
+                chatVisible={summaryMode === "chat"}
+                currentPath={currentFile.path}
+                scope={chatScope}
+              />
+              {summaryMode === "note" ? (
+                <div
+                  aria-labelledby="agent-note-tab summary-heading"
+                  id="agent-note-panel"
+                >
+              <div
                 className={`summary-kicker ${
-                  notesInProgress || noteUnavailable
+                  agentExcluded
+                    ? "summary-kicker--excluded"
+                    : notesInProgress || noteUnavailable
                     ? "summary-kicker--pending"
                     : ""
                 }`}
               >
                 <span>
-                  {notesInProgress
+                  {agentExcluded
+                    ? "AGENT NOTE · EXCLUDED"
+                    : notesInProgress
                     ? "AGENT NOTE · WRITING"
                     : noteUnavailable
                       ? "AGENT NOTE · STOPPED"
@@ -816,7 +892,21 @@ export default function Home() {
                 </span>
               </div>
 
-              {notesInProgress ? (
+              {agentExcluded ? (
+                <div
+                  className="excluded-note"
+                  role="status"
+                  aria-live="polite"
+                  aria-atomic="true"
+                >
+                  <h2 id="summary-heading">Excluded from agent context</h2>
+                  <p className="summary-lead">
+                    This patch stays in the local review, but automatic note
+                    requests omit it. Direct questions may include this file;
+                    review-wide chat still respects exclusions.
+                  </p>
+                </div>
+              ) : notesInProgress ? (
                 <div
                   className="summary-loading"
                   role="status"
@@ -867,7 +957,8 @@ export default function Home() {
                 </>
               )}
 
-              {!notesInProgress &&
+              {!agentExcluded &&
+              !notesInProgress &&
               !noteUnavailable &&
               currentFile.summary.details.length ? (
                 <section className="note-section">
@@ -880,7 +971,8 @@ export default function Home() {
                 </section>
               ) : null}
 
-              {!notesInProgress &&
+              {!agentExcluded &&
+              !notesInProgress &&
               !noteUnavailable &&
               currentFile.summary.risks.length ? (
                 <section className="note-section note-section--risk">
@@ -892,9 +984,28 @@ export default function Home() {
                   </ul>
                 </section>
               ) : null}
+                </div>
+              ) : (
+                <div
+                  aria-labelledby="review-chat-tab"
+                  id="review-chat-panel"
+                >
+                  <ReviewChat
+                    agentExcluded={agentExcluded}
+                    chat={chat}
+                    oldPath={currentFile.oldPath}
+                    path={currentFile.path}
+                    scope={chatScope}
+                    setScope={setChatScope}
+                  />
+                </div>
+              )}
             </div>
 
-            {!notesInProgress && (hasFreshNote || noteUnavailable) ? (
+            {summaryMode === "note" &&
+            !agentExcluded &&
+            !notesInProgress &&
+            (hasFreshNote || noteUnavailable) ? (
               <footer className="agent-signoff">
                 <span className="agent-glyph" aria-hidden="true">
                   ✦

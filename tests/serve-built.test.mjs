@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
 import { request } from 'node:http';
 import { createServer } from 'node:net';
-import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { chmod, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
@@ -69,6 +69,40 @@ function within(promise, message, timeout = 10_000) {
   });
 }
 
+function pause(milliseconds) {
+  return new Promise((resolve) => setTimeout(resolve, milliseconds));
+}
+
+async function providerPid(path) {
+  const deadline = Date.now() + 10_000;
+  while (Date.now() < deadline) {
+    try {
+      return Number((await readFile(path, 'utf8')).trim());
+    } catch {
+      await pause(25);
+    }
+  }
+  throw new Error('Provider did not record its process ID');
+}
+
+function processIsRunning(pid) {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    return error.code === 'EPERM';
+  }
+}
+
+async function waitForProcessExit(pid) {
+  const deadline = Date.now() + 10_000;
+  while (Date.now() < deadline) {
+    if (!processIsRunning(pid)) return;
+    await pause(25);
+  }
+  throw new Error(`Provider process ${pid} did not exit`);
+}
+
 async function stopIfRunning(child) {
   if (child?.exitCode === null) await stop(child);
 }
@@ -95,6 +129,18 @@ function reviewUrl(ready, path) {
   return url;
 }
 
+async function waitForChat(ready, condition) {
+  const deadline = Date.now() + 10_000;
+  let state;
+  while (Date.now() < deadline) {
+    const response = await fetch(reviewUrl(ready, 'api/chat'));
+    state = await response.json();
+    if (condition(state)) return state;
+    await new Promise((resolve) => setTimeout(resolve, 25));
+  }
+  throw new Error(`Chat state did not settle: ${JSON.stringify(state)}`);
+}
+
 function rawRequest(
   ready,
   {
@@ -102,6 +148,8 @@ function rawRequest(
     method = 'GET',
     path = '/',
     headers = {},
+    body,
+    chunks,
   } = {},
 ) {
   return new Promise((resolve, reject) => {
@@ -124,8 +172,184 @@ function rawRequest(
       });
     });
     client.once('error', reject);
-    client.end();
+    if (chunks) {
+      for (const chunk of chunks) client.write(chunk);
+      client.end();
+      return;
+    }
+    client.end(body);
   });
+}
+
+function unavailableChatArgs(output, access, previousAccess) {
+  return [
+    '--output',
+    output,
+    '--port',
+    '0',
+    '--access',
+    access,
+    '--previous-access',
+    previousAccess,
+  ];
+}
+
+async function startUnavailableChat(directory, access, previousAccess) {
+  const output = join(directory, 'diff-data.json');
+  await writeFile(output, JSON.stringify({
+    files: [],
+    notes: { reviewFingerprint: 'review-one' },
+  }));
+  const child = start(unavailableChatArgs(output, access, previousAccess));
+  const ready = await waitForReady(child);
+  return { child, output, ready };
+}
+
+function chatRequests(ready, chatPath, previousAccess) {
+  const command = JSON.stringify({ type: 'new', scope: 'review' });
+  return Promise.all([
+    rawRequest(ready, { path: chatPath }),
+    rawRequest(ready, { path: '/api/chat' }),
+    rawRequest(ready, { path: `/api/chat?access=${previousAccess}` }),
+    rawRequest(ready, { method: 'POST', path: chatPath, body: command }),
+    rawRequest(ready, {
+      method: 'POST',
+      path: chatPath,
+      headers: { 'Content-Type': 'application/json' },
+      body: command,
+    }),
+    rawRequest(ready, {
+      method: 'POST',
+      path: chatPath,
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ type: 'new', scope: 'review', extra: true }),
+    }),
+    rawRequest(ready, {
+      method: 'POST',
+      path: chatPath,
+      headers: { 'Content-Type': 'application/json' },
+      chunks: [Buffer.alloc(40_000, 'a'), Buffer.alloc(40_000, 'b')],
+    }),
+  ]);
+}
+
+function assertChatRequests(results) {
+  const [current, missing, prior, noJson, unavailable, unknown, oversized] = results;
+  assert.equal(current.status, 200);
+  assert.equal(current.headers['cache-control'], 'no-store');
+  assert.equal(JSON.parse(current.body).available, false);
+  assert.equal(missing.status, 403);
+  assert.equal(prior.status, 403);
+  assert.equal(noJson.status, 415);
+  assert.equal(unavailable.status, 409);
+  assert.equal(unknown.status, 400);
+  assert.equal(oversized.status, 413);
+}
+
+async function waitForChatEvent(ready, output) {
+  const response = await fetch(reviewUrl(ready, 'events'));
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let buffered = decoder.decode((await reader.read()).value);
+  await writeFile(output, JSON.stringify({
+    files: [],
+    notes: { reviewFingerprint: 'review-two' },
+  }));
+  while (!buffered.includes('event: chat')) {
+    const next = await within(reader.read(), 'Server did not send a chat event');
+    assert.equal(next.done, false);
+    buffered += decoder.decode(next.value);
+  }
+  return reader;
+}
+
+function providerSnapshot() {
+  return {
+    files: [{
+      path: 'changed.txt',
+      status: 'modified',
+      additions: 1,
+      deletions: 1,
+      isBinary: false,
+      patch: '@@ -1 +1 @@\n-before\n+after\n',
+    }],
+    notes: { reviewFingerprint: 'review-one' },
+  };
+}
+
+function providerScript(calls, argumentsLog) {
+  return [
+    '#!/bin/sh',
+    `printf 'run\\n' >> ${JSON.stringify(calls)}`,
+    `printf '%s\\n' "$@" >> ${JSON.stringify(argumentsLog)}`,
+    "printf '%s' '{\"markdown\":\"Complete answer.\",\"citations\":[]}'",
+    '',
+  ].join('\n');
+}
+
+async function writeProviderFixture(output, provider, calls, argumentsLog) {
+  await writeFile(output, JSON.stringify(providerSnapshot()));
+  await writeFile(provider, providerScript(calls, argumentsLog));
+  await chmod(provider, 0o755);
+}
+
+function selectedProviderArgs(output, provider) {
+  return [
+    '--output',
+    output,
+    '--port',
+    '0',
+    '--chat-agent',
+    'codex',
+    '--chat-binary',
+    provider,
+    '--chat-model',
+    'test-model',
+    '--chat-reasoning',
+    'low',
+  ];
+}
+
+function chatCommand(endpoint, body) {
+  return fetch(endpoint, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+}
+
+async function askProviderChat(endpoint, question) {
+  const response = await chatCommand(endpoint, {
+    type: 'ask',
+    scope: 'review',
+    question,
+  });
+  assert.equal(response.status, 202);
+}
+
+async function exerciseSelectedProvider(ready, calls, argumentsLog) {
+  const endpoint = reviewUrl(ready, 'api/chat');
+  const newThread = await chatCommand(endpoint, { type: 'new', scope: 'review' });
+  assert.equal(newThread.status, 200);
+  await askProviderChat(endpoint, 'Why?');
+  const complete = await waitForChat(
+    ready,
+    (state) => state.threads[0]?.status === 'ready',
+  );
+  assert.deepEqual(complete.threads[0].messages.at(-1).answer, {
+    markdown: 'Complete answer.',
+    citations: [],
+  });
+  await askProviderChat(endpoint, 'And then?');
+  const secondComplete = await waitForChat(
+    ready,
+    (state) => state.threads[0]?.messages.length === 4,
+  );
+  assert.equal(secondComplete.threads[0].status, 'ready');
+  assert.deepEqual((await readFile(calls, 'utf8')).trim().split('\n'), ['run', 'run']);
+  const argumentsText = await readFile(argumentsLog, 'utf8');
+  assert.match(argumentsText, /--model\ntest-model/);
+  assert.match(argumentsText, /model_reasoning_effort="low"/);
 }
 
 test('requires a per-run access value for data and event routes', async () => {
@@ -211,6 +435,100 @@ test('hands a prior protected tab the current access value', async () => {
     assert.match(initialEvents, new RegExp(access));
   } finally {
     await reader?.cancel();
+    if (child && child.exitCode === null) await stop(child);
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test('protects chat state and accepts only strict, bounded JSON commands', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'diffsplain-chat-server-'));
+  const access = 'a'.repeat(43);
+  const previousAccess = 'b'.repeat(43);
+  let child;
+  let reader;
+
+  try {
+    const fixture = await startUnavailableChat(directory, access, previousAccess);
+    child = fixture.child;
+    const { output, ready } = fixture;
+    const chatPath = `/api/chat?access=${access}`;
+    assertChatRequests(await chatRequests(ready, chatPath, previousAccess));
+    reader = await waitForChatEvent(ready, output);
+  } finally {
+    await reader?.cancel();
+    if (child && child.exitCode === null) await stop(child);
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test('starts complete chat answers asynchronously with the selected provider', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'diffsplain-chat-provider-'));
+  const output = join(directory, 'diff-data.json');
+  const provider = join(directory, 'codex');
+  const calls = join(directory, 'calls.log');
+  const argumentsLog = join(directory, 'args.log');
+  let child;
+
+  try {
+    await writeProviderFixture(output, provider, calls, argumentsLog);
+    child = start(selectedProviderArgs(output, provider));
+    const ready = await waitForReady(child);
+    await exerciseSelectedProvider(ready, calls, argumentsLog);
+  } finally {
+    if (child && child.exitCode === null) await stop(child);
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test('forces shutdown after a provider ignores SIGTERM', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'diffsplain-chat-shutdown-'));
+  const output = join(directory, 'diff-data.json');
+  const provider = join(directory, 'codex');
+  const providerPidPath = join(directory, 'provider.pid');
+  let child;
+
+  try {
+    await writeFile(output, JSON.stringify({
+      files: [],
+      notes: { reviewFingerprint: 'review-one' },
+    }));
+    await writeFile(provider, [
+      '#!/usr/bin/env node',
+      `require('node:fs').writeFileSync(${JSON.stringify(providerPidPath)}, String(process.pid));`,
+      "process.on('SIGTERM', () => {});",
+      'setInterval(() => {}, 1_000);',
+      '',
+    ].join('\n'));
+    await chmod(provider, 0o755);
+    child = start([
+      '--output',
+      output,
+      '--port',
+      '0',
+      '--chat-agent',
+      'codex',
+      '--chat-binary',
+      provider,
+    ]);
+    const ready = await waitForReady(child);
+    const endpoint = reviewUrl(ready, 'api/chat');
+    const newThread = await fetch(endpoint, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ type: 'new', scope: 'review' }),
+    });
+    assert.equal(newThread.status, 200);
+    const ask = await fetch(endpoint, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ type: 'ask', scope: 'review', question: 'Wait?' }),
+    });
+    assert.equal(ask.status, 202);
+    const pid = await providerPid(providerPidPath);
+    await within(stop(child), 'Server did not force-stop the provider', 5_000);
+    await waitForProcessExit(pid);
+    assert.equal(child.signalCode, null);
+  } finally {
     if (child && child.exitCode === null) await stop(child);
     await rm(directory, { recursive: true, force: true });
   }

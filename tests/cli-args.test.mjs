@@ -3,9 +3,19 @@ import { readFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import test from 'node:test';
 import { parseCliArgs } from '../scripts/cli-args.mjs';
+import { reviewAccessMode } from '../scripts/local-target.mjs';
 
 const cwd = '/work/project';
 const missing = () => false;
+
+function valuesFor(args, name) {
+  return args.flatMap((argument, index) =>
+    argument === name
+      ? [args[index + 1]]
+      : argument.startsWith(`${name}=`)
+        ? [argument.slice(name.length + 1)]
+        : []);
+}
 
 test('leaves agent selection open when no agent is passed', () => {
   const parsed = parseCliArgs([], {
@@ -29,6 +39,122 @@ test('leaves agent selection open when no agent is passed', () => {
     '--jobs',
     '3',
   ]);
+});
+
+test('passes no-checkout-access only to agent notes', () => {
+  const parsed = parseCliArgs(['--no-checkout-access'], {
+    callerDirectory: cwd,
+    pathExists: missing,
+  });
+
+  assert.equal(parsed.noCheckoutAccess, true);
+  assert.ok(parsed.agentArgs.includes('--no-checkout-access'));
+  assert.ok(!parsed.feedArgs.includes('--no-checkout-access'));
+});
+
+test('keeps repeated exclusion rules in encounter order for both builders', () => {
+  const parsed = parseCliArgs([
+    '--exclude',
+    'private/**',
+    '--base',
+    'main',
+    '--exclude=!private/keep.txt',
+    '--exclude',
+    '\\!literal.txt',
+  ], {
+    callerDirectory: cwd,
+    pathExists: missing,
+  });
+
+  const expected = ['private/**', '!private/keep.txt', '\\!literal.txt'];
+  assert.deepEqual(valuesFor(parsed.feedArgs, '--exclude'), expected);
+  assert.deepEqual(valuesFor(parsed.agentArgs, '--exclude'), expected);
+  assert.equal(parsed.excludePatterns.join('\0'), expected.join('\0'));
+});
+
+test('forwards flag-shaped exclusion patterns as values for both builders', () => {
+  const parsed = parseCliArgs([
+    '--exclude',
+    'private/**',
+    '--exclude=--help',
+    '--exclude=--force',
+    '--exclude=--worktree',
+  ], {
+    callerDirectory: cwd,
+    pathExists: missing,
+  });
+
+  const expected = ['private/**', '--help', '--force', '--worktree'];
+  for (const args of [parsed.feedArgs, parsed.agentArgs]) {
+    assert.deepEqual(valuesFor(args, '--exclude'), expected);
+    assert.deepEqual(
+      args.filter((argument) => argument.startsWith('--exclude')),
+      expected.map((pattern) => `--exclude=${pattern}`),
+    );
+    for (const pattern of expected.slice(1)) {
+      assert.ok(!args.includes(pattern), `${pattern} must stay an exclusion value`);
+    }
+  }
+  assert.equal(parsed.excludePatterns.join('\0'), expected.join('\0'));
+});
+
+test('forwards exclusion rules for a plain review', () => {
+  const parsed = parseCliArgs([
+    '--no-agent',
+    '--exclude=private/**',
+    '--exclude',
+    '!private/keep.txt',
+  ], {
+    callerDirectory: cwd,
+    pathExists: missing,
+  });
+
+  assert.equal(parsed.agentEnabled, false);
+  assert.deepEqual(parsed.agentArgs, parsed.feedArgs);
+  assert.deepEqual(valuesFor(parsed.feedArgs, '--exclude'), [
+    'private/**',
+    '!private/keep.txt',
+  ]);
+});
+
+test('classifies local targets for checkout access and remote targets for snapshots', () => {
+  const local = { repo: cwd };
+  assert.deepEqual(reviewAccessMode(local), {
+    mode: 'checkout-read-only',
+    root: cwd,
+  });
+  for (const target of [
+    { ...local, checkout: true },
+    { ...local, worktree: true },
+    { ...local, base: 'release-1' },
+  ]) {
+    assert.deepEqual(reviewAccessMode(target), {
+      mode: 'checkout-read-only',
+      root: cwd,
+    });
+  }
+  for (const target of [
+    { ...local, branch: 'topic' },
+    { ...local, pullRequest: '42' },
+    { ...local, base: 'main', head: 'topic' },
+    { ...local, range: 'main..topic' },
+    { ...local, snapshotSupplied: true, snapshotTargetKind: 'checkout' },
+    { ...local, snapshotSupplied: true, snapshotTargetKind: 'worktree' },
+    { ...local, snapshotSupplied: true, snapshotTargetKind: 'base-worktree' },
+    { ...local, snapshotSupplied: true, snapshotTargetKind: 'range' },
+    { ...local, snapshotSupplied: true, snapshotTargetKind: 'branch' },
+    { ...local, snapshotSupplied: true, snapshotTargetKind: 'pr' },
+    { ...local, snapshotSupplied: true },
+  ]) {
+    assert.deepEqual(reviewAccessMode(target), {
+      mode: 'snapshot-only',
+      reason: 'target-mismatch',
+    });
+  }
+  assert.deepEqual(reviewAccessMode({ ...local, noCheckoutAccess: true }), {
+    mode: 'snapshot-only',
+    reason: 'disabled',
+  });
 });
 
 test('accepts headless browser and explicit bind options', () => {
@@ -178,6 +304,24 @@ test('passes the worktree target to both builders unchanged', () => {
   assert.deepEqual(parsed.agentArgs, parsed.feedArgs);
 });
 
+test('passes a base-only working-tree target to both builders unchanged', () => {
+  const parsed = parseCliArgs(
+    ['--repo', 'repos/widgets', '--base', 'release-1', '--no-agent'],
+    {
+      callerDirectory: cwd,
+      pathExists: (path) => path === resolve(cwd, 'repos/widgets'),
+    },
+  );
+
+  assert.deepEqual(parsed.feedArgs, [
+    '--repo',
+    resolve(cwd, 'repos/widgets'),
+    '--base',
+    'release-1',
+  ]);
+  assert.deepEqual(parsed.agentArgs, parsed.feedArgs);
+});
+
 test('keeps an existing repo path local', () => {
   const parsed = parseCliArgs(['repos/widgets', '--pr', '42'], {
     callerDirectory: cwd,
@@ -265,6 +409,7 @@ test('rejects a missing value for every value option', () => {
     '--jobs',
     '--port',
     '--host',
+    '--exclude',
     '--agent',
   ]) {
     assert.throws(
@@ -509,12 +654,11 @@ test('rejects conflicting review targets', () => {
     ['--worktree', '--branch', 'topic'],
     ['--worktree', '--pr', '42'],
     ['--worktree', '--base', 'main', '--head', 'topic'],
-    ['--base', 'main'],
     ['--head', 'topic'],
   ]) {
     assert.throws(
       () => parseCliArgs(args),
-      /cannot|must be used together/i,
+      /cannot|must be used/i,
       args.join(' '),
     );
   }

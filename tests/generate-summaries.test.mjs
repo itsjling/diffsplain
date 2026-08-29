@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { execFileSync, spawn, spawnSync } from "node:child_process";
 import {
+  appendFile,
   chmod,
   mkdir,
   mkdtemp,
@@ -8,14 +9,18 @@ import {
   readFile,
   rm,
   stat,
+  symlink,
   writeFile,
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
+import { parseCliArgs } from "../scripts/cli-args.mjs";
 import { summaryPath } from "../scripts/summary-path.mjs";
 
 const script = new URL("../scripts/generate-summaries.mjs", import.meta.url)
+  .pathname;
+const builder = new URL("../scripts/build-diff-data.mjs", import.meta.url)
   .pathname;
 const summaryEnvironmentNames = new Set([
   "CODEX_HOME",
@@ -88,10 +93,25 @@ process.stdout.write(readFileSync(${JSON.stringify(responseFile)}, "utf8"));
 `,
   );
   await chmod(bin, 0o755);
+  await ignoreProviderArtifacts(root, [
+    "fake-codex.mjs",
+    "codex-args.json",
+    "codex-schema.json",
+    "codex-response.json",
+  ]);
   return { bin, argsFile, schemaFile };
 }
 
-async function recordingCodex(root) {
+async function ignoreProviderArtifacts(root, names) {
+  try {
+    await appendFile(
+      join(root, ".git", "info", "exclude"),
+      `${names.join("\n")}\n`,
+    );
+  } catch {}
+}
+
+async function recordingCodex(root, { captureInput = false } = {}) {
   const bin = join(root, "recording-codex.mjs");
   const calls = join(root, "codex-calls.jsonl");
   await writeFile(
@@ -111,6 +131,7 @@ appendFileSync(
   JSON.stringify({
     files: input.files.map((file) => file.path),
     existing: Object.keys(input.existingFileNotes || {}).sort(),
+    ${captureInput ? 'input,' : ''}
   }) + "\\n",
 );
 const response = {
@@ -261,6 +282,104 @@ process.stdout.write(JSON.stringify(response));
 `,
   );
   await chmod(bin, 0o755);
+  await ignoreProviderArtifacts(root, [
+    `containment-${mode}-codex.mjs`,
+    `containment-${mode}-calls.jsonl`,
+  ]);
+  return { bin, calls };
+}
+
+async function accessRecordingCodex(
+  directory,
+  repo,
+  { changeOnFirstCall, replaceSnapshot } = {},
+) {
+  const bin = join(directory, "access-recording-codex.mjs");
+  const calls = join(directory, "access-recording-calls.jsonl");
+  const scenario = JSON.stringify({
+    calls,
+    changedPath: join(repo, "changed.txt"),
+    changeOnFirstCall,
+    replaceSnapshot,
+  });
+  await writeFile(
+    bin,
+    `#!/usr/bin/env node
+import {
+  appendFileSync,
+  existsSync,
+  readFileSync,
+  writeFileSync,
+} from "node:fs";
+import { execFileSync } from "node:child_process";
+const scenario = ${scenario};
+const input = JSON.parse(readFileSync(0, "utf8"));
+const call = existsSync(scenario.calls)
+  ? readFileSync(scenario.calls, "utf8").trim().split("\\n").length + 1
+  : 1;
+const read = (path) => {
+  try { return readFileSync(path, "utf8").trim(); } catch { return undefined; }
+};
+const history = (() => {
+  try {
+    return execFileSync("git", ["log", "-1", "--format=%s"], {
+      cwd: process.cwd(),
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "ignore"],
+    }).trim();
+  } catch { return undefined; }
+})();
+appendFileSync(
+  scenario.calls,
+  JSON.stringify({
+    args: process.argv.slice(2),
+    cwd: process.cwd(),
+    environment: process.env.PRIVATE_AGENT_TOKEN,
+    history,
+    ignored: read("ignored-secret.txt"),
+    symlink: read("linked-secret.txt"),
+    paths: input.files.map((file) => file.path),
+    prompt: process.argv.at(-1),
+  }) + "\\n",
+);
+if (call === 1 && scenario.changeOnFirstCall !== undefined) {
+  writeFileSync(scenario.changedPath, scenario.changeOnFirstCall);
+}
+if (call === 1 && scenario.replaceSnapshot) {
+  const replacement = scenario.replaceSnapshot.value;
+  writeFileSync(
+    scenario.replaceSnapshot.inputPath,
+    JSON.stringify(replacement),
+  );
+  if (scenario.replaceSnapshot.outputPath) {
+    writeFileSync(
+      scenario.replaceSnapshot.outputPath,
+      JSON.stringify(replacement),
+    );
+  }
+}
+const note = (path) => ({
+  path,
+  title: "Note " + call + " for " + path,
+  what: "Explains " + path + ".",
+  why: "Checks access mode.",
+  details: [],
+  risks: [],
+});
+process.stdout.write(JSON.stringify(input.files.length
+  ? { files: input.files.map((file) => note(file.path)) }
+  : {
+      change: {
+        title: "Change " + call,
+        summary: "Checks access mode.",
+        why: "Keeps current review notes.",
+        highlights: [],
+        risks: [],
+      },
+    }));
+`,
+  );
+  await chmod(bin, 0o755);
   return { bin, calls };
 }
 
@@ -309,15 +428,159 @@ if (input.files.length) {
 `,
   );
   await chmod(bin, 0o755);
+  await ignoreProviderArtifacts(root, [
+    "malformed-file-note-codex.mjs",
+    "malformed-file-note-calls.jsonl",
+  ]);
   return { bin, calls };
 }
 
 function run(repo, args, options = {}) {
-  return spawnSync(process.execPath, [script, "--repo", repo, ...args], {
+  const hasAgentChoice = args.includes("--agent") || args.includes("--no-agent");
+  const selectedArgs = hasAgentChoice ? args : ["--agent", "codex", ...args];
+  return spawnSync(process.execPath, [script, "--repo", repo, ...selectedArgs], {
     encoding: "utf8",
     ...options,
   });
 }
+
+test("requires an agent choice before building a standalone snapshot", async () => {
+  const repo = await makeRepo();
+  const summaries = join(repo, "notes.json");
+  const output = join(repo, "diff-data.json");
+
+  try {
+    const result = spawnSync(
+      process.execPath,
+      [
+        script,
+        "--repo",
+        repo,
+        "--range",
+        "HEAD~1..HEAD",
+        "--summaries",
+        summaries,
+        "--output",
+        output,
+      ],
+      {
+        encoding: "utf8",
+        env: { ...process.env, PATH: "" },
+      },
+    );
+
+    assert.equal(result.status, 2, result.stderr);
+    assert.match(result.stderr, /interactive terminal/i);
+    assert.match(result.stderr, /--agent.*--no-agent/i);
+    await assert.rejects(stat(summaries), /ENOENT/);
+    await assert.rejects(stat(output), /ENOENT/);
+  } finally {
+    await rm(repo, { recursive: true, force: true });
+  }
+});
+
+test("exits after SIGTERM while waiting for an interactive agent choice", async () => {
+  const repo = await makeRepo();
+  const bin = join(repo, "bin");
+  const terminalPrelude = join(repo, "terminal-prelude.cjs");
+  let child;
+
+  try {
+    await mkdir(bin);
+    const codex = join(bin, "codex");
+    await writeFile(codex, "#!/bin/sh\nexit 0\n");
+    await chmod(codex, 0o755);
+    await writeFile(
+      terminalPrelude,
+      `Object.defineProperties(process.stdin, {
+  isTTY: { value: true },
+  setRawMode: { value: () => {} },
+});
+Object.defineProperty(process.stderr, "isTTY", { value: true });
+`,
+    );
+
+    child = spawn(
+      process.execPath,
+      [
+        "--require",
+        terminalPrelude,
+        script,
+        "--repo",
+        repo,
+        "--range",
+        "HEAD~1..HEAD",
+      ],
+      {
+        env: { ...process.env, PATH: bin },
+        stdio: "pipe",
+      },
+    );
+    let stderr = "";
+    child.stderr.on("data", (chunk) => {
+      stderr += chunk;
+    });
+    await waitFor(() => /Enter a number/.test(stderr), 2_000);
+
+    const result = await new Promise((resolve, reject) => {
+      const timer = setTimeout(
+        () => reject(new Error("Summary generator did not stop after SIGTERM")),
+        2_000,
+      );
+      child.once("error", reject);
+      child.once("close", (code, signal) => {
+        clearTimeout(timer);
+        resolve({ code, signal });
+      });
+      child.kill("SIGTERM");
+    });
+    child = undefined;
+
+    assert.deepEqual(result, { code: 2, signal: null });
+    assert.match(stderr, /Agent selection was cancelled/i);
+  } finally {
+    if (child?.exitCode === null && child?.signalCode === null) {
+      child.kill("SIGKILL");
+      await new Promise((resolve) => child.once("close", resolve));
+    }
+    await rm(repo, { recursive: true, force: true });
+  }
+});
+
+test("rejects a missing base before agent selection or snapshot work", async () => {
+  const repo = await makeRepo();
+  const summaries = join(repo, "notes.json");
+  const output = join(repo, "diff-data.json");
+
+  try {
+    const result = spawnSync(
+      process.execPath,
+      [
+        script,
+        "--repo",
+        repo,
+        "--base",
+        "not-a-ref",
+        "--summaries",
+        summaries,
+        "--output",
+        output,
+      ],
+      {
+        encoding: "utf8",
+        env: { ...process.env, PATH: "" },
+      },
+    );
+
+    assert.equal(result.status, 2, result.stderr);
+    assert.match(result.stderr, /Could not resolve base ref "not-a-ref"/);
+    assert.doesNotMatch(result.stderr, /interactive terminal/i);
+    await assert.rejects(stat(summaries), /ENOENT/);
+    await assert.rejects(stat(output), /ENOENT/);
+  } finally {
+    await rm(repo, { recursive: true, force: true });
+  }
+});
 
 async function waitFor(read, timeout = 8_000) {
   const deadline = Date.now() + timeout;
@@ -507,7 +770,7 @@ test("generates notes with Codex and rebuilds a selected range", async () => {
     assert.equal(snapshot.files[1].summary.title, "Update text");
     assert.equal(
       snapshot.notes.generatedFor,
-      snapshot.notes.reviewFingerprint,
+      snapshot.notes.agentReviewFingerprint,
     );
     assert.equal(snapshot.notes.fresh, true);
     assert.equal(snapshot.notes.complete, true);
@@ -527,6 +790,59 @@ test("generates notes with Codex and rebuilds a selected range", async () => {
     await rm(repo, { recursive: true, force: true });
   }
 
+});
+
+test("states supported purpose directly and names missing evidence", async () => {
+  const repo = await makeRepo();
+  const summaries = join(repo, "notes.json");
+  const output = join(repo, "diff-data.json");
+
+  try {
+    const codex = await fakeCodex(repo, notes({
+      "added.txt": {
+        title: "Add a text file",
+        what: "Adds the new file.",
+        why: "Makes the new content available.",
+        details: [],
+        risks: [],
+      },
+      "changed.txt": {
+        title: "Update text",
+        what: "Replaces the old line.",
+        why: "The patch does not establish the reason.",
+        details: [],
+        risks: [],
+      },
+    }));
+    const result = run(repo, [
+      "--range", "HEAD~1..HEAD", "--codex-bin", codex.bin,
+      "--summaries", summaries, "--output", output,
+    ]);
+    assert.equal(result.status, 0, result.stderr);
+
+    const args = JSON.parse(await readFile(codex.argsFile, "utf8"));
+    assert.match(
+      args.at(-1),
+      /When the supplied patch or review evidence supports a\npurpose, state it directly\./,
+    );
+    assert.doesNotMatch(args.at(-1), /appears to/i);
+    assert.match(
+      args.at(-1),
+      /when the evidence does not\nestablish the reason, say that the patch does not establish the reason\./i,
+    );
+
+    const writtenNotes = JSON.parse(await readFile(summaries, "utf8"));
+    assert.equal(
+      writtenNotes.files["added.txt"].why,
+      "Makes the new content available.",
+    );
+    assert.equal(
+      writtenNotes.files["changed.txt"].why,
+      "The patch does not establish the reason.",
+    );
+  } finally {
+    await rm(repo, { recursive: true, force: true });
+  }
 });
 
 test("enforces note output limits in schemas and saved file notes", async () => {
@@ -679,6 +995,8 @@ test("runs a discovered provider with the summary process boundary", async () =>
       [
         "--range",
         "HEAD~1..HEAD",
+        "--agent",
+        "codex",
         "--codex-bin",
         codex.bin,
         "--summaries",
@@ -1141,6 +1459,464 @@ test("keeps notes fresh when the rebuilt output is a changed tracked file", asyn
   }
 });
 
+test("gives an implicit local worktree review checkout read-only access", async () => {
+  const repo = await makeRepo();
+  const directory = await mkdtemp(join(tmpdir(), "diffsplain-agent-access-"));
+  const summaries = join(repo, "notes.json");
+  const output = join(repo, "diff-data.json");
+
+  try {
+    await writeFile(
+      join(repo, ".gitignore"),
+      "ignored-secret.txt\nlinked-secret.txt\n",
+    );
+    git(repo, "add", ".gitignore");
+    git(repo, "commit", "-qm", "ignore local agent files");
+    await writeFile(join(repo, "ignored-secret.txt"), "hidden value\n");
+    await symlink("ignored-secret.txt", join(repo, "linked-secret.txt"));
+    await writeFile(join(repo, "changed.txt"), "worktree change\n");
+    const codex = await accessRecordingCodex(directory, repo);
+
+    const result = run(
+      repo,
+      [
+        "--codex-bin",
+        codex.bin,
+        "--jobs",
+        "1",
+        "--summaries",
+        summaries,
+        "--output",
+        output,
+      ],
+      { env: { ...process.env, PRIVATE_AGENT_TOKEN: "visible-to-agent" } },
+    );
+
+    assert.equal(result.status, 0, result.stderr);
+    const calls = await recordedCalls(codex.calls);
+    assert.ok(calls.length >= 2);
+    assert.ok(calls.every((call) =>
+      git(call.cwd, "rev-parse", "--show-toplevel") ===
+        git(repo, "rev-parse", "--show-toplevel")
+    ));
+    assert.ok(calls.every((call) => call.environment === "visible-to-agent"));
+    assert.ok(calls.every((call) => call.history === "ignore local agent files"));
+    assert.ok(calls.every((call) => call.ignored === "hidden value"));
+    assert.ok(calls.every((call) => call.symlink === "hidden value"));
+    assert.ok(calls.some((call) => call.paths.includes("changed.txt")));
+    for (const call of calls) {
+      assert.equal(call.args[call.args.indexOf("-C") + 1], repo);
+      assert.ok(!call.args.includes("--ignore-user-config"));
+      assert.ok(!call.args.includes("--ignore-rules"));
+      assert.ok(!call.args.includes("--skip-git-repo-check"));
+      assert.ok(!call.args.includes("--approve-for-me"));
+      assert.match(call.prompt, /ignored files,\s+Git history, and targets reached through symlinks/i);
+    }
+    const saved = JSON.parse(await readFile(summaries, "utf8"));
+    const published = JSON.parse(await readFile(output, "utf8"));
+    assert.equal(saved.meta.accessMode, "checkout-read-only");
+    assert.equal(published.notes.accessMode, "checkout-read-only");
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+    await rm(repo, { recursive: true, force: true });
+  }
+});
+
+test("keeps disabled checkout access in the temporary snapshot context", async () => {
+  const repo = await makeRepo();
+  const directory = await mkdtemp(join(tmpdir(), "diffsplain-agent-access-"));
+  const summaries = join(repo, "notes.json");
+  const output = join(repo, "diff-data.json");
+
+  try {
+    await writeFile(
+      join(repo, ".gitignore"),
+      "ignored-secret.txt\nlinked-secret.txt\n",
+    );
+    git(repo, "add", ".gitignore");
+    git(repo, "commit", "-qm", "ignore local agent files");
+    await writeFile(join(repo, "ignored-secret.txt"), "hidden value\n");
+    await symlink("ignored-secret.txt", join(repo, "linked-secret.txt"));
+    await writeFile(join(repo, "changed.txt"), "worktree change\n");
+    const codex = await accessRecordingCodex(directory, repo);
+
+    const result = run(
+      repo,
+      [
+        "--worktree",
+        "--no-checkout-access",
+        "--codex-bin",
+        codex.bin,
+        "--jobs",
+        "1",
+        "--summaries",
+        summaries,
+        "--output",
+        output,
+      ],
+      { env: { ...process.env, PRIVATE_AGENT_TOKEN: "must-not-pass" } },
+    );
+
+    assert.equal(result.status, 0, result.stderr);
+    assert.doesNotMatch(result.stdout, /does not map to the live checkout/i);
+    const calls = await recordedCalls(codex.calls);
+    assert.ok(calls.length >= 2);
+    for (const call of calls) {
+      assert.match(call.cwd, /diffsplain-agent-/);
+      assert.equal(call.environment, undefined);
+      assert.equal(call.history, undefined);
+      assert.equal(call.ignored, undefined);
+      assert.equal(call.symlink, undefined);
+      assert.ok(call.args.includes("--ignore-user-config"));
+      assert.ok(call.args.includes("--ignore-rules"));
+      assert.ok(call.args.includes("--skip-git-repo-check"));
+      assert.ok(!call.args.includes("--approve-for-me"));
+      assert.match(call.prompt, /Use only the supplied snapshot as evidence/i);
+      assert.match(call.prompt, /Do not run commands, read other files/i);
+    }
+    const saved = JSON.parse(await readFile(summaries, "utf8"));
+    const published = JSON.parse(await readFile(output, "utf8"));
+    assert.equal(saved.meta.accessMode, "snapshot-only");
+    assert.equal(published.notes.accessMode, "snapshot-only");
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+    await rm(repo, { recursive: true, force: true });
+  }
+});
+
+test("warns once and keeps a mismatched range in the snapshot context", async () => {
+  const repo = await makeRepo();
+  const directory = await mkdtemp(join(tmpdir(), "diffsplain-agent-access-"));
+  const summaries = join(repo, "notes.json");
+  const output = join(repo, "diff-data.json");
+  const warning = "Warning: This target does not map to the live checkout. Agent notes will use the supplied snapshot only.";
+
+  try {
+    const codex = await accessRecordingCodex(directory, repo);
+    const result = run(
+      repo,
+      [
+        "--range",
+        "HEAD~1..HEAD",
+        "--codex-bin",
+        codex.bin,
+        "--jobs",
+        "1",
+        "--summaries",
+        summaries,
+        "--output",
+        output,
+      ],
+      { env: { ...process.env, PRIVATE_AGENT_TOKEN: "must-not-pass" } },
+    );
+
+    assert.equal(result.status, 0, result.stderr);
+    assert.equal(result.stdout.split(warning).length - 1, 1);
+    const calls = await recordedCalls(codex.calls);
+    assert.ok(calls.length >= 2);
+    for (const call of calls) {
+      assert.match(call.cwd, /diffsplain-agent-/);
+      assert.equal(call.environment, undefined);
+      assert.equal(call.history, undefined);
+      assert.ok(call.args.includes("--ignore-user-config"));
+      assert.ok(call.args.includes("--ignore-rules"));
+      assert.ok(call.args.includes("--skip-git-repo-check"));
+      assert.match(call.prompt, /Use only the supplied snapshot as evidence/i);
+    }
+    const published = JSON.parse(await readFile(output, "utf8"));
+    assert.equal(published.notes.accessMode, "snapshot-only");
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+    await rm(repo, { recursive: true, force: true });
+  }
+});
+
+test("discards delayed provider output after a local review changes", async () => {
+  const repo = await makeRepo();
+  const directory = await mkdtemp(join(tmpdir(), "diffsplain-agent-freshness-"));
+  const summaries = join(repo, "notes.json");
+  const output = join(repo, "diff-data.json");
+
+  try {
+    await writeFile(join(repo, "changed.txt"), "before provider\n");
+    const codex = await accessRecordingCodex(directory, repo, {
+      changeOnFirstCall: "after provider\n",
+    });
+    const result = run(repo, [
+      "--worktree",
+      "--codex-bin",
+      codex.bin,
+      "--jobs",
+      "1",
+      "--summaries",
+      summaries,
+      "--output",
+      output,
+    ]);
+
+    assert.equal(result.status, 0, result.stderr);
+    assert.match(result.stdout, /review changed while notes were generated/i);
+    const calls = await recordedCalls(codex.calls);
+    assert.equal(calls.length, 3);
+    const saved = JSON.parse(await readFile(summaries, "utf8"));
+    const published = JSON.parse(await readFile(output, "utf8"));
+    assert.equal(saved.files["changed.txt"].title, "Note 2 for changed.txt");
+    assert.equal(published.files[0].summary.title, "Note 2 for changed.txt");
+    assert.doesNotMatch(JSON.stringify(saved), /Note 1 for changed\.txt/);
+    assert.equal(
+      saved.meta.reviewFingerprint,
+      published.notes.reviewFingerprint,
+    );
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+    await rm(repo, { recursive: true, force: true });
+  }
+});
+
+test("keeps provider output when only an excluded patch changes", async () => {
+  const repo = await makeRepo();
+  const directory = await mkdtemp(join(tmpdir(), "diffsplain-agent-excluded-freshness-"));
+  const summaries = join(repo, "notes.json");
+  const output = join(repo, "diff-data.json");
+
+  try {
+    await writeFile(join(repo, "added.txt"), "included before provider\n");
+    await writeFile(join(repo, "changed.txt"), "excluded before provider\n");
+    const codex = await accessRecordingCodex(directory, repo, {
+      changeOnFirstCall: "after excluded provider\n",
+    });
+    const result = run(repo, [
+      "--worktree",
+      "--exclude",
+      "changed.txt",
+      "--codex-bin",
+      codex.bin,
+      "--jobs",
+      "1",
+      "--summaries",
+      summaries,
+      "--output",
+      output,
+    ]);
+
+    assert.equal(result.status, 0, result.stderr);
+    assert.doesNotMatch(result.stdout, /review changed while notes were generated/i);
+    const calls = await recordedCalls(codex.calls);
+    assert.deepEqual(calls.map((call) => call.paths), [["added.txt"], []]);
+    const published = JSON.parse(await readFile(output, "utf8"));
+    const excluded = published.files.find((file) => file.path === "changed.txt");
+    assert.equal(excluded.agentExcluded, true);
+    assert.equal(excluded.noteReady, false);
+    assert.match(excluded.patch, /\+after excluded provider/);
+    assert.equal(
+      published.files.find((file) => file.path === "added.txt").summary.title,
+      "Note 1 for added.txt",
+    );
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+    await rm(repo, { recursive: true, force: true });
+  }
+});
+
+test("rereads a supplied snapshot before it accepts provider output", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "diffsplain-agent-snapshot-"));
+  const input = join(directory, "input.json");
+  const output = join(directory, "output.json");
+  const summaries = join(directory, "notes.json");
+
+  try {
+    const initial = snapshot([
+      { path: "changed.txt", patch: "before", snippet: "before" },
+    ]);
+    const replacement = snapshot([
+      { path: "changed.txt", patch: "after", snippet: "after" },
+    ]);
+    replacement.notes.reviewFingerprint = "b".repeat(64);
+    await writeFile(input, JSON.stringify(initial));
+    await writeFile(output, JSON.stringify(initial));
+    const codex = await accessRecordingCodex(directory, directory, {
+      replaceSnapshot: { inputPath: input, outputPath: output, value: replacement },
+    });
+    const result = run(directory, [
+      "--snapshot",
+      input,
+      "--no-checkout-access",
+      "--codex-bin",
+      codex.bin,
+      "--jobs",
+      "1",
+      "--summaries",
+      summaries,
+      "--output",
+      output,
+    ]);
+
+    assert.equal(result.status, 0, result.stderr);
+    assert.match(result.stdout, /review changed while notes were generated/i);
+    const calls = await recordedCalls(codex.calls);
+    assert.equal(calls.length, 3);
+    const saved = JSON.parse(await readFile(summaries, "utf8"));
+    const published = JSON.parse(await readFile(output, "utf8"));
+    assert.equal(saved.meta.reviewFingerprint, replacement.notes.reviewFingerprint);
+    assert.equal(published.notes.reviewFingerprint, replacement.notes.reviewFingerprint);
+    assert.equal(saved.files["changed.txt"].title, "Note 2 for changed.txt");
+    assert.doesNotMatch(JSON.stringify(saved), /Note 1 for changed\.txt/);
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("stops when published output does not match a supplied snapshot", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "diffsplain-agent-snapshot-"));
+  const input = join(directory, "input.json");
+  const output = join(directory, "output.json");
+  const summaries = join(directory, "notes.json");
+
+  try {
+    const supplied = snapshot([
+      { path: "changed.txt", patch: "supplied", snippet: "supplied" },
+    ]);
+    const published = snapshot([
+      { path: "changed.txt", patch: "published", snippet: "published" },
+    ]);
+    published.notes.reviewFingerprint = "b".repeat(64);
+    await writeFile(input, JSON.stringify(supplied));
+    await writeFile(output, JSON.stringify(published));
+    const codex = await accessRecordingCodex(directory, directory);
+
+    const result = run(
+      directory,
+      [
+        "--snapshot",
+        input,
+        "--no-checkout-access",
+        "--codex-bin",
+        codex.bin,
+        "--jobs",
+        "1",
+        "--summaries",
+        summaries,
+        "--output",
+        output,
+      ],
+      { timeout: 5_000 },
+    );
+
+    assert.equal(result.status, 1, result.stderr);
+    assert.equal(result.error, undefined);
+    assert.match(result.stderr, /published review does not match/i);
+    assert.doesNotMatch(result.stdout, /Rebuilding the snapshot/);
+    const unchanged = JSON.parse(await readFile(output, "utf8"));
+    assert.equal(
+      unchanged.notes.reviewFingerprint,
+      published.notes.reviewFingerprint,
+    );
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("stops after only a supplied snapshot changes", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "diffsplain-agent-snapshot-"));
+  const input = join(directory, "input.json");
+  const output = join(directory, "output.json");
+  const summaries = join(directory, "notes.json");
+
+  try {
+    const initial = snapshot([
+      { path: "changed.txt", patch: "before", snippet: "before" },
+    ]);
+    const replacement = snapshot([
+      { path: "changed.txt", patch: "after", snippet: "after" },
+    ]);
+    replacement.notes.reviewFingerprint = "b".repeat(64);
+    await writeFile(input, JSON.stringify(initial));
+    await writeFile(output, JSON.stringify(initial));
+    const codex = await accessRecordingCodex(directory, directory, {
+      replaceSnapshot: { inputPath: input, value: replacement },
+    });
+
+    const result = run(
+      directory,
+      [
+        "--snapshot",
+        input,
+        "--no-checkout-access",
+        "--codex-bin",
+        codex.bin,
+        "--jobs",
+        "1",
+        "--summaries",
+        summaries,
+        "--output",
+        output,
+      ],
+      { timeout: 5_000 },
+    );
+
+    assert.equal(result.status, 1, result.stderr);
+    assert.equal(result.error, undefined);
+    assert.match(result.stdout, /review changed while notes were generated/i);
+    assert.match(result.stderr, /published review does not match/i);
+    assert.equal((await recordedCalls(codex.calls)).length, 1);
+    const unchanged = JSON.parse(await readFile(output, "utf8"));
+    assert.equal(
+      unchanged.notes.reviewFingerprint,
+      initial.notes.reviewFingerprint,
+    );
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("keeps a supplied local snapshot in the temporary input context", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "diffsplain-agent-snapshot-"));
+  const input = join(directory, "input.json");
+  const output = join(directory, "output.json");
+  const summaries = join(directory, "notes.json");
+
+  try {
+    const value = snapshot([
+      { path: "changed.txt", patch: "before", snippet: "before" },
+    ]);
+    value.repo.target.kind = "worktree";
+    await writeFile(input, JSON.stringify(value));
+    await writeFile(output, JSON.stringify(value));
+    await writeFile(join(directory, "ignored-secret.txt"), "wrong checkout\n");
+    const codex = await accessRecordingCodex(directory, directory);
+    const result = run(
+      directory,
+      [
+        "--snapshot",
+        input,
+        "--codex-bin",
+        codex.bin,
+        "--jobs",
+        "1",
+        "--summaries",
+        summaries,
+        "--output",
+        output,
+      ],
+      { env: { ...process.env, PRIVATE_AGENT_TOKEN: "must-not-pass" } },
+    );
+
+    assert.equal(result.status, 0, result.stderr);
+    const calls = await recordedCalls(codex.calls);
+    assert.ok(calls.length >= 2);
+    for (const call of calls) {
+      assert.match(call.cwd, /diffsplain-agent-/);
+      assert.equal(call.environment, undefined);
+      assert.equal(call.ignored, undefined);
+      assert.ok(call.args.includes("--ignore-user-config"));
+    }
+    const published = JSON.parse(await readFile(output, "utf8"));
+    assert.equal(published.notes.accessMode, "snapshot-only");
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
 test("stores default worktree notes outside the target repo", async () => {
   const repo = await makeRepo();
   const cacheBase = `${repo}-cache`;
@@ -1411,6 +2187,8 @@ test("keeps completed batches after malformed output or a provider exit", async 
       const result = run(repo, [
         "--range",
         "HEAD~1..HEAD",
+        "--agent",
+        "codex",
         "--codex-bin",
         codex.bin,
         "--batch-size",
@@ -1782,6 +2560,8 @@ process.stdout.write(JSON.stringify({
         repo,
         "--range",
         "HEAD~1..HEAD",
+        "--agent",
+        "codex",
         "--codex-bin",
         codexBin,
         "--batch-size",
@@ -1900,6 +2680,8 @@ process.stdout.write(JSON.stringify(
         repo,
         "--range",
         "HEAD~1..HEAD",
+        "--agent",
+        "codex",
         "--codex-bin",
         codexBin,
         "--batch-size",
@@ -2085,6 +2867,384 @@ test("regenerates notes only for changed and added files", async () => {
   }
 });
 
+test("keeps excluded files out of automatic agent input and note totals", async () => {
+  const repo = await makeRepo();
+  const summaries = join(repo, "notes.json");
+  const output = join(repo, "diff-data.json");
+  const base = git(repo, "rev-parse", "HEAD~1");
+
+  try {
+    const codex = await recordingCodex(repo, { captureInput: true });
+    const result = run(repo, [
+      "--base", base, "--head", "HEAD", "--codex-bin", codex.bin,
+      "--summaries", summaries, "--output", output,
+      "--exclude", "changed.txt", "--force",
+    ]);
+    assert.equal(result.status, 0, result.stderr);
+
+    const calls = await recordedCalls(codex.calls);
+    assert.deepEqual(calls.map((call) => call.files), [["added.txt"], []]);
+    for (const call of calls) {
+      assert.doesNotMatch(JSON.stringify(call.input), /changed\.txt/);
+      assert.doesNotMatch(JSON.stringify(call.input), /after\\n/);
+    }
+
+    const saved = JSON.parse(await readFile(summaries, "utf8"));
+    assert.deepEqual(Object.keys(saved.files), ["added.txt"]);
+    assert.deepEqual(Object.keys(saved.meta.fileFingerprints), ["added.txt"]);
+
+    const snapshot = JSON.parse(await readFile(output, "utf8"));
+    const excluded = snapshot.files.find((file) => file.path === "changed.txt");
+    assert.equal(excluded.agentExcluded, true);
+    assert.equal(excluded.noteReady, false);
+    assert.ok(excluded.patch.includes("+after"));
+    assert.equal(snapshot.notes.totalFiles, 1);
+    assert.equal(snapshot.notes.completedFiles, 1);
+    assert.equal(snapshot.notes.complete, true);
+  } finally {
+    await rm(repo, { recursive: true, force: true });
+  }
+});
+
+test("passes flag-shaped exclusions through the CLI to both builders", async () => {
+  const repo = await makeRepo();
+  const summaries = join(repo, "notes.json");
+  const output = join(repo, "diff-data.json");
+  const base = git(repo, "rev-parse", "HEAD");
+  const patterns = ["--help", "--force", "--worktree"];
+
+  try {
+    for (const pattern of patterns) {
+      await writeFile(join(repo, pattern), "before\n");
+    }
+    await writeFile(join(repo, "visible.txt"), "before\n");
+    git(repo, "add", "--all");
+    git(repo, "commit", "-qm", "add flag-shaped paths");
+    for (const pattern of patterns) {
+      await writeFile(join(repo, pattern), "after\n");
+    }
+    await writeFile(join(repo, "visible.txt"), "after\n");
+    git(repo, "add", "--all");
+    git(repo, "commit", "-qm", "change flag-shaped paths");
+
+    const codex = await recordingCodex(repo);
+    const parsed = parseCliArgs([
+      "--repo", repo,
+      "--base", base,
+      "--head", "HEAD",
+      "--agent", "codex",
+      "--codex-bin", codex.bin,
+      "--summaries", summaries,
+      "--output", output,
+      ...patterns.map((pattern) => `--exclude=${pattern}`),
+    ], { callerDirectory: repo });
+
+    const feed = spawnSync(process.execPath, [builder, ...parsed.feedArgs], {
+      cwd: repo,
+      encoding: "utf8",
+    });
+    assert.equal(feed.status, 0, feed.stderr);
+    const feedSnapshot = JSON.parse(await readFile(output, "utf8"));
+    assert.equal(feedSnapshot.repo.target.kind, "range");
+    for (const pattern of patterns) {
+      assert.equal(
+        feedSnapshot.files.find((file) => file.path === pattern).agentExcluded,
+        true,
+      );
+    }
+
+    const first = spawnSync(
+      process.execPath,
+      [script, ...parsed.agentArgs, "--agent", "codex"],
+      { cwd: repo, encoding: "utf8" },
+    );
+    assert.equal(first.status, 0, first.stderr);
+    const firstCalls = await recordedCalls(codex.calls);
+    assert.ok(firstCalls.length > 0);
+    const firstSnapshot = JSON.parse(await readFile(output, "utf8"));
+    assert.equal(firstSnapshot.repo.target.kind, "range");
+    for (const pattern of patterns) {
+      assert.equal(
+        firstSnapshot.files.find((file) => file.path === pattern).agentExcluded,
+        true,
+      );
+    }
+
+    const second = spawnSync(
+      process.execPath,
+      [script, ...parsed.agentArgs, "--agent", "codex"],
+      { cwd: repo, encoding: "utf8" },
+    );
+    assert.equal(second.status, 0, second.stderr);
+    assert.equal((await recordedCalls(codex.calls)).length, firstCalls.length);
+    const secondSnapshot = JSON.parse(await readFile(output, "utf8"));
+    assert.equal(
+      secondSnapshot.notes.agentReviewFingerprint,
+      firstSnapshot.notes.agentReviewFingerprint,
+    );
+  } finally {
+    await rm(repo, { recursive: true, force: true });
+  }
+});
+
+test("hides cached excluded notes and reuses only matching hidden patches", async () => {
+  const repo = await makeRepo();
+  const summaries = join(repo, "notes.json");
+  const output = join(repo, "diff-data.json");
+  const base = git(repo, "rev-parse", "HEAD~1");
+  const common = [
+    "--base", base, "--head", "HEAD", "--codex-bin", "",
+    "--summaries", summaries, "--output", output,
+  ];
+
+  try {
+    const codex = await recordingCodex(repo, { captureInput: true });
+    const args = common.map((value) => value || codex.bin);
+    const first = run(repo, args);
+    assert.equal(first.status, 0, first.stderr);
+    const initial = JSON.parse(await readFile(summaries, "utf8"));
+
+    const hidden = run(repo, [...args, "--exclude", "changed.txt", "--force"]);
+    assert.equal(hidden.status, 0, hidden.stderr);
+    const hiddenNotes = JSON.parse(await readFile(summaries, "utf8"));
+    assert.equal(
+      hiddenNotes.files["changed.txt"].title,
+      initial.files["changed.txt"].title,
+    );
+    assert.deepEqual(Object.keys(hiddenNotes.meta.fileFingerprints), ["added.txt"]);
+    assert.deepEqual(
+      Object.keys(hiddenNotes.meta.hiddenFileFingerprints),
+      ["changed.txt"],
+    );
+    for (const call of (await recordedCalls(codex.calls)).slice(2)) {
+      assert.doesNotMatch(JSON.stringify(call.input), /changed\.txt/);
+      assert.doesNotMatch(JSON.stringify(call.input), /Note 1 for changed\.txt/);
+    }
+
+    const beforeHiddenChange = (await recordedCalls(codex.calls)).length;
+    await writeFile(join(repo, "changed.txt"), "changed while hidden\n");
+    git(repo, "add", "changed.txt");
+    git(repo, "commit", "-qm", "change hidden path");
+
+    const changedWhileHidden = run(repo, [...args, "--exclude", "changed.txt"]);
+    assert.equal(changedWhileHidden.status, 0, changedWhileHidden.stderr);
+    assert.equal((await recordedCalls(codex.calls)).length, beforeHiddenChange);
+    const dropped = JSON.parse(await readFile(summaries, "utf8"));
+    assert.equal(dropped.files["changed.txt"], undefined);
+    assert.equal(dropped.meta.hiddenFileFingerprints?.["changed.txt"], undefined);
+
+    const reveal = run(repo, args);
+    assert.equal(reveal.status, 0, reveal.stderr);
+    const revealedCalls = (await recordedCalls(codex.calls)).slice(beforeHiddenChange);
+    assert.deepEqual(revealedCalls.map((call) => call.files), [["changed.txt"], []]);
+  } finally {
+    await rm(repo, { recursive: true, force: true });
+  }
+});
+
+test("does not reuse a hidden note after the agent settings change", async () => {
+  const repo = await makeRepo();
+  const summaries = join(repo, "notes.json");
+  const output = join(repo, "diff-data.json");
+  const base = git(repo, "rev-parse", "HEAD~1");
+
+  try {
+    const codex = await recordingCodex(repo);
+    const args = [
+      "--base", base, "--head", "HEAD", "--codex-bin", codex.bin,
+      "--summaries", summaries, "--output", output,
+    ];
+    assert.equal(run(repo, args).status, 0);
+    const callsBeforeSettingsChange = (await recordedCalls(codex.calls)).length;
+
+    const hidden = run(repo, [
+      ...args, "--exclude", "changed.txt", "--model", "new-model",
+    ]);
+    assert.equal(hidden.status, 0, hidden.stderr);
+    const hiddenNotes = JSON.parse(await readFile(summaries, "utf8"));
+    assert.equal(hiddenNotes.files["changed.txt"], undefined);
+
+    const reveal = run(repo, [...args, "--model", "new-model"]);
+    assert.equal(reveal.status, 0, reveal.stderr);
+    const revealCalls = (await recordedCalls(codex.calls)).slice(
+      callsBeforeSettingsChange + 2,
+    );
+    assert.deepEqual(revealCalls.map((call) => call.files), [["changed.txt"], []]);
+  } finally {
+    await rm(repo, { recursive: true, force: true });
+  }
+});
+
+test("recomputes a supplied snapshot agent fingerprint after exclusions change", async () => {
+  const repo = await makeRepo();
+  const input = join(repo, "input.json");
+  const summaries = join(repo, "notes.json");
+  const output = join(repo, "output.json");
+
+  try {
+    const source = snapshot([
+      { path: "added.txt", patch: "added", snippet: "added" },
+      { path: "changed.txt", patch: "changed", snippet: "changed" },
+    ]);
+    source.notes.agentReviewFingerprint = "b".repeat(64);
+    await writeFile(input, JSON.stringify(source));
+    await writeFile(output, JSON.stringify(source));
+    const codex = await recordingCodex(repo, { captureInput: true });
+    const result = run(repo, [
+      "--snapshot", input, "--codex-bin", codex.bin,
+      "--summaries", summaries, "--output", output,
+      "--exclude", "changed.txt",
+    ]);
+    assert.equal(result.status, 0, result.stderr);
+
+    const rebuilt = JSON.parse(await readFile(output, "utf8"));
+    assert.equal(rebuilt.notes.reviewFingerprint, source.notes.reviewFingerprint);
+    assert.notEqual(
+      rebuilt.notes.agentReviewFingerprint,
+      source.notes.agentReviewFingerprint,
+    );
+    assert.match(rebuilt.notes.agentReviewFingerprint, /^[a-f0-9]{64}$/);
+    for (const call of await recordedCalls(codex.calls)) {
+      assert.doesNotMatch(JSON.stringify(call.input), /changed\.txt/);
+    }
+  } finally {
+    await rm(repo, { recursive: true, force: true });
+  }
+});
+
+test("clears stale snapshot exclusions when this run has no rules", async () => {
+  const repo = await makeRepo();
+  const input = join(repo, "input.json");
+  const summaries = join(repo, "notes.json");
+  const output = join(repo, "output.json");
+
+  try {
+    const source = snapshot([
+      { path: "added.txt", patch: "added", snippet: "added" },
+      { path: "changed.txt", patch: "changed", snippet: "changed" },
+    ]);
+    source.files.find((file) => file.path === "changed.txt").agentExcluded = true;
+    source.notes.agentReviewFingerprint = "b".repeat(64);
+    await writeFile(input, JSON.stringify(source));
+    await writeFile(output, JSON.stringify(source));
+    const codex = await recordingCodex(repo, { captureInput: true });
+    const result = run(repo, [
+      "--snapshot", input, "--codex-bin", codex.bin,
+      "--summaries", summaries, "--output", output,
+    ]);
+    assert.equal(result.status, 0, result.stderr);
+
+    const calls = await recordedCalls(codex.calls);
+    assert.deepEqual(calls.map((call) => call.files), [
+      ["added.txt", "changed.txt"],
+      [],
+    ]);
+    assert.ok(calls.every((call) => JSON.stringify(call.input).includes("changed.txt")));
+    const rebuilt = JSON.parse(await readFile(output, "utf8"));
+    const changed = rebuilt.files.find((file) => file.path === "changed.txt");
+    assert.equal(changed.agentExcluded, undefined);
+    assert.equal(changed.noteReady, true);
+  } finally {
+    await rm(repo, { recursive: true, force: true });
+  }
+});
+
+test("rebuilds notes from legacy cache metadata once", async () => {
+  const repo = await makeRepo();
+  const summaries = join(repo, "notes.json");
+  const output = join(repo, "diff-data.json");
+  const base = git(repo, "rev-parse", "HEAD~1");
+
+  try {
+    const codex = await recordingCodex(repo);
+    const args = [
+      "--base", base, "--head", "HEAD", "--codex-bin", codex.bin,
+      "--summaries", summaries, "--output", output,
+    ];
+    assert.equal(run(repo, args).status, 0);
+    const legacy = JSON.parse(await readFile(summaries, "utf8"));
+    delete legacy.meta.agentReviewFingerprint;
+    await writeFile(summaries, JSON.stringify(legacy));
+
+    const rebuilt = run(repo, args);
+    assert.equal(rebuilt.status, 0, rebuilt.stderr);
+    const calls = await recordedCalls(codex.calls);
+    assert.deepEqual(calls.slice(2).map((call) => call.files), [
+      ["added.txt", "changed.txt"],
+      [],
+    ]);
+    const saved = JSON.parse(await readFile(summaries, "utf8"));
+    assert.match(saved.meta.agentReviewFingerprint, /^[a-f0-9]{64}$/);
+    assert.equal(saved.files["changed.txt"].title, "Note 3 for changed.txt");
+  } finally {
+    await rm(repo, { recursive: true, force: true });
+  }
+});
+
+test("does no agent work when every file is excluded, even with force", async () => {
+  const repo = await makeRepo();
+  const summaries = join(repo, "notes.json");
+  const output = join(repo, "diff-data.json");
+  const base = git(repo, "rev-parse", "HEAD~1");
+
+  try {
+    const codex = await recordingCodex(repo);
+    const args = [
+      "--base", base, "--head", "HEAD", "--codex-bin", codex.bin,
+      "--summaries", summaries, "--output", output,
+    ];
+    assert.equal(run(repo, args).status, 0);
+    const prior = JSON.parse(await readFile(summaries, "utf8"));
+    const priorCalls = (await recordedCalls(codex.calls)).length;
+
+    const allExcluded = run(repo, [...args, "--exclude", "*.txt", "--force"]);
+    assert.equal(allExcluded.status, 0, allExcluded.stderr);
+    assert.equal((await recordedCalls(codex.calls)).length, priorCalls);
+    const snapshot = JSON.parse(await readFile(output, "utf8"));
+    assert.ok(snapshot.files.every((file) => file.agentExcluded));
+    assert.ok(snapshot.files.every((file) => !file.noteReady));
+    assert.equal(snapshot.notes.totalFiles, 0);
+    assert.equal(snapshot.notes.completedFiles, 0);
+    assert.equal(snapshot.notes.complete, true);
+    assert.notEqual(snapshot.change.title, prior.change.title);
+
+    const hidden = JSON.parse(await readFile(summaries, "utf8"));
+    assert.deepEqual(hidden.files, prior.files);
+    assert.equal(hidden.change.title, prior.change.title);
+    assert.equal(hidden.meta.reviewFingerprint, prior.meta.reviewFingerprint);
+
+    const rebuiltOutput = join(repo, "all-excluded-rebuild.json");
+    const rebuild = spawnSync(process.execPath, [
+      builder,
+      "--repo",
+      repo,
+      "--base",
+      base,
+      "--head",
+      "HEAD",
+      "--exclude",
+      "*.txt",
+      "--summaries",
+      summaries,
+      "--output",
+      rebuiltOutput,
+    ], { encoding: "utf8" });
+    assert.equal(rebuild.status, 0, rebuild.stderr);
+    const rebuilt = JSON.parse(await readFile(rebuiltOutput, "utf8"));
+    assert.equal(rebuilt.notes.fresh, true);
+    assert.equal(rebuilt.notes.complete, true);
+    assert.equal(
+      rebuilt.notes.generatedFor,
+      rebuilt.notes.agentReviewFingerprint,
+    );
+
+    assert.equal(run(repo, args).status, 0);
+    assert.equal((await recordedCalls(codex.calls)).length, priorCalls);
+  } finally {
+    await rm(repo, { recursive: true, force: true });
+  }
+});
+
 test("reuses notes only when agent settings match", async () => {
   const repo = await makeRepo();
   const summaries = join(repo, "notes.json");
@@ -2210,19 +3370,20 @@ test("drops removed files without regenerating unchanged file notes", async () =
   }
 });
 
-test("completes an empty review without looking for an agent", async () => {
+test("completes an empty review without calling the selected agent", async () => {
   const repo = await makeRepo();
   const summaries = join(repo, "notes.json");
   const output = join(repo, "diff-data.json");
 
   try {
+    const codex = await fakeCodex(repo, {});
     const result = run(repo, [
       "--base",
       "HEAD",
       "--head",
       "HEAD",
       "--codex-bin",
-      join(repo, "missing-codex"),
+      codex.bin,
       "--summaries",
       summaries,
       "--output",
@@ -2237,6 +3398,7 @@ test("completes an empty review without looking for an agent", async () => {
     assert.deepEqual(snapshot.files, []);
     assert.equal(snapshot.notes.complete, true);
     assert.equal(snapshot.notes.status, "complete");
+    await assert.rejects(stat(codex.argsFile), /ENOENT/);
   } finally {
     await rm(repo, { recursive: true, force: true });
   }
@@ -2333,6 +3495,8 @@ process.stdout.write("{}");
         repo,
         "--range",
         "HEAD~1..HEAD",
+        "--agent",
+        "codex",
         "--codex-bin",
         codexBin,
         "--summaries",
@@ -2416,6 +3580,7 @@ process.stdout.write(JSON.stringify(input.files.length ? { files: input.files.ma
     const capped = requests.find((value) => value.files.length === 0);
     const cappedContext = capped.existingFileNotes;
     const cappedPaths = Object.keys(cappedContext);
+    assert.deepEqual(capped.files, []);
     assert.ok(Buffer.byteLength(JSON.stringify(cappedContext)) <= 250_000);
     assert.ok(cappedPaths.length > 0);
     assert.ok(cappedPaths.length < files.length);
@@ -2423,6 +3588,9 @@ process.stdout.write(JSON.stringify(input.files.length ? { files: input.files.ma
       cappedPaths,
       files.slice(0, cappedPaths.length).map((file) => file.path),
     );
+    assert.ok(Object.values(cappedContext).every((note) =>
+      JSON.stringify(Object.keys(note).sort()) === JSON.stringify(["risks", "title", "what", "why"]),
+    ));
     const selected = requests.findLast((value) => value.files.length === 1);
     const context = selected.existingFileNotes;
     const contextPaths = Object.keys(context);

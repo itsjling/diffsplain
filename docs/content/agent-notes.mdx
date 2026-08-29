@@ -5,19 +5,40 @@ sidebar:
   order: 3
 ---
 
-A coding agent writes short notes for each changed file by default. Diffsplain
-tries Codex, Claude, Copilot, Cursor, then OpenCode, and uses the first usable
-CLI. Each CLI uses its current login.
+A coding agent writes short notes for each changed file by default. When you
+omit `--agent` in an interactive terminal, Diffsplain lists usable agents in
+this order: Codex, Claude, Copilot, Cursor, then OpenCode. Choose one before
+the review starts. In a script or other non-interactive run, pass `--agent
+NAME` or use `--no-agent` for a plain review. Diffsplain does not choose an
+agent for you. Each CLI uses its current login.
+
+## Access to a local checkout
+
+Diffsplain chooses one access plan for each note run. The current checkout,
+`--worktree`, and `--base REF` without `--head` use `checkout-read-only`.
+The agent runs in the chosen repo with its normal user settings. It may inspect
+ignored files, Git history, and symlink targets. Diffsplain tells it not to
+edit files or run mutating commands. Diffsplain itself does not edit the review
+target. Agents run under your user permissions, and approval stays with you.
+
+Pull requests, remote branches, and exact local ranges use `snapshot-only`
+because they may not map to the live checkout. In that mode, the agent gets
+only the supplied snapshot. It must not run commands, read other files, use the
+network, or edit anything. Pass `--no-checkout-access` to use this mode for any
+target. It limits both agent notes and review chat to the supplied snapshot.
+
+Codex uses its read-only sandbox. Claude uses permission mode `plan`. Cursor
+uses non-interactive Ask mode, its sandbox, `--trust`, and `--workspace`. In
+checkout mode, those agents use the repo as their working folder. Copilot and
+OpenCode have no proven native read-only mode. Diffsplain warns before either
+gets checkout access. It does not pass automatic approval flags; approval stays
+with you.
 
 Cursor Agent needs version 2026.08.11 or newer. Diffsplain runs the signed-in
-`cursor-agent` in the user's home. Note batches use non-interactive Ask mode.
-Diffsplain passes `--print`, `--trust`, and `--workspace` for a disposable
-snapshot directory that holds the review JSON. It does not replace `HOME`.
-Diffsplain does not pass force, yolo, automatic review, or automatic MCP
-approval flags. Cursor still contacts its own service. An old CLI or a missing
-required flag stops Cursor before notes start. Once Diffsplain chooses an
-agent, a failed check or run ends the command; it does not switch to another
-agent.
+`cursor-agent` in the user's home and does not replace `HOME`. Cursor still
+contacts its own service. An old CLI or a missing required flag stops Cursor
+before notes start. Once Diffsplain chooses an agent, a failed check or run
+ends the command; it does not switch to another agent.
 
 Use a plain diff when you do not want notes:
 
@@ -38,6 +59,54 @@ npx diffsplain \
 The default batch size is 12 files. Smaller batches add the first notes to
 the open page sooner. All supported agents accept `--model`; only Codex and
 OpenCode accept `--reasoning`.
+
+## Ask the review agent
+
+When a review starts with a coding agent, the note pane also has **Ask agent**.
+It starts on **This file**. Choose **Review** to ask about the whole change.
+The note tab stays available, so chat does not replace the file note.
+
+Chat threads live only in the local review server's memory. Reloading the page
+keeps them while that server runs. Stopping the review clears them. Each thread
+belongs to one review fingerprint. When the snapshot changes, Diffsplain keeps
+the old history as stale and asks you to start a new thread before you ask
+again. A short snapshot read fault keeps visible history, blocks the composer,
+and shows a recovery message until the review is ready again.
+
+The page shows a running answer, lets you cancel it, and shows **Retry** only
+when the server allows a failed or cancelled question to run again. A blocked
+history can show **Retry compaction** when the server can compact it; otherwise
+start a new thread. Moving to another file or scope does not stop work. The
+page shows a small notice and a cancel control for work still running elsewhere.
+
+Answers use Markdown and carry path and line-range citations. The page renders
+headings, lists, links, inline and fenced code, block quotes, and line breaks.
+It does not render raw HTML or images. It also drops unsafe link schemes,
+including `javascript:` and `data:`.
+
+The chat endpoint accepts only the current access token from the local review
+page. A missing or old token cannot read or change its threads. Review-wide
+questions respect `--exclude` rules. A direct question about an excluded file
+may include that file, but this does not change the rules for review-wide chat.
+
+## Exclude files from automatic notes
+
+`--exclude PATTERN` controls prepared agent context. Repeat gitignore-style
+rules in the order you pass them. A later rule wins, and `!` puts a path back
+in. Diffsplain tests the current path of a renamed file, not its old path.
+
+Excluded files stay in the local snapshot and page with their full patches.
+Diffsplain keeps their path, metadata, patch, snippet, and prior note out of
+automatic agent input. It hides a cached note while the file is excluded and
+can reuse it only when the file returns with the same patch. If the patch
+changed while hidden, Diffsplain drops the note.
+`--force` does not override an exclusion. If all files are excluded,
+Diffsplain makes no agent request and keeps the reusable cache state.
+
+This option is not a privacy boundary and does not change checkout access. In
+`checkout-read-only` mode, an agent can still inspect the repo. Use it to
+shape automatic input, not to hide a secret. With `--no-agent`, Diffsplain
+still marks matching files in the snapshot, but it starts no agent.
 
 ## File limits and failed notes
 

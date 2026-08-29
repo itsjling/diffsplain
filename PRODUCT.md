@@ -31,7 +31,8 @@ Developers run `npx diffsplain` in a Git checkout. With no arguments, it compare
 - Try Codex, Claude, Copilot, Cursor, then OpenCode when no agent is chosen.
   Use Cursor when version 2026.08.11 or newer is installed. Run the signed-in
   Cursor CLI in the user's home, in non-interactive Ask mode, with `--trust`
-  and `--workspace` pointed at Diffsplain's snapshot directory.
+  and `--workspace` pointed at the selected repo for local checkout access or
+  at Diffsplain's temporary snapshot folder for snapshot-only access.
   Cursor still contacts its service. Once Diffsplain chooses an agent, do not
   switch agents after a failed check or run.
 - Show tracked and untracked worktree changes, exact local ranges, and remote branches as secondary targets.

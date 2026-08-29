@@ -1,8 +1,8 @@
 import { constants } from 'node:fs';
 import { access } from 'node:fs/promises';
 import { spawnSync } from 'node:child_process';
+import { createInterface } from 'node:readline';
 import {
-  basename,
   delimiter,
   dirname,
   isAbsolute,
@@ -207,7 +207,7 @@ export async function findCommand(
   return findOnPath(command, env, platform);
 }
 
-export async function commandAvailable(command, options) {
+async function commandAvailable(command, options) {
   return Boolean(await findCommand(command, options));
 }
 
@@ -234,44 +234,127 @@ export async function codingAgentAvailability(
   };
 }
 
-// fallow-ignore-next-line complexity -- validation and discovery share one public selector.
-export async function selectCodingAgent(
-  requested,
-  available = commandAvailable,
-) {
-  if (requested) {
-    if (!codingAgents.includes(requested)) {
-      throw new Error(
-        `Unsupported agent "${requested}". Choose ${enabledCodingAgents.join(', ')}.`,
-      );
-    }
-    const result = await available(requested);
-    const availableResult = typeof result === 'object'
-      ? result.available
-      : result;
-    if (!availableResult) {
-      if (typeof result === 'object' && result.reason) {
-        throw new Error(result.reason);
-      }
-      throw new Error(`Coding agent "${requested}" is not available.`);
-    }
-    return requested;
-  }
+function availableResult(result) {
+  return typeof result === 'object' ? result.available : result;
+}
 
+function unavailableAgentError(requested, result) {
+  if (typeof result === 'object' && result.reason) {
+    return new Error(result.reason);
+  }
+  return new Error(`Coding agent "${requested}" is not available.`);
+}
+
+function noAvailableAgentError(cursorReason) {
+  return new Error(
+    `No coding agent is available. Install one of: ${enabledCodingAgents.join(', ')}. Pass --agent NAME to choose an agent or --no-agent for a plain review.${cursorReason ? ` ${cursorReason}` : ''}`,
+  );
+}
+
+function selectionCancelledError() {
+  return new Error(
+    'Agent selection was cancelled. Pass --agent NAME to choose an agent or --no-agent for a plain review.',
+  );
+}
+
+function nonInteractiveSelectionError() {
+  return new Error(
+    'An interactive terminal is required to choose a coding agent. Pass --agent NAME to choose an agent or --no-agent for a plain review.',
+  );
+}
+
+async function selectRequestedCodingAgent(requested, available) {
+  if (!codingAgents.includes(requested)) {
+    throw new Error(
+      `Unsupported agent "${requested}". Choose ${enabledCodingAgents.join(', ')}.`,
+    );
+  }
+  const result = await available(requested);
+  if (!availableResult(result)) {
+    throw unavailableAgentError(requested, result);
+  }
+  return requested;
+}
+
+async function usableCodingAgents(available) {
+  const usable = [];
   let cursorReason;
   for (const agent of enabledCodingAgents) {
     const result = await available(agent);
-    const availableResult = typeof result === 'object'
-      ? result.available
-      : result;
-    if (availableResult) return agent;
-    if (agent === 'cursor' && typeof result === 'object') {
+    if (availableResult(result)) {
+      usable.push(agent);
+    } else if (agent === 'cursor' && typeof result === 'object') {
       cursorReason = result.reason;
     }
   }
-  throw new Error(
-    `No coding agent is available. Install one of: ${enabledCodingAgents.join(', ')}.${cursorReason ? ` ${cursorReason}` : ''}`,
-  );
+  return { usable, cursorReason };
+}
+
+function selectFromTerminal(agents, { input, output, signal }) {
+  output.write('Choose a coding agent:\n');
+  for (const [index, agent] of agents.entries()) {
+    output.write(`${index + 1}. ${agent}\n`);
+  }
+  output.write('Enter a number, or press Ctrl+C to cancel: ');
+
+  return new Promise((resolve, reject) => {
+    const picker = createInterface({ input, output, terminal: true });
+    let settled = false;
+    const finish = (callback, value) => {
+      if (settled) return;
+      settled = true;
+      signal?.removeEventListener('abort', onAbort);
+      picker.close();
+      callback(value);
+    };
+    const onAbort = () => {
+      finish(reject, selectionCancelledError());
+    };
+    const promptAgain = () => {
+      output.write(`Choose a number from 1 to ${agents.length}, or press Ctrl+C to cancel: `);
+    };
+    signal?.addEventListener('abort', onAbort, { once: true });
+    if (signal?.aborted) onAbort();
+    picker.on('SIGINT', () => {
+      finish(reject, selectionCancelledError());
+    });
+    picker.on('close', () => {
+      finish(reject, selectionCancelledError());
+    });
+    picker.on('line', (line) => {
+      const selected = Number(line.trim());
+      if (
+        !Number.isInteger(selected) ||
+        selected < 1 ||
+        selected > agents.length
+      ) {
+        promptAgain();
+        return;
+      }
+      finish(resolve, agents[selected - 1]);
+    });
+  });
+}
+
+export async function selectCodingAgent(
+  requested,
+  {
+    available = commandAvailable,
+    input = process.stdin,
+    output = process.stderr,
+    signal,
+  } = {},
+) {
+  if (requested) {
+    return selectRequestedCodingAgent(requested, available);
+  }
+
+  if (!input?.isTTY || !output?.isTTY) {
+    throw nonInteractiveSelectionError();
+  }
+  const { usable, cursorReason } = await usableCodingAgents(available);
+  if (!usable.length) throw noAvailableAgentError(cursorReason);
+  return selectFromTerminal(usable, { input, output, signal });
 }
 
 // fallow-ignore-next-line complexity -- each supported agent has one override rule.
@@ -391,6 +474,33 @@ export function parseAgentResponse(agent, stdout) {
   return parseJsonText(stdout, label);
 }
 
+function codexIsolationArgs(snapshotOnly) {
+  return snapshotOnly
+    ? ['--ignore-user-config', '--ignore-rules']
+    : [];
+}
+
+function codexConfigArgs(snapshotOnly) {
+  return snapshotOnly
+    ? [
+        '--config',
+        'mcp_servers={}',
+        '--config',
+        'plugins={}',
+        '--config',
+        'shell_environment_policy.inherit="none"',
+        '--config',
+        'sandbox_workspace_write.network_access=false',
+        '--config',
+        'web_search="disabled"',
+      ]
+    : [];
+}
+
+function codexRepoArgs(snapshotOnly) {
+  return snapshotOnly ? ['--skip-git-repo-check'] : [];
+}
+
 function codexCommand({
   binary,
   model,
@@ -399,31 +509,22 @@ function codexCommand({
   schemaPath,
   summaryDirectory,
   summaryEnv,
+  snapshotOnly,
 }) {
   const args = [
     'exec',
     '--ephemeral',
     '--sandbox',
     'read-only',
-    '--ignore-user-config',
-    '--ignore-rules',
+    ...codexIsolationArgs(snapshotOnly),
     '--color',
     'never',
-    '--skip-git-repo-check',
+    ...codexRepoArgs(snapshotOnly),
     '-C',
     summaryDirectory,
     '--output-schema',
     schemaPath,
-    '--config',
-    'mcp_servers={}',
-    '--config',
-    'plugins={}',
-    '--config',
-    'shell_environment_policy.inherit="none"',
-    '--config',
-    'sandbox_workspace_write.network_access=false',
-    '--config',
-    'web_search="disabled"',
+    ...codexConfigArgs(snapshotOnly),
   ];
   if (model) args.push('--model', model);
   if (reasoning) {
@@ -449,6 +550,7 @@ function claudeCommand({
   schema,
   summaryDirectory,
   summaryEnv,
+  snapshotOnly,
 }) {
   const args = [
     '--print',
@@ -456,8 +558,7 @@ function claudeCommand({
     'json',
     '--json-schema',
     JSON.stringify(schema),
-    '--tools',
-    '',
+    ...(snapshotOnly ? ['--tools', ''] : ['--permission-mode', 'plan']),
     '--no-session-persistence',
   ];
   if (model) args.push('--model', model);
@@ -479,13 +580,14 @@ function copilotCommand({
   schema,
   summaryDirectory,
   summaryEnv,
+  snapshotOnly,
 }) {
   const schemaText = JSON.stringify(schema);
   const args = [
     '--silent',
-    '--no-ask-user',
+    ...(snapshotOnly ? ['--no-ask-user'] : []),
     '--no-color',
-    '--no-custom-instructions',
+    ...(snapshotOnly ? ['--no-custom-instructions'] : []),
     '--no-remote',
     '--no-remote-export',
     `--add-dir=${dirname(inputPath)}`,
@@ -504,6 +606,26 @@ function copilotCommand({
   };
 }
 
+function openCodeIsolationArgs(snapshotOnly) {
+  return snapshotOnly ? ['--pure'] : [];
+}
+
+function openCodeEnvironment(snapshotOnly, summaryEnv) {
+  if (!snapshotOnly) return summaryEnv;
+  return {
+    ...summaryEnv,
+    OPENCODE_DB: ':memory:',
+    OPENCODE_CONFIG_CONTENT: JSON.stringify({
+      permission: { '*': 'deny' },
+      agent: {
+        build: {
+          permission: { '*': 'deny' },
+        },
+      },
+    }),
+  };
+}
+
 function openCodeCommand({
   binary,
   model,
@@ -512,10 +634,11 @@ function openCodeCommand({
   schema,
   summaryDirectory,
   summaryEnv,
+  snapshotOnly,
 }) {
   const args = [
     'run',
-    '--pure',
+    ...openCodeIsolationArgs(snapshotOnly),
     '--format',
     'json',
     '--dir',
@@ -533,24 +656,12 @@ function openCodeCommand({
     args,
     input: 'stdin',
     cwd: summaryDirectory,
-    env: {
-      ...summaryEnv,
-      OPENCODE_DB: ':memory:',
-      OPENCODE_CONFIG_CONTENT: JSON.stringify({
-        permission: { '*': 'deny' },
-        agent: {
-          build: {
-            permission: { '*': 'deny' },
-          },
-        },
-      }),
-    },
+    env: openCodeEnvironment(snapshotOnly, summaryEnv),
   };
 }
 
 function cursorCommand({
   binary,
-  inputPath,
   model,
   prompt,
   schema,
@@ -572,26 +683,28 @@ function cursorCommand({
   ];
   if (model) args.push('--model', model);
   args.push(
-    `${prompt}\n\nRead the snapshot JSON from ${basename(inputPath)} in this workspace. Return JSON that matches this schema:\n${JSON.stringify(schema)}`,
+    `${prompt}\n\nThe snapshot JSON follows this prompt on standard input. Return JSON that matches this schema:\n${JSON.stringify(schema)}`,
   );
   return {
     command: binary,
     args,
     input: 'stdin',
     cwd: summaryDirectory,
-    env: {
-      ...summaryEnv,
-      ...(sourceEnv.XDG_CONFIG_HOME
-        ? { XDG_CONFIG_HOME: sourceEnv.XDG_CONFIG_HOME }
-        : {}),
-      ...(sourceEnv.APPDATA ? { APPDATA: sourceEnv.APPDATA } : {}),
-      ...(sourceEnv.CURSOR_API_KEY
-        ? { CURSOR_API_KEY: sourceEnv.CURSOR_API_KEY }
-        : {}),
-      ...(sourceEnv.CURSOR_AUTH_TOKEN
-        ? { CURSOR_AUTH_TOKEN: sourceEnv.CURSOR_AUTH_TOKEN }
-        : {}),
-    },
+    env: summaryEnv === sourceEnv
+      ? summaryEnv
+      : {
+          ...summaryEnv,
+          ...(sourceEnv.XDG_CONFIG_HOME
+            ? { XDG_CONFIG_HOME: sourceEnv.XDG_CONFIG_HOME }
+            : {}),
+          ...(sourceEnv.APPDATA ? { APPDATA: sourceEnv.APPDATA } : {}),
+          ...(sourceEnv.CURSOR_API_KEY
+            ? { CURSOR_API_KEY: sourceEnv.CURSOR_API_KEY }
+            : {}),
+          ...(sourceEnv.CURSOR_AUTH_TOKEN
+            ? { CURSOR_AUTH_TOKEN: sourceEnv.CURSOR_AUTH_TOKEN }
+            : {}),
+        },
   };
 }
 
@@ -604,8 +717,11 @@ export function agentCommand({
   schema,
   schemaPath,
   inputPath,
+  accessMode,
   env = process.env,
 }) {
+  const snapshotDirectory = dirname(inputPath);
+  const checkoutAccess = accessMode?.mode === 'checkout-read-only';
   const options = {
     binary,
     inputPath,
@@ -614,8 +730,9 @@ export function agentCommand({
     reasoning,
     schema,
     schemaPath,
-    summaryDirectory: dirname(inputPath),
-    summaryEnv: summaryAgentEnvironment(env),
+    summaryDirectory: checkoutAccess ? accessMode.root : snapshotDirectory,
+    summaryEnv: checkoutAccess ? env : summaryAgentEnvironment(env),
+    snapshotOnly: !checkoutAccess,
     sourceEnv: env,
   };
   if (agent === 'codex') return codexCommand(options);
@@ -623,4 +740,14 @@ export function agentCommand({
   if (agent === 'copilot') return copilotCommand(options);
   if (agent === 'cursor') return cursorCommand(options);
   return openCodeCommand(options);
+}
+
+const readOnlyWarnings = {
+  copilot: 'Warning: Copilot has no proven native read-only mode. It runs with your normal permissions.',
+  opencode: 'Warning: OpenCode has no proven native read-only mode. It runs with your normal permissions.',
+};
+
+export function agentReadOnlyWarning(agent, accessMode) {
+  if (accessMode?.mode !== 'checkout-read-only') return undefined;
+  return readOnlyWarnings[agent];
 }

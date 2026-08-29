@@ -7,6 +7,7 @@ import {
   mkdirSync,
   mkdtempSync,
   readFileSync,
+  renameSync,
   rmSync,
   statSync,
   writeFileSync,
@@ -17,11 +18,17 @@ import { createInterface } from 'node:readline';
 import { fileURLToPath } from 'node:url';
 import { helpText, parseCliArgs } from './cli-args.mjs';
 import {
+  agentReadOnlyWarning,
   assertReasoningSupported,
   codingAgentAvailability,
   codingAgentBinary,
   selectCodingAgent,
 } from './coding-agents.mjs';
+import {
+  isBaseWorktreeTarget,
+  reviewAccessMode,
+  resolveBaseWorktreeCommit,
+} from './local-target.mjs';
 import { doctorReport } from './doctor.mjs';
 import { accessTokenDirectory } from './access-token.mjs';
 import { cacheStatus, clearCache, formatCacheStatus, pruneCache } from './cache.mjs';
@@ -178,31 +185,83 @@ function emitSupportRecord(code = 1) {
   }
 }
 
+function targetOption(args, name) {
+  const index = args.indexOf(name);
+  return index === -1 ? undefined : args[index + 1];
+}
+
 const { agentEnabled, browserEnabled, host, port } = cli;
 const feedArgs = [...cli.feedArgs];
 const agentArgs = [...cli.agentArgs];
+const base = targetOption(feedArgs, '--base');
+const head = targetOption(feedArgs, '--head');
+const branch = targetOption(feedArgs, '--branch');
+const checkout = feedArgs.includes('--checkout');
+const reviewRepo = targetOption(feedArgs, '--repo');
+const accessMode = reviewAccessMode({
+  repo: reviewRepo,
+  base,
+  branch,
+  checkout,
+  head,
+  noCheckoutAccess: cli.noCheckoutAccess,
+  pullRequest: targetOption(feedArgs, '--pr'),
+  worktree: feedArgs.includes('--worktree'),
+});
+if (isBaseWorktreeTarget({
+  base,
+  branch,
+  checkout,
+  head,
+  pullRequest: targetOption(feedArgs, '--pr'),
+  worktree: feedArgs.includes('--worktree'),
+})) {
+  try {
+    resolveBaseWorktreeCommit(targetOption(feedArgs, '--repo'), base);
+  } catch (error) {
+    console.error(error.message);
+    process.exit(2);
+  }
+}
 let selectedAgent;
+let selectedAgentBinary;
 beginSupportRecord();
 if (agentEnabled) {
   const selectionStarted = performance.now();
   try {
     selectedAgent = await selectCodingAgent(
       cli.agent,
-      (agent) =>
-        codingAgentAvailability(agent, {
-          binary: codingAgentBinary(agent, { codexBin: cli.codexBin }),
-        }),
+      {
+        available: (agent) =>
+          codingAgentAvailability(agent, {
+            binary: codingAgentBinary(agent, { codexBin: cli.codexBin }),
+          }),
+      },
     );
     assertReasoningSupported(selectedAgent, cli.reasoning);
-    const agentBinary = codingAgentBinary(selectedAgent, {
+    selectedAgentBinary = codingAgentBinary(selectedAgent, {
       codexBin: cli.codexBin,
     });
-    recordSelectedProvider(selectedAgent, agentBinary);
+    recordSelectedProvider(selectedAgent, selectedAgentBinary);
     supportRecorder?.addStage(
       'agent',
       performance.now() - selectionStarted,
     );
     agentArgs.push('--agent', selectedAgent);
+    if (
+      accessMode.mode === 'snapshot-only' &&
+      accessMode.reason === 'target-mismatch'
+    ) {
+      console.log(
+        'Warning: This target does not map to the live checkout. Agent notes will use the supplied snapshot only.',
+      );
+      agentArgs.push('--access-warning-emitted');
+    }
+    const readOnlyWarning = agentReadOnlyWarning(selectedAgent, accessMode);
+    if (readOnlyWarning) {
+      console.log(readOnlyWarning);
+      agentArgs.push('--provider-read-only-warning-emitted');
+    }
   } catch (error) {
     recordSelectedProvider(cli.agent || 'unknown');
     supportRecorder?.addStage(
@@ -217,6 +276,12 @@ if (agentEnabled) {
 } else {
   feedArgs.push('--no-summaries');
 }
+if (agentEnabled) {
+  agentArgs.push('--access-mode', accessMode.mode);
+  if (accessMode.mode === 'snapshot-only') {
+    agentArgs.push('--access-reason', accessMode.reason);
+  }
+}
 const outputIndex = feedArgs.indexOf('--output');
 let runtimeDirectory;
 
@@ -226,16 +291,27 @@ if (outputIndex === -1) {
   feedArgs.push('--output', liveOutput);
   agentArgs.push('--output', liveOutput);
 }
+const outputPath = resolve(
+  callerDirectory,
+  feedArgs[feedArgs.indexOf('--output') + 1],
+);
+let rawSnapshotPath = outputPath;
+if (agentEnabled) {
+  if (!runtimeDirectory) {
+    runtimeDirectory = mkdtempSync(join(tmpdir(), 'diffsplain-live-'));
+  }
+  rawSnapshotPath = resolve(runtimeDirectory, 'raw-diff-data.json');
+  const feedOutputIndex = feedArgs.indexOf('--output');
+  feedArgs[feedOutputIndex + 1] = rawSnapshotPath;
+  feedArgs.push('--exclude-output', outputPath);
+}
+const reviewSnapshotPath = agentEnabled ? rawSnapshotPath : outputPath;
 process.on('exit', () => {
   if (runtimeDirectory) {
     rmSync(runtimeDirectory, { recursive: true, force: true });
   }
 });
 if (!feedArgs.includes('--watch')) feedArgs.push('--watch');
-const outputPath = resolve(
-  callerDirectory,
-  feedArgs[feedArgs.indexOf('--output') + 1],
-);
 const repoIndex = feedArgs.indexOf('--repo');
 const remoteIndex = feedArgs.indexOf('--remote');
 const projectKey = createHash('sha256')
@@ -262,7 +338,9 @@ writeFileSync(accessPath, access, { mode: 0o600 });
 chmodSync(accessPath, 0o600);
 if (agentEnabled) {
   feedArgs.push('--ignore-summary-watch');
-  agentArgs.push('--snapshot', outputPath);
+  if (accessMode.mode === 'snapshot-only') {
+    agentArgs.push('--snapshot', rawSnapshotPath);
+  }
 }
 
 const snapshotStarted = performance.now();
@@ -334,73 +412,107 @@ function scheduleBrowserOpen(match) {
   }, 750);
 }
 
+function optionalSiteArgument(flag, value) {
+  return value ? [flag, value] : [];
+}
+
+function chatAccessArguments() {
+  if (accessMode.mode !== 'checkout-read-only') return [];
+  return ['--chat-access-root', accessMode.root];
+}
+
+function chatAgentArguments() {
+  if (!agentEnabled) return [];
+  return [
+    '--chat-agent',
+    selectedAgent,
+    '--chat-binary',
+    selectedAgentBinary,
+    '--chat-access-mode',
+    accessMode.mode,
+    ...chatAccessArguments(),
+    ...optionalSiteArgument('--chat-model', cli.model),
+    ...optionalSiteArgument('--chat-reasoning', cli.reasoning),
+  ];
+}
+
+function siteArguments() {
+  return [
+    resolve(root, 'scripts/serve-built.mjs'),
+    '--output',
+    outputPath,
+    '--port',
+    String(port),
+    '--host',
+    host,
+    '--project',
+    projectKey,
+    '--access',
+    access,
+    ...optionalSiteArgument('--previous-access', previousAccess),
+    '--chat-snapshot',
+    outputPath,
+    ...chatAgentArguments(),
+    ...(!cli.portWasPassed ? ['--increment-port'] : []),
+  ];
+}
+
+function handleSiteLine(line) {
+  if (handleConnectedTab(line)) return;
+  console.log(line);
+  const match = line.match(/^Diffsplain: (http:\/\/\S+)$/);
+  markSiteReady(match);
+  scheduleBrowserOpen(match);
+}
+
+function listenForSiteLines(child) {
+  if (!child.stdout) return;
+  createInterface({ input: child.stdout }).on('line', handleSiteLine);
+}
+
+function siteFailed(code, signal) {
+  return Boolean(code || signal);
+}
+
+function recordSiteFailure(code) {
+  supportRecorder?.addStage('serve', performance.now() - siteStarted, 'failed');
+  emitSupportRecord(code || 1);
+}
+
+function handleSiteExit(code, signal) {
+  if (closing) return;
+  if (siteFailed(code, signal)) recordSiteFailure(code);
+  stop(code || (signal ? 1 : 0));
+}
+
+function handleSiteError(error) {
+  if (closing) return;
+  supportRecorder?.addStage('serve', performance.now() - siteStarted, 'failed');
+  console.error(`Could not start the local page: ${error.message}`);
+  emitSupportRecord();
+  stop(1);
+}
+
 function startSite() {
   if (closing || site) return;
   siteStarted = performance.now();
-  const child = spawn(
-    process.execPath,
-    [
-      resolve(root, 'scripts/serve-built.mjs'),
-      '--output',
-      outputPath,
-      '--port',
-      String(port),
-      '--host',
-      host,
-      '--project',
-      projectKey,
-      '--access',
-      access,
-      ...(previousAccess ? ['--previous-access', previousAccess] : []),
-      ...(!cli.portWasPassed ? ['--increment-port'] : []),
-    ],
-    { cwd: root, stdio: ['ignore', 'pipe', 'inherit'] },
-  );
+  const child = spawn(process.execPath, siteArguments(), {
+    cwd: root,
+    stdio: ['ignore', 'pipe', 'inherit'],
+  });
   site = child;
-
-  if (child.stdout) {
-    const siteLines = createInterface({ input: child.stdout });
-    siteLines.on('line', (line) => {
-      if (handleConnectedTab(line)) return;
-      console.log(line);
-      const match = line.match(/^Diffsplain: (http:\/\/\S+)$/);
-      markSiteReady(match);
-      scheduleBrowserOpen(match);
-    });
-  }
-
-  child.on('exit', (code, signal) => {
-    if (!closing) {
-      if (code || signal) {
-        supportRecorder?.addStage(
-          'serve',
-          performance.now() - siteStarted,
-          'failed',
-        );
-        emitSupportRecord(code || 1);
-      }
-      stop(code || (signal ? 1 : 0));
-    }
-  });
-  child.on('error', (error) => {
-    if (!closing) {
-      supportRecorder?.addStage(
-        'serve',
-        performance.now() - siteStarted,
-        'failed',
-      );
-      console.error(`Could not start the local page: ${error.message}`);
-      emitSupportRecord();
-      stop(1);
-    }
-  });
+  listenForSiteLines(child);
+  child.on('exit', handleSiteExit);
+  child.on('error', handleSiteError);
 }
 
 function snapshotState() {
   try {
-    const snapshot = JSON.parse(readFileSync(outputPath, 'utf8'));
+    const snapshot = JSON.parse(readFileSync(reviewSnapshotPath, 'utf8'));
     if (snapshot.notes?.reviewFingerprint) {
-      const fingerprint = snapshot.notes.reviewFingerprint;
+      const fingerprint =
+        snapshot.notes.agentReviewFingerprint ||
+        snapshot.notes.reviewFingerprint;
       const emptyReview =
         Array.isArray(snapshot.files) && snapshot.files.length === 0;
       return {
@@ -409,6 +521,7 @@ function snapshotState() {
           snapshot.notes.complete &&
           snapshot.notes.fresh &&
           snapshot.notes.generatedFor === fingerprint &&
+          snapshot.notes.accessMode === accessMode.mode &&
           (emptyReview ||
             (snapshot.notes.agent === selectedAgent &&
               (snapshot.notes.model || null) === (cli.model || null) &&
@@ -599,7 +712,7 @@ function markSnapshotReady() {
   if (snapshotReady) return;
   snapshotReady = true;
   try {
-    supportRecorder?.addBytes('snapshot', statSync(outputPath).size);
+    supportRecorder?.addBytes('snapshot', statSync(reviewSnapshotPath).size);
   } catch {}
   supportRecorder?.addStage(
     'snapshot',
@@ -607,11 +720,29 @@ function markSnapshotReady() {
   );
 }
 
+function seedPresentationSnapshot() {
+  const raw = readFileSync(rawSnapshotPath);
+  mkdirSync(dirname(outputPath), { recursive: true });
+  const pendingOutput = `${outputPath}.${process.pid}.${randomBytes(8).toString('hex')}.tmp`;
+  writeFileSync(pendingOutput, raw);
+  renameSync(pendingOutput, outputPath);
+}
+
 function isSnapshotLine(line) {
   return line.startsWith('Wrote ') || line === 'No diff-data changes';
 }
 
-function startSnapshotDependents() {
+function startSnapshotDependents({ rawSnapshotWritten = false } = {}) {
+  if (agentEnabled && rawSnapshotWritten) {
+    try {
+      seedPresentationSnapshot();
+    } catch (error) {
+      console.error(`Could not publish the live snapshot: ${error.message}`);
+      emitSupportRecord();
+      stop(1);
+      return;
+    }
+  }
   markSnapshotReady();
   startSite();
   if (agentEnabled) scheduleAgent();
@@ -622,7 +753,9 @@ function shouldPrintFeedLine(line) {
 }
 
 function handleFeedLine(line) {
-  if (isSnapshotLine(line)) startSnapshotDependents();
+  if (isSnapshotLine(line)) {
+    startSnapshotDependents({ rawSnapshotWritten: line.startsWith('Wrote ') });
+  }
   if (shouldPrintFeedLine(line)) console.log(line);
 }
 

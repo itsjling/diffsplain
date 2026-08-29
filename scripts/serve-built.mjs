@@ -6,6 +6,11 @@ import { readFile, stat } from 'node:fs/promises';
 import { createServer } from 'node:http';
 import { dirname, extname, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import {
+  ReviewChatError,
+  createCodingAgentChatProvider,
+  createReviewChat,
+} from './review-chat.mjs';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const clientRoot = resolve(root, 'dist');
@@ -27,6 +32,13 @@ const portValue = option('--port', '2299');
 const host = option('--host', 'localhost').replace(/^\[|\]$/g, '');
 const access = option('--access', randomBytes(32).toString('base64url'));
 const previousAccess = option('--previous-access', '');
+const chatSnapshot = resolve(option('--chat-snapshot', output));
+const chatAgent = option('--chat-agent');
+const chatBinary = option('--chat-binary', chatAgent);
+const chatModel = option('--chat-model');
+const chatReasoning = option('--chat-reasoning');
+const chatAccessMode = option('--chat-access-mode', 'snapshot-only');
+const chatAccessRoot = option('--chat-access-root');
 if (!/^\d+$/.test(portValue) || Number(portValue) > 65_535) {
   throw new Error('--port must be a number from 0 to 65535');
 }
@@ -35,6 +47,12 @@ if (!/^[A-Za-z0-9_-]{32,}$/.test(access)) {
 }
 if (previousAccess && !/^[A-Za-z0-9_-]{32,}$/.test(previousAccess)) {
   throw new Error('--previous-access must be an unguessable URL-safe value');
+}
+if (!['checkout-read-only', 'snapshot-only'].includes(chatAccessMode)) {
+  throw new Error('--chat-access-mode must be checkout-read-only or snapshot-only');
+}
+if (chatAccessMode === 'checkout-read-only' && !chatAccessRoot) {
+  throw new Error('--chat-access-root is required for checkout chat access');
 }
 const incrementPort =
   rawArgs.includes('--increment-port') || !rawArgs.includes('--port');
@@ -270,6 +288,60 @@ function jsonResponse(value, status = 200) {
   });
 }
 
+const chatBodyLimitBytes = 64 * 1024;
+
+function chatJsonContentType(value) {
+  return typeof value === 'string' &&
+    /^application\/json(?:\s*;\s*charset=utf-8)?$/i.test(value);
+}
+
+function chatRequestBody(request) {
+  if (!chatJsonContentType(request.headers['content-type'])) {
+    throw new ReviewChatError('Chat commands need application/json.', 415);
+  }
+  const contentLength = Number(request.headers['content-length']);
+  if (Number.isFinite(contentLength) && contentLength > chatBodyLimitBytes) {
+    throw new ReviewChatError('Chat command body is too large.', 413);
+  }
+  return new Promise((resolvePromise, reject) => {
+    const chunks = [];
+    let bytes = 0;
+    let settled = false;
+    const fail = (error) => {
+      if (settled) return;
+      settled = true;
+      request.resume();
+      reject(error);
+    };
+    request.on('data', (chunk) => {
+      bytes += chunk.length;
+      if (bytes > chatBodyLimitBytes) {
+        fail(new ReviewChatError('Chat command body is too large.', 413));
+        return;
+      }
+      chunks.push(chunk);
+    });
+    request.once('error', fail);
+    request.once('end', () => {
+      if (settled) return;
+      settled = true;
+      try {
+        const value = JSON.parse(Buffer.concat(chunks).toString('utf8'));
+        if (!value || typeof value !== 'object' || Array.isArray(value)) {
+          throw new ReviewChatError('Chat commands must be JSON objects.');
+        }
+        resolvePromise(value);
+      } catch (error) {
+        reject(
+          error instanceof ReviewChatError
+            ? error
+            : new ReviewChatError('Chat command JSON is not valid.'),
+        );
+      }
+    });
+  });
+}
+
 async function send(nodeResponse, webResponse) {
   nodeResponse.writeHead(
     webResponse.status,
@@ -287,6 +359,32 @@ let selectedPort = Number(portValue);
 let readyState;
 let closing = false;
 
+function broadcastEvent(name, data = {}) {
+  const payload = JSON.stringify(data);
+  for (const client of eventClients) {
+    if (!client.destroyed) client.write(`event: ${name}\ndata: ${payload}\n\n`);
+  }
+}
+
+const chatProviderAccess = chatAccessMode === 'checkout-read-only'
+  ? { mode: chatAccessMode, root: resolve(chatAccessRoot) }
+  : { mode: chatAccessMode, reason: 'target-mismatch' };
+const chatProvider = chatAgent
+  ? createCodingAgentChatProvider({
+      agent: chatAgent,
+      binary: chatBinary,
+      model: chatModel,
+      reasoning: chatReasoning,
+      accessMode: chatProviderAccess,
+    })
+  : undefined;
+const reviewChat = createReviewChat({
+  snapshotPath: chatSnapshot,
+  provider: chatProvider,
+  accessMode: chatProviderAccess,
+  onChange: () => broadcastEvent('chat'),
+});
+
 function requestAuthorityError(request) {
   const localAddress = request.socket.localAddress || '';
   if (!validHost(request.headers.host, localAddress)) {
@@ -298,14 +396,22 @@ function requestAuthorityError(request) {
   return undefined;
 }
 
+function allowedMethods(url) {
+  return url.pathname === '/api/chat' ? ['GET', 'POST'] : ['GET', 'HEAD'];
+}
+
+function methodError(request, url) {
+  if (allowedMethods(url).includes(request.method)) return undefined;
+  return webResponse('Method not allowed', { status: 405 });
+}
+
 function requestContext(request) {
   const url = parseRequestUrl(request);
   if (!url) return { error: clientError() };
   const authorityError = requestAuthorityError(request);
   if (authorityError) return { error: authorityError };
-  if (!['GET', 'HEAD'].includes(request.method)) {
-    return { error: webResponse('Method not allowed', { status: 405 }) };
-  }
+  const error = methodError(request, url);
+  if (error) return { error };
   return { url };
 }
 
@@ -349,20 +455,98 @@ async function routeResponse(url) {
   return fetchAsset(url);
 }
 
+function chatAccessError(url) {
+  if (validAccess(url.searchParams.get('access'))) return undefined;
+  return webResponse('Forbidden', { status: 403 });
+}
+
+function chatCommandError(error) {
+  if (error instanceof ReviewChatError) {
+    return { status: error.status, message: error.message };
+  }
+  return { status: 400, message: 'Chat command failed.' };
+}
+
+async function sendChatCommand(request, response) {
+  try {
+    const result = reviewChat.command(await chatRequestBody(request));
+    const status = result.accepted ? 202 : 200;
+    await send(response, jsonResponse(result.state, status));
+  } catch (error) {
+    const failure = chatCommandError(error);
+    await send(response, jsonResponse({ error: failure.message }, failure.status));
+  }
+}
+
+async function handleChatRequest(request, response, url) {
+  const accessError = chatAccessError(url);
+  if (accessError) {
+    await send(response, accessError);
+    return;
+  }
+  if (request.method === 'GET') {
+    await send(response, jsonResponse(reviewChat.getState()));
+    return;
+  }
+  await sendChatCommand(request, response);
+}
+
+async function handleEventsRequest(_request, response, url) {
+  await sendEvents(response, url);
+}
+
+function handlerFor(url) {
+  return {
+    '/events': handleEventsRequest,
+    '/api/chat': handleChatRequest,
+  }[url.pathname];
+}
+
+function throwForcedHandlerFailure(url) {
+  if (forcedHandlerFailure(url)) throw new Error('forced request handler failure');
+}
+
+async function handleRoutedRequest(request, response, url) {
+  const handler = handlerFor(url);
+  if (handler) {
+    await handler(request, response, url);
+    return;
+  }
+  await send(response, await routeResponse(url));
+}
+
 async function handleRequest(request, response) {
   const context = requestContext(request);
   if (context.error) {
     await send(response, context.error);
     return;
   }
-  if (forcedHandlerFailure(context.url)) {
-    throw new Error('forced request handler failure');
-  }
-  if (context.url.pathname === '/events') {
-    await sendEvents(response, context.url);
-    return;
-  }
-  await send(response, await routeResponse(context.url));
+  throwForcedHandlerFailure(context.url);
+  await handleRoutedRequest(request, response, context.url);
+}
+
+function stopWatchers() {
+  unwatchFile(output);
+  if (chatSnapshot !== output) unwatchFile(chatSnapshot);
+}
+
+function closeEventClients() {
+  for (const client of eventClients) client.end();
+  eventClients.clear();
+}
+
+function closeServer() {
+  if (server.listening) server.close();
+}
+
+function close(exitCode = 0) {
+  if (closing) return;
+  closing = true;
+  process.exitCode = exitCode;
+  stopWatchers();
+  reviewChat.close();
+  closeEventClients();
+  closeServer();
 }
 
 async function containHandlerFailure(response) {
@@ -390,10 +574,18 @@ watchFile(output, { interval: 100 }, (current, previous) => {
   if (current.mtimeMs === previous.mtimeMs && current.size === previous.size) {
     return;
   }
-  for (const client of eventClients) {
-    if (!client.destroyed) client.write('event: update\ndata: {}\n\n');
-  }
+  reviewChat.refresh();
+  broadcastEvent('update');
 });
+
+if (chatSnapshot !== output) {
+  watchFile(chatSnapshot, { interval: 100 }, (current, previous) => {
+    if (current.mtimeMs === previous.mtimeMs && current.size === previous.size) {
+      return;
+    }
+    reviewChat.refresh();
+  });
+}
 
 function urlFor(address, port) {
   const formattedAddress = address.includes(':') ? `[${address}]` : address;
@@ -453,16 +645,6 @@ server.on('error', (error) => {
 });
 
 listen();
-
-function close(exitCode = 0) {
-  if (closing) return;
-  closing = true;
-  process.exitCode = exitCode;
-  unwatchFile(output);
-  for (const client of eventClients) client.end();
-  eventClients.clear();
-  if (server.listening) server.close();
-}
 
 process.on('SIGINT', () => close());
 process.on('SIGTERM', () => close());

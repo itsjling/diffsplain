@@ -9,15 +9,28 @@ import {
   fstatSync,
   lstatSync,
   mkdirSync,
+  mkdtempSync,
   openSync,
   readFileSync,
   readlinkSync,
   renameSync,
+  rmSync,
   statSync,
   writeFileSync,
 } from 'node:fs';
-import { basename, dirname, relative, resolve } from 'node:path';
+import { tmpdir } from 'node:os';
+import { basename, dirname, join, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import {
+  isBaseWorktreeTarget,
+  resolveBaseWorktreeCommit,
+} from './local-target.mjs';
+import { createAgentExclusionMatcher } from './agent-exclusions.mjs';
+import {
+  agentReviewContext,
+  agentReviewFile,
+  createAgentReviewFingerprint,
+} from './agent-review.mjs';
 import { summaryPath } from './summary-path.mjs';
 
 const args = process.argv.slice(2);
@@ -34,7 +47,11 @@ const option = (name) => {
 };
 const options = (name) =>
   args.flatMap((argument, index) =>
-    argument === name && args[index + 1] ? [args[index + 1]] : [],
+    argument === name && args[index + 1]
+      ? [args[index + 1]]
+      : argument.startsWith(`${name}=`)
+        ? [argument.slice(name.length + 1)]
+        : [],
   );
 const has = (name) => args.includes(name);
 
@@ -45,8 +62,8 @@ Targets:
   --pr NUMBER|URL     Fetch and show a GitHub pull request
   --branch NAME       Fetch and show a remote branch
   --checkout          Show the current checkout against its default branch
-  --base REF --head REF
-                      Show an exact local Git range
+  --base REF [--head REF]
+                      Compare a base with the working tree, or show an exact range
   (no target)         Show worktree changes against HEAD
 
 Options:
@@ -63,6 +80,7 @@ Options:
 const repo = resolve(option('--repo') || process.cwd());
 const output = resolve(option('--output') || '.cache/diff-data.json');
 const excludedOutputs = options('--exclude-output');
+const agentExcludeRules = options('--exclude');
 const baseOption = option('--base');
 const headOption = option('--head');
 const prOption = option('--pr');
@@ -88,6 +106,14 @@ const cacheRoot = cacheOption
   ? resolve(cacheOption)
   : resolve(projectRoot, '.cache/git');
 const remoteMode = Boolean(prOption || branchOption);
+const baseWorktreeOption = isBaseWorktreeTarget({
+  base: baseOption,
+  branch: branchOption,
+  checkout: checkoutOption,
+  head: headOption,
+  pullRequest: prOption,
+  worktree: worktreeOption,
+});
 const watching = has('--watch');
 const watchContent = has('--watch-content');
 const ignoreSummaryWatch = has('--ignore-summary-watch');
@@ -117,13 +143,8 @@ if (
 ) {
   fail('--worktree cannot be combined with another target');
 }
-if (
-  !prOption &&
-  !branchOption &&
-  !checkoutOption &&
-  Boolean(baseOption) !== Boolean(headOption)
-) {
-  fail('--base and --head must be used together');
+if (!prOption && !branchOption && !checkoutOption && headOption && !baseOption) {
+  fail('--head must be used with --base');
 }
 
 const repoPath = (file) => {
@@ -829,6 +850,36 @@ function resolveCheckoutTarget() {
   };
 }
 
+function resolveBaseWorktreeTarget() {
+  const currentHead = tryRepo(['rev-parse', '--verify', 'HEAD']);
+  const resolvedBase = resolveBaseWorktreeCommit(repo, baseOption);
+  const remoteUrl = tryRepo(['remote', 'get-url', 'origin']) || undefined;
+  return {
+    kind: 'base-worktree',
+    runGit: runRepo,
+    range: [resolvedBase],
+    base: resolvedBase,
+    head: currentHead || 'WORKTREE',
+    branch: tryRepo(['branch', '--show-current']) || undefined,
+    remote: remoteUrl ? { name: 'origin', url: remoteUrl } : undefined,
+    sourceRepositoryUrl: undefined,
+    baseRepositoryUrl: undefined,
+    comparisonCommitsOnRemote: false,
+    target: {
+      kind: 'base-worktree',
+      base: { ref: baseOption, oid: resolvedBase },
+      head: { ref: 'WORKTREE', oid: currentHead || null },
+    },
+    changeDefaults: {
+      title: `Changes since ${baseOption}`,
+      summary: `Shows commits and working-tree changes since ${baseOption}.`,
+      why: 'Reviews the working tree against the chosen base without changing the repo.',
+      highlights: [],
+      risks: [],
+    },
+  };
+}
+
 function resolveLocalTarget() {
   const currentHead = tryRepo(['rev-parse', '--verify', 'HEAD']);
   const worktree = !baseOption && !headOption;
@@ -891,6 +942,7 @@ function resolveTarget() {
   if (prOption) return resolvePullRequestTarget();
   if (branchOption) return resolveBranchTarget();
   if (checkoutOption) return resolveCheckoutTarget();
+  if (baseWorktreeOption) return resolveBaseWorktreeTarget();
   return resolveLocalTarget();
 }
 
@@ -959,6 +1011,60 @@ function untrackedStat(path) {
   };
 }
 
+function baseWorktreeReplacement(path, target) {
+  const directory = mkdtempSync(join(tmpdir(), 'diffsplain-base-index-'));
+  const env = { ...process.env, GIT_INDEX_FILE: join(directory, 'index') };
+  const diff = (args) => command('git', ['-C', repo, 'diff', ...args], { env });
+
+  try {
+    command('git', ['-C', repo, 'read-tree', target.base], { env });
+    const patch = diff([
+      '--no-ext-diff',
+      '--no-textconv',
+      '--binary',
+      '--find-renames',
+      target.base,
+      '--',
+      path,
+    ]);
+    const stat = parseNumstat(
+      diff([
+        '--no-ext-diff',
+        '--no-textconv',
+        '--numstat',
+        '-z',
+        '--find-renames',
+        target.base,
+        '--',
+        path,
+      ]),
+    ).get(path) || {
+      additions: 0,
+      deletions: 0,
+      isBinary: false,
+    };
+    return { patch, stat };
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
+}
+
+function reviewFileStat(file, numstat) {
+  if (file.replacement) return file.replacement.stat;
+  if (file.untracked) return untrackedStat(file.path);
+  return (
+    numstat.get(file.path) || {
+      additions: 0,
+      deletions: 0,
+      isBinary: false,
+    }
+  );
+}
+
+function reviewFilePatch(file, target, patches) {
+  return file.replacement?.patch ?? filePatch(file, target, patches);
+}
+
 function githubFileUrl(repositoryUrl, ref, path) {
   if (!repositoryUrl || !ref || ref === 'WORKTREE') return undefined;
   const filePath = path.split('/').map(encodeURIComponent).join('/');
@@ -972,6 +1078,11 @@ function githubComparisonUrl(repositoryUrl, base, head) {
   return `${repositoryUrl}/compare/${encodeURIComponent(base)}...${encodeURIComponent(head)}`;
 }
 
+function fingerprintFile(file) {
+  return agentReviewFile(file);
+}
+
+// fallow-ignore-next-line complexity -- Existing aggregation boundary; target handling stays in resolvers.
 function build() {
   const localWorkspace =
     tryRepo(['rev-parse', '--is-inside-work-tree']) === 'true';
@@ -979,6 +1090,9 @@ function build() {
     throw new Error(`${repo} is not a Git checkout`);
   }
   const target = resolveTarget();
+  const agentExcluded = createAgentExclusionMatcher(agentExcludeRules, {
+    ignoreCase: tryRepo(['config', '--bool', 'core.ignoreCase']) === 'true',
+  });
   const remoteRepository = githubRepository(target.remote?.url);
   const summaryDoc = noSummaries ? {} : readJson(summariesPath, {}) || {};
   const allTrackedFiles = parseNameStatus(
@@ -1008,8 +1122,12 @@ function build() {
   );
   const patches = trackedPatches(allTrackedFiles, target);
 
-  if (target.kind === 'worktree' || target.kind === 'checkout') {
-    const trackedPaths = new Set(nameStatus.map((file) => file.path));
+  if (
+    target.kind === 'worktree' ||
+    target.kind === 'base-worktree' ||
+    target.kind === 'checkout'
+  ) {
+    const trackedByPath = new Map(nameStatus.map((file) => [file.path, file]));
     const untracked = tryRepo([
       'ls-files',
       '--others',
@@ -1019,22 +1137,26 @@ function build() {
       .split('\0')
       .filter((path) => path && !excludedPaths.has(path));
     for (const path of untracked) {
-      if (!trackedPaths.has(path)) {
+      const tracked = trackedByPath.get(path);
+      if (target.kind === 'base-worktree' && tracked?.status === 'deleted') {
+        const replacement = baseWorktreeReplacement(path, target);
+        if (replacement.patch) {
+          tracked.status = 'modified';
+          tracked.replacement = replacement;
+        } else {
+          tracked.omit = true;
+        }
+      } else if (!tracked) {
         nameStatus.push({ path, status: 'added', untracked: true });
       }
     }
     nameStatus.sort((left, right) => left.path.localeCompare(right.path));
   }
 
-  const filesWithoutSummaries = nameStatus.map((file) => {
-    const stat = file.untracked
-      ? untrackedStat(file.path)
-      : numstat.get(file.path) || {
-          additions: 0,
-          deletions: 0,
-          isBinary: false,
-        };
-    const patch = filePatch(file, target, patches);
+  const reviewFiles = nameStatus.filter((file) => !file.omit);
+  const filesWithoutSummaries = reviewFiles.map((file) => {
+    const stat = reviewFileStat(file, numstat);
+    const patch = reviewFilePatch(file, target, patches);
     const binary =
       stat.isBinary ||
       patch.includes('Binary files ') ||
@@ -1065,10 +1187,15 @@ function build() {
       totalDiffLines: textPatch ? textPatch.split('\n').length - 1 : 0,
       patch: textPatch,
       snippet: binary ? '' : compactSnippet(textPatch),
+      ...(agentExcluded(file.path) ? { agentExcluded: true } : {}),
       ...(sourceUrl ? { sourceUrl } : {}),
       ...(comparisonUrl ? { comparisonUrl } : {}),
     };
   });
+
+  const agentFiles = filesWithoutSummaries.filter(
+    (file) => !file.agentExcluded,
+  );
 
   const reviewFingerprint = createHash('sha256')
     .update(
@@ -1081,38 +1208,55 @@ function build() {
           remote: target.remote?.name,
           targetKind: target.kind,
         },
-        files: filesWithoutSummaries.map((file) => ({
-          path: file.path,
-          oldPath: file.oldPath,
-          status: file.status,
-          additions: file.additions,
-          deletions: file.deletions,
-          isBinary: file.isBinary,
-          patch: file.patch,
-        })),
+        files: filesWithoutSummaries.map(fingerprintFile),
       }),
     )
     .digest('hex');
-  const generatedFor =
-    !noSummaries &&
-    typeof summaryDoc.meta?.reviewFingerprint === 'string'
-      ? summaryDoc.meta.reviewFingerprint
+  const agentReviewFingerprint = createAgentReviewFingerprint({
+    context: agentReviewContext({
+      name: remoteRepository?.name || basename(repo),
+      selector: remoteRepository?.selector,
+      target: target.target,
+      branch: target.branch,
+      baseBranch: target.baseBranch,
+    }),
+    files: agentFiles,
+  });
+  const hasAgentReviewFingerprint =
+    typeof summaryDoc.meta?.agentReviewFingerprint === 'string';
+  const hasLegacyReviewFingerprint =
+    !hasAgentReviewFingerprint &&
+    typeof summaryDoc.meta?.reviewFingerprint === 'string';
+  const emptyAgentReviewFingerprint =
+    typeof summaryDoc.meta?.emptyAgentReviewFingerprint === 'string'
+      ? summaryDoc.meta.emptyAgentReviewFingerprint
       : undefined;
+  const generatedFor = !noSummaries && hasAgentReviewFingerprint
+    ? agentFiles.length === 0 && emptyAgentReviewFingerprint
+      ? emptyAgentReviewFingerprint
+      : summaryDoc.meta.agentReviewFingerprint
+    : undefined;
   const summariesAreFresh =
-    !noSummaries && (!generatedFor || generatedFor === reviewFingerprint);
+    !noSummaries &&
+    !hasLegacyReviewFingerprint &&
+    (!generatedFor || generatedFor === agentReviewFingerprint);
   const sourceSummaries = summariesAreFresh ? summaryDoc : {};
+  const agentPaths = new Set(agentFiles.map((file) => file.path));
+  const reviewPaths = new Set(filesWithoutSummaries.map((file) => file.path));
   const failedFiles = summariesAreFresh
-    ? failedFileRecords(summaryDoc.meta?.failedFiles)
+    ? failedFileRecords(summaryDoc.meta?.failedFiles).filter((failure) =>
+        agentPaths.has(failure.path) || !reviewPaths.has(failure.path),
+      )
     : [];
-  const summaryErrors = summariesAreFresh
+  const summaryErrors = summariesAreFresh && agentFiles.length
     ? cleanList(summaryDoc.meta?.errors)
     : [];
   const failureByPath = new Map(
     failedFiles.map((failure) => [failure.path, failure.reason]),
   );
   const emptyReviewComplete =
-    filesWithoutSummaries.length === 0 &&
-    generatedFor === reviewFingerprint &&
+    agentFiles.length === 0 &&
+    generatedFor === agentReviewFingerprint &&
     sourceSummaries.meta?.status === 'complete';
   const summariesAreComplete =
     summariesAreFresh &&
@@ -1120,12 +1264,12 @@ function build() {
     summaryErrors.length === 0 &&
     (emptyReviewComplete ||
       (completeChangeSummary(sourceSummaries.change) &&
-        filesWithoutSummaries.every((file) =>
+        agentFiles.every((file) =>
           completeFileSummary(sourceSummaries.files?.[file.path]),
         )));
   const completedFiles = noSummaries
     ? 0
-    : filesWithoutSummaries.filter((file) =>
+    : agentFiles.filter((file) =>
         completeFileSummary(sourceSummaries.files?.[file.path]),
       ).length;
   const storedStatus = summaryDoc.meta?.status;
@@ -1140,18 +1284,28 @@ function build() {
           : 'idle';
   const files = filesWithoutSummaries.map((file) => ({
     ...file,
-    summary: fileSummary(file.path, sourceSummaries.files?.[file.path]),
-    noteReady: Boolean(
-      completeFileSummary(sourceSummaries.files?.[file.path]),
+    summary: fileSummary(
+      file.path,
+      file.agentExcluded ? undefined : sourceSummaries.files?.[file.path],
     ),
-    ...(failureByPath.has(file.path)
+    noteReady: Boolean(
+      !file.agentExcluded &&
+        completeFileSummary(sourceSummaries.files?.[file.path]),
+    ),
+    ...(!file.agentExcluded && failureByPath.has(file.path)
       ? { noteFailure: failureByPath.get(file.path) }
       : {}),
   }));
-  const change = changeSummary(sourceSummaries.change, target.changeDefaults);
+  const change = changeSummary(
+    agentFiles.length ? sourceSummaries.change : undefined,
+    target.changeDefaults,
+  );
   const content = {
     repo: {
       name: remoteRepository?.name || basename(repo),
+      ...(remoteRepository?.selector
+        ? { repository: remoteRepository.selector }
+        : {}),
       root: localWorkspace ? repo : target.remote?.url || repo,
       base: target.base,
       head: target.head,
@@ -1166,12 +1320,13 @@ function build() {
     files,
     notes: {
       reviewFingerprint,
+      agentReviewFingerprint,
       ...(generatedFor ? { generatedFor } : {}),
       fresh: summariesAreFresh,
       complete: summariesAreComplete,
       status: noteStatus,
       completedFiles,
-      totalFiles: filesWithoutSummaries.length,
+      totalFiles: agentFiles.length,
       ...(failedFiles.length ? { failedFiles } : {}),
       ...(summaryErrors.length ? { errors: summaryErrors } : {}),
       ...(typeof summaryDoc.meta?.model === 'string'
@@ -1182,6 +1337,9 @@ function build() {
         : {}),
       ...(typeof summaryDoc.meta?.reasoning === 'string'
         ? { reasoning: summaryDoc.meta.reasoning }
+        : {}),
+      ...(typeof summaryDoc.meta?.accessMode === 'string'
+        ? { accessMode: summaryDoc.meta.accessMode }
         : {}),
     },
   };
@@ -1268,8 +1426,11 @@ function fingerprint() {
     ].join('|');
   }
   const content = createHash('sha256');
+  const base = baseWorktreeOption
+    ? resolveBaseWorktreeCommit(repo, baseOption)
+    : 'HEAD';
   content.update(
-    tryRepo(['diff', '--no-ext-diff', '--no-textconv', '--binary', 'HEAD', '--']),
+    tryRepo(['diff', '--no-ext-diff', '--no-textconv', '--binary', base, '--']),
   );
   const untracked = tryRepo([
     'ls-files',
@@ -1284,6 +1445,7 @@ function fingerprint() {
     fingerprintUntrackedPath(content, path);
   }
   return [
+    baseWorktreeOption ? base : undefined,
     tryRepo(['rev-parse', 'HEAD']),
     tryRepo(['status', '--porcelain=v1', '--untracked-files=all']),
     content.digest('hex'),

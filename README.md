@@ -14,11 +14,12 @@ npx diffsplain
 The command opens a local page and compares the checkout with its default
 branch. It starts at port `2299` and uses the next free port when needed. You
 need Node.js 22.13 or newer and a signed-in Codex, Claude, Copilot, Cursor, or
-OpenCode CLI. Diffsplain tries them in that order. Cursor Agent must be version
-2026.08.11 or newer. It uses the signed-in Cursor CLI in the user's home and
-still contacts the Cursor service. Pull requests also need a signed-in GitHub
-CLI. Once Diffsplain chooses an agent, a failed check or run ends the command;
-it does not switch agents.
+OpenCode CLI. Without `--agent`, an interactive terminal lists usable agents
+in that order and asks you to choose one. In scripts, pass `--agent NAME` or
+`--no-agent`. Cursor Agent must be version 2026.08.11 or newer. It uses the
+signed-in Cursor CLI in the user's home and still contacts the Cursor service.
+Pull requests also need a signed-in GitHub CLI. Once Diffsplain chooses an
+agent, a failed check or run ends the command; it does not switch agents.
 
 Common targets:
 
@@ -26,6 +27,7 @@ Common targets:
 npx diffsplain --pr 198
 npx diffsplain owner/repo --branch feature/my-change
 npx diffsplain --worktree
+npx diffsplain --base BASE_REF
 npx diffsplain --base BASE_REF --head HEAD_REF
 ```
 
@@ -44,8 +46,11 @@ Arguments:
 | `--pr NUMBER\|URL` | Review a GitHub pull request. |
 | `--branch NAME` | Compare a remote branch with its default branch. |
 | `--worktree` | Review tracked and untracked changes against `HEAD`. |
+| `--base REF` | Compare that exact commit with the live working tree. |
 | `--base REF --head REF` | Review an exact local range. |
 | `--agent NAME`, `--no-agent` | Choose a coding agent, or show a plain diff. |
+| `--no-checkout-access` | Limit agent notes to the supplied snapshot. |
+| `--exclude PATTERN` | Keep matching files out of automatic agent input. Repeat rules in gitignore order; the diff still shows them. |
 | `--model NAME` | Choose the model used for notes. |
 | `--reasoning LEVEL` | Set `minimal`, `low`, `medium`, `high`, or `xhigh`. |
 | `--batch-size COUNT` | Set the most files per agent pass. The default is `12`; large patches use smaller batches. |

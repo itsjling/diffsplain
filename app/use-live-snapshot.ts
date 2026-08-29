@@ -14,6 +14,11 @@ type LiveTarget = {
   project: string | null;
 };
 
+type ConfirmedChatAccess = {
+  access: string;
+  targetKey: string;
+};
+
 type SnapshotSource = "demo" | "live";
 
 type SnapshotResult<T> = {
@@ -144,7 +149,10 @@ export function useLiveSnapshot<T extends SnapshotShape>() {
   const [fetchError, setFetchError] = useState<string | null>(null);
   const [streamError, setStreamError] = useState<string | null>(null);
   const [demoUnavailable, setDemoUnavailable] = useState(false);
+  const [chatRevision, setChatRevision] = useState(0);
   const [target, setTarget] = useState(currentTarget);
+  const [confirmedChatAccess, setConfirmedChatAccess] =
+    useState<ConfirmedChatAccess | null>(null);
   const latestVersion = useRef<string | null>(null);
   const source = useRef<SnapshotSource | null>(null);
 
@@ -281,6 +289,8 @@ export function useLiveSnapshot<T extends SnapshotShape>() {
         if (!active) return;
         stopPolling();
         setStreamError(null);
+        setConfirmedChatAccess(null);
+        setChatRevision((revision) => revision + 1);
         requestRefresh();
       });
       events.addEventListener("update", (event) => {
@@ -296,6 +306,10 @@ export function useLiveSnapshot<T extends SnapshotShape>() {
         }
         requestRefresh();
       });
+      events.addEventListener("chat", () => {
+        if (!active) return;
+        setChatRevision((revision) => revision + 1);
+      });
       events.addEventListener("access", (event) => {
         if (!active) return;
         const nextAccess = (event as MessageEvent<string>).data;
@@ -304,12 +318,14 @@ export function useLiveSnapshot<T extends SnapshotShape>() {
         session.set("access", nextAccess);
         window.history.replaceState(null, "", `#${session}`);
         const nextTarget = currentTarget();
+        setConfirmedChatAccess({ access: nextAccess, targetKey: nextTarget.key });
         setTarget((current) =>
           current.key === nextTarget.key ? current : nextTarget,
         );
       });
       events.addEventListener("error", () => {
         if (!active) return;
+        setConfirmedChatAccess(null);
         setStreamError(
           "Live updates disconnected. Polling while the stream reconnects.",
         );
@@ -333,6 +349,11 @@ export function useLiveSnapshot<T extends SnapshotShape>() {
   }, [demoUnavailable, target]);
 
   return {
+    access:
+      confirmedChatAccess?.targetKey === target.key
+        ? confirmedChatAccess.access
+        : null,
+    chatRevision,
     demoUnavailable,
     loadError: fetchError ?? streamError,
     snapshot,

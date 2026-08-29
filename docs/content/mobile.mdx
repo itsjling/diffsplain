@@ -71,6 +71,14 @@ left and right arrows, `Cmd+K` or `Ctrl+K`, Escape, Tab, Enter, and Space.
 Touch review includes the visible controls and a horizontal swipe of at least
 `70px` to change files; page scrolling and code scrolling must still work.
 
+The note pane has **Agent note** and **Ask agent** views. Chat starts on
+**This file** and can switch to **Review**. The composer stays in normal page
+flow, so it does not cover history or controls at a small width. Its tabs,
+scope controls, send control, and recovery actions have 44px touch targets.
+`Cmd+Enter` or `Ctrl+Enter` sends a question. `Cmd+K` or `Ctrl+K` must not open
+the file picker while focus is in a text field, textarea, select control, or
+editable field.
+
 ## Required review flows
 
 Before merging a change that affects the review page, check these flows at the
@@ -87,6 +95,9 @@ sizes above when the change can affect them:
 5. Change a tracked file during a worktree review and confirm that the page
    refreshes without losing the selected file when it still exists.
 6. At `980px` and `680px`, check the layout on both sides of the boundary.
+7. Ask a file question, switch files while it runs, then cancel or let it
+   finish. Check review scope, stale history after a refresh, citations, and
+   the retry or recovery state when the fixture provides one.
 
 Use the checked-in demo when a local review fixture is not needed. Test a pull
 request review separately when a change affects target loading or remote data.
