@@ -39,6 +39,7 @@ type DiffFile = {
   comparisonUrl?: string;
   summary: FileSummary;
   noteReady?: boolean;
+  noteFailure?: string;
   agentExcluded?: boolean;
 };
 
@@ -90,6 +91,8 @@ type DiffSnapshot = {
   notes?: DiffNotes;
 };
 
+type AgentNoteState = "waiting" | "ready" | "failed" | "excluded";
+
 const SWIPE_THRESHOLD = 48;
 const SWIPE_EXCLUDED_TARGETS =
   ".diff-scroll, button, a, input, textarea, select, [contenteditable]:not([contenteditable='false']), [role='dialog']";
@@ -117,6 +120,13 @@ const AGENT_NAMES: Record<string, string> = {
   cursor: "Cursor",
   opencode: "OpenCode",
 };
+
+const AGENT_NOTE_STATE_MARKS = {
+  waiting: "…",
+  ready: "✓",
+  failed: "!",
+  excluded: "×",
+} satisfies Record<AgentNoteState, string>;
 
 function formatName(value: string) {
   return value
@@ -203,6 +213,33 @@ function statusLabel(status: FileStatus) {
   if (status === "renamed") return "Renamed";
   if (status === "binary") return "Binary";
   return "Modified";
+}
+
+function agentNoteState(
+  file: DiffFile,
+  notes: DiffNotes | undefined,
+): AgentNoteState | null {
+  if (!notes) return null;
+  if (file.agentExcluded === true) return "excluded";
+  if (file.noteReady ?? notes.complete) return "ready";
+  if (file.noteFailure !== undefined || notes.status === "failed") {
+    return "failed";
+  }
+  return "waiting";
+}
+
+function PickerAgentNoteState({ state }: { state: AgentNoteState }) {
+  return (
+    <span
+      className={`picker-note-state picker-note-state--${state}`}
+      aria-label={`Agent note ${state}`}
+      role="img"
+      title={`Agent note ${state}`}
+    >
+      <span aria-hidden="true">{AGENT_NOTE_STATE_MARKS[state]}</span>
+      {state}
+    </span>
+  );
 }
 
 function hasSelectedText() {
@@ -1078,6 +1115,7 @@ export default function Home() {
             >
               {visibleFiles.map(({ file, index }) => {
                 const active = file.path === currentFile.path;
+                const noteState = agentNoteState(file, snapshot.notes);
                 return (
                   <button
                     ref={active ? activePickerRowRef : undefined}
@@ -1097,6 +1135,9 @@ export default function Home() {
                     </span>
                     <span className={`status-pin status-pin--${file.status}`} />
                     <span className="picker-path">{file.path}</span>
+                    {noteState ? (
+                      <PickerAgentNoteState state={noteState} />
+                    ) : null}
                     <span className="picker-change-count">
                       <i>+{file.additions}</i>
                       <b>−{file.deletions}</b>

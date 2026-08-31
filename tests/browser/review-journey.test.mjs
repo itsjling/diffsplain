@@ -145,6 +145,32 @@ function longFileListFixture() {
   );
 }
 
+function pickerAgentNoteFixture(
+  version,
+  { complete = false, failure = false, status = "generating" } = {},
+) {
+  const value = longFileListFixture();
+  value.version = version;
+  value.notes = {
+    ...value.notes,
+    complete,
+    status,
+    completedFiles: complete ? 29 : 1,
+    totalFiles: 29,
+  };
+  for (const file of value.files) {
+    file.noteReady = complete;
+    delete file.noteFailure;
+    delete file.agentExcluded;
+  }
+  value.files[0].noteReady = true;
+  if (!complete) value.files[1].noteReady = false;
+  if (failure) value.files[1].noteFailure = "The fixture agent stopped.";
+  value.files[2].agentExcluded = true;
+  value.files[2].noteReady = false;
+  return value;
+}
+
 function filteredFileListFixture() {
   return snapshot(
     "filtered-file-list",
@@ -296,6 +322,21 @@ async function pickerPosition(page) {
       topGap: activeBounds.top - listBounds.top,
     };
   });
+}
+
+function pickerRow(page, path) {
+  return page.locator(".picker-row").filter({ hasText: path });
+}
+
+async function assertPickerNoteState(page, path, state) {
+  const row = pickerRow(page, path);
+  await row
+    .getByRole("img", { name: `Agent note ${state}`, exact: true })
+    .waitFor();
+  const marker = row.locator(".picker-note-state");
+  assert.equal(await marker.count(), 1);
+  assert.equal(await marker.getAttribute("aria-label"), `Agent note ${state}`);
+  assert.match((await marker.textContent())?.trim() ?? "", new RegExp(`${state}$`));
 }
 
 async function assertTouchTarget(locator) {
@@ -1018,17 +1059,33 @@ test("keeps the supported narrow layouts within the viewport", async () => {
         viewport: { width, height: width === 320 ? 740 : 844 },
       },
       async (page) => {
-        await writeSnapshot(fixture(`narrow-${width}`));
+        await writeSnapshot(
+          pickerAgentNoteFixture(`narrow-${width}`, { failure: true }),
+        );
         await page.goto(serverUrl);
-        await page.getByRole("heading", { name: "Explain saved todos" }).waitFor();
+        await page.getByRole("heading", { name: "Explain file 1" }).waitFor();
+        await page.locator(".file-picker-trigger").click();
+        await page
+          .getByRole("dialog", { name: "Choose a changed file" })
+          .waitFor();
 
         const widths = await page.evaluate(() => ({
           body: document.body.scrollWidth,
+          dialog: document.querySelector(".picker-dialog")?.scrollWidth,
+          dialogClient: document.querySelector(".picker-dialog")?.clientWidth,
+          list: document.querySelector(".picker-list")?.scrollWidth,
+          listClient: document.querySelector(".picker-list")?.clientWidth,
           root: document.documentElement.scrollWidth,
+          row: document.querySelector(".picker-row")?.scrollWidth,
+          rowClient: document.querySelector(".picker-row")?.clientWidth,
           viewport: document.documentElement.clientWidth,
         }));
         assert.ok(
-          widths.root <= widths.viewport && widths.body <= widths.viewport,
+          widths.root <= widths.viewport &&
+            widths.body <= widths.viewport &&
+            widths.dialog <= widths.dialogClient &&
+            widths.list <= widths.listClient &&
+            widths.row <= widths.rowClient,
           `page width ${JSON.stringify(widths)}`,
         );
       },
@@ -1081,6 +1138,84 @@ test("centers an ordinary selected file when reopening the picker", async () => 
       await controls.trigger.click();
       await controls.dialog.waitFor();
       assert.ok((await pickerPosition(page)).centerGap <= 1);
+    },
+  );
+});
+
+test("updates every picker Agent note state without disturbing the open picker", async () => {
+  await runReviewJourney(
+    "live picker Agent note states",
+    { viewport: { width: 1280, height: 800 } },
+    async (page) => {
+      await writeSnapshot(
+        pickerAgentNoteFixture("picker-partial", { failure: true }),
+      );
+      await page.goto(serverUrl);
+      await page.getByRole("heading", { name: "Explain file 1" }).waitFor();
+
+      const controls = pickerControls(page);
+      await controls.trigger.click();
+      await pickerRow(page, "src/file-16.ts").click();
+      await page.waitForFunction(
+        () =>
+          document.querySelector(".current-path")?.textContent ===
+          "src/file-16.ts",
+      );
+      await controls.trigger.click();
+      await controls.search.fill("file-");
+
+      await assertPickerNoteState(page, "src/file-01.ts", "ready");
+      await assertPickerNoteState(page, "src/file-02.ts", "failed");
+      await assertPickerNoteState(page, "src/file-03.ts", "excluded");
+      await assertPickerNoteState(page, "src/file-04.ts", "waiting");
+      assert.equal(
+        await page.locator(".picker-row").count(),
+        await page.locator(".picker-note-state").count(),
+      );
+
+      const before = await page.evaluate(() => ({
+        focused: document.activeElement?.getAttribute("aria-label"),
+        path: document.querySelector(".current-path")?.textContent,
+        query: document.querySelector(".picker-search input")?.value,
+        scrollTop: document.querySelector(".picker-list")?.scrollTop,
+      }));
+      assert.equal(before.focused, "Filter changed files");
+      assert.equal(before.path, "src/file-16.ts");
+      assert.equal(before.query, "file-");
+      assert.ok((before.scrollTop ?? 0) > 0);
+
+      await writeSnapshot(
+        pickerAgentNoteFixture("picker-failed", { status: "failed" }),
+      );
+      await assertPickerNoteState(page, "src/file-04.ts", "failed");
+
+      await writeSnapshot(pickerAgentNoteFixture("picker-retry"));
+      await assertPickerNoteState(page, "src/file-02.ts", "waiting");
+      await assertPickerNoteState(page, "src/file-04.ts", "waiting");
+
+      await writeSnapshot(
+        pickerAgentNoteFixture("picker-complete", {
+          complete: true,
+          status: "complete",
+        }),
+      );
+      await assertPickerNoteState(page, "src/file-01.ts", "ready");
+      await assertPickerNoteState(page, "src/file-02.ts", "ready");
+      await assertPickerNoteState(page, "src/file-03.ts", "excluded");
+      await assertPickerNoteState(page, "src/file-04.ts", "ready");
+
+      const after = await page.evaluate(() => ({
+        focused: document.activeElement?.getAttribute("aria-label"),
+        path: document.querySelector(".current-path")?.textContent,
+        query: document.querySelector(".picker-search input")?.value,
+        scrollTop: document.querySelector(".picker-list")?.scrollTop,
+      }));
+      assert.deepEqual(after, before);
+
+      const results = await new AxeBuilder({ page })
+        .include(".picker-note-state")
+        .analyze();
+      assert.deepEqual(results.violations, []);
     },
   );
 });
