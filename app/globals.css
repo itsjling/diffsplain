@@ -1303,6 +1303,32 @@ kbd {
   border-color: var(--amber);
 }
 
+.chat-status-pulse {
+  animation: chat-status-pulse 1.8s ease-in-out infinite;
+  background: currentColor;
+  border-radius: 999px;
+  display: inline-block;
+  height: 0.42em;
+  margin-left: 0.55em;
+  opacity: 0.32;
+  vertical-align: 0.08em;
+  width: 0.42em;
+}
+
+@keyframes chat-status-pulse {
+  50% {
+    opacity: 0.78;
+    transform: scale(1.18);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .chat-status-pulse {
+    animation: none;
+    opacity: 0.5;
+  }
+}
+
 .chat-pending-question {
   font: 500 10px/1.5 var(--font-geist-mono), monospace;
   overflow-wrap: anywhere;

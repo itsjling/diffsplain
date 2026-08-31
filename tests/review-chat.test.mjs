@@ -1,10 +1,11 @@
 import assert from 'node:assert/strict';
-import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { chmod, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
 import {
   ReviewChatError,
+  createCodingAgentChatProvider,
   createReviewChat,
 } from '../scripts/review-chat.mjs';
 
@@ -75,6 +76,33 @@ function thread(state, scope, path, { current = true } = {}) {
 
 function flush() {
   return new Promise((resolve) => setImmediate(resolve));
+}
+
+function pause(milliseconds) {
+  return new Promise((resolve) => setTimeout(resolve, milliseconds));
+}
+
+async function waitFor(read, predicate, timeoutMs = 2_000) {
+  const deadline = Date.now() + timeoutMs;
+  let value;
+  while (Date.now() < deadline) {
+    value = read();
+    if (predicate(value)) return value;
+    await pause(5);
+  }
+  throw new Error(`Review chat did not settle: ${JSON.stringify(value)}`);
+}
+
+async function waitForFileNumber(path, timeoutMs = 2_000) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    try {
+      return Number((await readFile(path, 'utf8')).trim());
+    } catch {
+      await pause(5);
+    }
+  }
+  throw new Error(`File was not written: ${path}`);
 }
 
 async function createFixture() {
@@ -286,6 +314,147 @@ test('keeps old output out after cancellation and retry', async () => {
     provider.calls[1].resolve(answer());
     await flush();
     assert.equal(thread(chat.getState(), 'review').messages.length, 2);
+  } finally {
+    chat.close();
+    await rm(fixture.directory, { recursive: true, force: true });
+  }
+});
+
+test('settles cancellation exactly once across provider rejection and close', async () => {
+  const fixture = await createFixture();
+  const provider = controlledProvider();
+  const lifecycle = [];
+  const chat = createReviewChat({
+    snapshotPath: fixture.snapshotPath,
+    provider,
+    onLifecycle: (event) => lifecycle.push(event),
+  });
+
+  try {
+    chat.command({ type: 'new', scope: 'review' });
+    chat.command({ type: 'ask', scope: 'review', question: 'Cancel once.' });
+    chat.command({ type: 'cancel', scope: 'review' });
+    provider.calls[0].reject(new Error('late rejection'));
+    chat.close();
+    await flush();
+    assert.deepEqual(
+      lifecycle.filter((event) => event.terminal).map((event) => event.type),
+      ['cancel'],
+    );
+  } finally {
+    chat.close();
+    await rm(fixture.directory, { recursive: true, force: true });
+  }
+});
+
+test('times out an answer once, preserves retry state, and fences late output', async () => {
+  const fixture = await createFixture();
+  const provider = controlledProvider();
+  const lifecycle = [];
+  const chat = createReviewChat({
+    snapshotPath: fixture.snapshotPath,
+    provider,
+    runTimeoutMs: 30,
+    onLifecycle: (event) => lifecycle.push(event),
+  });
+
+  try {
+    chat.command({ type: 'new', scope: 'review' });
+    chat.command({ type: 'ask', scope: 'review', question: 'Keep this pending.' });
+    const failed = await waitFor(
+      () => thread(chat.getState(), 'review'),
+      (value) => value.status === 'failed',
+    );
+    assert.equal(provider.calls[0].cancelled, true);
+    assert.equal(failed.pendingQuestion, 'Keep this pending.');
+    assert.equal(failed.canRetry, true);
+    assert.match(failed.error, /timed out/i);
+    provider.calls[0].resolve(answer('visible.txt', 'Late answer.'));
+    await flush();
+    assert.equal(thread(chat.getState(), 'review').messages.length, 1);
+    assert.deepEqual(
+      lifecycle.filter((event) => event.terminal).map((event) => event.type),
+      ['timeout'],
+    );
+    assert.ok(lifecycle.some((event) => event.type === 'progress'));
+
+    chat.command({ type: 'retry', scope: 'review' });
+    provider.calls[1].resolve(answer());
+    await flush();
+    assert.equal(thread(chat.getState(), 'review').status, 'ready');
+  } finally {
+    chat.close();
+    await rm(fixture.directory, { recursive: true, force: true });
+  }
+});
+
+test('times out compaction into the existing retryable blocked state', async () => {
+  const fixture = await createFixture();
+  const provider = controlledProvider();
+  const chat = createReviewChat({
+    snapshotPath: fixture.snapshotPath,
+    provider,
+    inputLimitBytes: 820,
+    runTimeoutMs: 30,
+  });
+
+  try {
+    chat.command({ type: 'new', scope: 'review' });
+    await seedCompactionHistory(chat, provider);
+    chat.command({ type: 'ask', scope: 'review', question: 'Question 5' });
+    assert.equal(provider.calls.at(-1).input.kind, 'compact');
+    const blocked = await waitFor(
+      () => thread(chat.getState(), 'review'),
+      (value) => value.status === 'blocked',
+    );
+    assert.equal(provider.calls.at(-1).cancelled, true);
+    assert.equal(blocked.pendingQuestion, 'Question 5');
+    assert.equal(blocked.canRetryCompaction, true);
+    assert.match(blocked.error, /timed out/i);
+  } finally {
+    chat.close();
+    await rm(fixture.directory, { recursive: true, force: true });
+  }
+});
+
+test('timeout reaps a built-in provider child that ignores SIGTERM', async () => {
+  const fixture = await createFixture();
+  const binary = join(fixture.directory, 'codex');
+  const pidPath = join(fixture.directory, 'provider.pid');
+  await writeFile(binary, [
+    '#!/usr/bin/env node',
+    `require('node:fs').writeFileSync(${JSON.stringify(pidPath)}, String(process.pid));`,
+    "process.on('SIGTERM', () => {});",
+    'setInterval(() => {}, 1_000);',
+    '',
+  ].join('\n'));
+  await chmod(binary, 0o755);
+  const provider = createCodingAgentChatProvider({ agent: 'codex', binary });
+  const chat = createReviewChat({
+    snapshotPath: fixture.snapshotPath,
+    provider,
+    runTimeoutMs: 500,
+  });
+
+  try {
+    chat.command({ type: 'new', scope: 'review' });
+    chat.command({ type: 'ask', scope: 'review', question: 'Please wait.' });
+    const pid = await waitForFileNumber(pidPath);
+    await waitFor(
+      () => thread(chat.getState(), 'review'),
+      (value) => value.status === 'failed',
+    );
+    await waitFor(
+      () => {
+        try {
+          process.kill(pid, 0);
+          return true;
+        } catch {
+          return false;
+        }
+      },
+      (running) => !running,
+    );
   } finally {
     chat.close();
     await rm(fixture.directory, { recursive: true, force: true });

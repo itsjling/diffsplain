@@ -77,6 +77,32 @@ function waitForText(stream, pattern) {
   });
 }
 
+async function readUntil(reader, pattern) {
+  const decoder = new TextDecoder();
+  let output = '';
+  while (!pattern.test(output)) {
+    const next = await new Promise((resolve, reject) => {
+      const timer = setTimeout(
+        () => reject(new Error(`Did not find ${pattern}: ${output}`)),
+        12_000,
+      );
+      reader.read().then(
+        (value) => {
+          clearTimeout(timer);
+          resolve(value);
+        },
+        (error) => {
+          clearTimeout(timer);
+          reject(error);
+        },
+      );
+    });
+    if (next.done) throw new Error(`Stream ended before ${pattern}: ${output}`);
+    output += decoder.decode(next.value, { stream: true });
+  }
+  return output;
+}
+
 async function waitFor(read, timeout = 8_000) {
   const deadline = Date.now() + timeout;
   let lastError;
@@ -389,7 +415,7 @@ test('reuses a matching project tab when it reconnects', async () => {
     );
     const response = await fetch(eventsUrl);
     reader = response.body.getReader();
-    const initialEvents = new TextDecoder().decode((await reader.read()).value);
+    const initialEvents = await readUntil(reader, /event: access/);
     assert.match(initialEvents, /event: access/);
     assert.match(initialEvents, new RegExp(secondSession.get('access')));
     await reused;

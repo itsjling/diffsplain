@@ -11,6 +11,7 @@ import {
   createCodingAgentChatProvider,
   createReviewChat,
 } from './review-chat.mjs';
+import { publicError } from './review-chat-context.mjs';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const clientRoot = resolve(root, 'dist');
@@ -366,6 +367,38 @@ function broadcastEvent(name, data = {}) {
   }
 }
 
+function lifecycleKind(kind) {
+  return kind === 'compact' ? 'history compaction' : 'answer';
+}
+
+function lifecycleStatus(type) {
+  return {
+    start: 'started',
+    progress: 'still running',
+    complete: 'completed',
+    failure: 'failed',
+    timeout: 'timed out',
+    cancel: 'cancelled',
+  }[type] || type;
+}
+
+function elapsedText(milliseconds) {
+  if (milliseconds < 1_000) return `${milliseconds}ms`;
+  return `${Math.round(milliseconds / 1_000)}s`;
+}
+
+function logChatLifecycle(event) {
+  const elapsed = event.type === 'start' ? '' : ` (${elapsedText(event.elapsedMs)})`;
+  const error = event.error ? `: ${event.error}` : '';
+  console.log(
+    `Diffsplain chat #${event.runId}: ${lifecycleKind(event.kind)} ${lifecycleStatus(event.type)}${elapsed}${error}`,
+  );
+}
+
+function logObservedError(area, error) {
+  console.log(`Diffsplain ${area.replaceAll('-', ' ')} error: ${publicError(error)}`);
+}
+
 const chatProviderAccess = chatAccessMode === 'checkout-read-only'
   ? { mode: chatAccessMode, root: resolve(chatAccessRoot) }
   : { mode: chatAccessMode, reason: 'target-mismatch' };
@@ -383,6 +416,7 @@ const reviewChat = createReviewChat({
   provider: chatProvider,
   accessMode: chatProviderAccess,
   onChange: () => broadcastEvent('chat'),
+  onLifecycle: logChatLifecycle,
 });
 
 function requestAuthorityError(request) {
@@ -473,6 +507,7 @@ async function sendChatCommand(request, response) {
     const status = result.accepted ? 202 : 200;
     await send(response, jsonResponse(result.state, status));
   } catch (error) {
+    logObservedError('chat-command', error);
     const failure = chatCommandError(error);
     await send(response, jsonResponse({ error: failure.message }, failure.status));
   }
@@ -565,9 +600,10 @@ async function containHandlerFailure(response) {
 }
 
 const server = createServer((request, response) => {
-  void handleRequest(request, response).catch(() =>
-    containHandlerFailure(response),
-  );
+  void handleRequest(request, response).catch((error) => {
+    logObservedError('request-handler', error);
+    return containHandlerFailure(response);
+  });
 });
 
 watchFile(output, { interval: 100 }, (current, previous) => {
