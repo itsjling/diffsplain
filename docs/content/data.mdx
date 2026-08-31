@@ -111,6 +111,10 @@ but automatic input omits their path, metadata, patch, snippet, and old note.
 Its completed snapshot records the plan in `notes.accessMode`:
 `checkout-read-only` or `snapshot-only`.
 
+The snapshot records the current Fast mode request in `notes.fast`. This is
+run metadata, not note cache identity, so unchanged notes can be reused when
+Fast mode is enabled or disabled.
+
 `--exclude PATTERN` sets that prepared context. It does not remove a local
 file or patch, change checkout access, or provide a privacy boundary. See the
 [CLI guide](/cli/#exclude-files-from-agent-context) for ordered rules and

@@ -533,6 +533,21 @@ test('passes agent model, reasoning, and batch settings through', () => {
   assert.equal(parsed.model, 'gpt-test');
 });
 
+test('passes Fast mode only to agent notes and exposes it to Review chat', () => {
+  const parsed = parseCliArgs(['--agent', 'codex', '--fast'], {
+    callerDirectory: cwd,
+    pathExists: missing,
+  });
+
+  assert.equal(parsed.fast, true);
+  assert.ok(parsed.agentArgs.includes('--fast'));
+  assert.ok(!parsed.feedArgs.includes('--fast'));
+  assert.equal(parseCliArgs([], {
+    callerDirectory: cwd,
+    pathExists: missing,
+  }).fast, false);
+});
+
 test('forces note regeneration only in the agent process', () => {
   const parsed = parseCliArgs(['--force'], {
     callerDirectory: cwd,
@@ -600,6 +615,16 @@ test('rejects conflicting or agent-free support record options', () => {
         pathExists: missing,
       }),
     /--no-agent.*support record/i,
+  );
+});
+
+test('rejects Fast mode without an agent', () => {
+  assert.throws(
+    () => parseCliArgs(['--fast', '--no-agent'], {
+      callerDirectory: cwd,
+      pathExists: missing,
+    }),
+    /--fast and --no-agent cannot be used together/i,
   );
 });
 

@@ -99,6 +99,7 @@ function providerOptions(options) {
     binary: providerBinary(options, agent),
     model: options.model,
     reasoning: options.reasoning,
+    fast: options.fast === true,
     accessMode: options.accessMode,
     env: providerEnvironment(options),
   };
@@ -124,6 +125,7 @@ function providerInvocation(options, request, paths) {
     binary: options.binary,
     model: options.model,
     reasoning: options.reasoning,
+    fast: options.fast,
     prompt: request.prompt,
     schema: request.responseSchema,
     schemaPath: paths.schemaPath,

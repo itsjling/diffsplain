@@ -7,12 +7,15 @@ import test from 'node:test';
 import {
   agentCommand,
   agentReadOnlyWarning,
+  agentSupportsFast,
   agentSupportsReasoning,
+  assertFastCompatible,
   codingAgentAvailability,
   codingAgentCapabilities,
   codingAgentBinary,
   findCommand,
   inspectCursorCompatibility,
+  inspectFastCompatibility,
   parseAgentResponse,
   parseCursorStreamResponse,
   selectCodingAgent,
@@ -41,6 +44,61 @@ test('declares reasoning support for each coding agent', () => {
     Object.values(codingAgentCapabilities).every(
       (capability) => capability.model,
     ),
+  );
+});
+
+test('declares Fast mode support only for Codex and Claude', () => {
+  assert.deepEqual(
+    Object.fromEntries(
+      Object.keys(codingAgentCapabilities).map((agent) => [
+        agent,
+        agentSupportsFast(agent),
+      ]),
+    ),
+    {
+      codex: true,
+      claude: true,
+      copilot: false,
+      cursor: false,
+      opencode: false,
+    },
+  );
+});
+
+test('checks provider versions before enabling Fast mode', () => {
+  const runVersion = (version) => () => ({
+    status: 0,
+    stdout: `${version}\n`,
+    stderr: '',
+  });
+
+  assert.equal(
+    inspectFastCompatibility('codex', '/codex', {
+      run: runVersion('codex-cli 0.108.0'),
+    }).compatible,
+    true,
+  );
+  assert.match(
+    inspectFastCompatibility('codex', '/codex', {
+      run: runVersion('codex-cli 0.107.0'),
+    }).reason,
+    /Codex CLI 0\.108\.0 or newer.*found codex-cli 0\.107\.0/i,
+  );
+  assert.equal(
+    inspectFastCompatibility('claude', '/claude', {
+      run: runVersion('2.1.36 (Claude Code)'),
+    }).compatible,
+    true,
+  );
+  assert.match(
+    inspectFastCompatibility('claude', '/claude', {
+      run: runVersion('2.1.35 (Claude Code)'),
+    }).reason,
+    /Claude Code 2\.1\.36 or newer.*found 2\.1\.35/i,
+  );
+  assert.throws(
+    () => assertFastCompatible('copilot', '/copilot', true),
+    /--fast is supported only by codex and claude.*copilot/i,
   );
 });
 
@@ -524,6 +582,38 @@ test('builds checkout-read-only provider plans with the real repo and normal env
       assert.ok(!plan.args.includes(flag), `${plan.command} includes ${flag}`);
     }
   }
+});
+
+test('adds native Fast mode settings to supported provider calls', () => {
+  const common = {
+    binary: '/agent',
+    prompt: 'Write JSON.',
+    schema: { type: 'object' },
+    schemaPath: '/tmp/schema.json',
+    inputPath: '/tmp/input.json',
+    accessMode: { mode: 'checkout-read-only', root: '/work/repo' },
+    fast: true,
+  };
+  const codex = agentCommand({ ...common, agent: 'codex' });
+  const claude = agentCommand({ ...common, agent: 'claude' });
+
+  assert.deepEqual(
+    codex.args.filter((argument, index) =>
+      argument === '--config' || codex.args[index - 1] === '--config'),
+    [
+      '--config',
+      'service_tier="fast"',
+      '--config',
+      'features.fast_mode=true',
+    ],
+  );
+  assert.deepEqual(
+    claude.args.slice(
+      claude.args.indexOf('--settings'),
+      claude.args.indexOf('--settings') + 2,
+    ),
+    ['--settings', '{"fastMode":true}'],
+  );
 });
 
 test('keeps snapshot-only provider plans in the temporary input directory', () => {
