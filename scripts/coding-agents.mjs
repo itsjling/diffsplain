@@ -264,30 +264,36 @@ function nonInteractiveSelectionError() {
   );
 }
 
+function unsupportedSelectionError(requested, configured) {
+  if (configured) {
+    return new Error(
+      `Configured coding agent "${requested}" is unsupported. Choose ${enabledCodingAgents.join(', ')} with diffsplain config agent NAME, or use --agent NAME for this run.`,
+    );
+  }
+  return new Error(
+    `Unsupported agent "${requested}". Choose ${enabledCodingAgents.join(', ')}.`,
+  );
+}
+
+function unavailableSelectionError(requested, result, configured) {
+  if (!configured) return unavailableAgentError(requested, result);
+  const reason = typeof result === 'object' ? result.reason : undefined;
+  return new Error(
+    `Configured coding agent "${requested}" is not available.${reason ? ` ${reason}` : ''} Change it with diffsplain config agent NAME, or use --agent NAME for this run.`,
+  );
+}
+
 async function selectRequestedCodingAgent(
   requested,
   available,
   { configured = false } = {},
 ) {
   if (!codingAgents.includes(requested)) {
-    if (configured) {
-      throw new Error(
-        `Configured coding agent "${requested}" is unsupported. Choose ${enabledCodingAgents.join(', ')} with diffsplain config agent NAME, or use --agent NAME for this run.`,
-      );
-    }
-    throw new Error(
-      `Unsupported agent "${requested}". Choose ${enabledCodingAgents.join(', ')}.`,
-    );
+    throw unsupportedSelectionError(requested, configured);
   }
   const result = await available(requested);
   if (!availableResult(result)) {
-    if (configured) {
-      const reason = typeof result === 'object' ? result.reason : undefined;
-      throw new Error(
-        `Configured coding agent "${requested}" is not available.${reason ? ` ${reason}` : ''} Change it with diffsplain config agent NAME, or use --agent NAME for this run.`,
-      );
-    }
-    throw unavailableAgentError(requested, result);
+    throw unavailableSelectionError(requested, result, configured);
   }
   return requested;
 }
