@@ -282,7 +282,10 @@ if (agentEnabled) {
     }
   } catch (error) {
     recordSelectedProvider(
-      codingAgentFromSelectionError(error) || cli.agent || 'unknown',
+      codingAgentFromSelectionError(error) ||
+        selectedAgent ||
+        cli.agent ||
+        'unknown',
     );
     supportRecorder?.addStage(
       'agent',

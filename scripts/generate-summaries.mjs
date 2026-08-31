@@ -1216,7 +1216,10 @@ async function selectAgentForNotes() {
     );
   } catch (error) {
     supportRecorder?.setProvider(
-      codingAgentFromSelectionError(error) || requestedAgent || 'unknown',
+      codingAgentFromSelectionError(error) ||
+        selectedAgent ||
+        requestedAgent ||
+        'unknown',
     );
     if (error instanceof Error) error.exitCode = 2;
     throw error;

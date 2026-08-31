@@ -224,6 +224,55 @@ test('prints the configured agent when provider selection fails', async () => {
   }
 });
 
+test('keeps the configured agent when reasoning validation fails', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'diffsplain-present-reasoning-'));
+  const repo = join(root, 'not-a-repo');
+  const configRoot = join(root, 'config');
+  const claudeBin = join(root, 'claude');
+
+  try {
+    await mkdir(repo);
+    await mkdir(join(configRoot, 'diffsplain'), { recursive: true });
+    await writeFile(
+      join(configRoot, 'diffsplain', 'config.json'),
+      JSON.stringify({ agent: 'claude' }),
+    );
+    await writeFile(claudeBin, '#!/bin/sh\nexit 0\n');
+    await chmod(claudeBin, 0o755);
+    const result = spawnSync(
+      process.execPath,
+      [
+        script,
+        '--repo',
+        repo,
+        '--reasoning',
+        'high',
+        '--support-record',
+      ],
+      {
+        cwd: root,
+        encoding: 'utf8',
+        env: {
+          ...process.env,
+          CLAUDE_BIN: claudeBin,
+          XDG_CONFIG_HOME: configRoot,
+        },
+      },
+    );
+
+    assert.equal(result.status, 1, result.stderr);
+    assert.match(result.stderr, /reasoning is supported only/i);
+    const record = parseLastSupportRecord(result.stderr);
+    assert.deepEqual(record.provider, {
+      name: 'claude',
+      version: null,
+    });
+    assert.equal(record.stages.agent.state, 'failed');
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test('rejects a missing base before agent selection or page setup', async () => {
   const root = await mkdtemp(join(tmpdir(), 'diffsplain-present-missing-base-'));
   const repo = join(root, 'repo');
