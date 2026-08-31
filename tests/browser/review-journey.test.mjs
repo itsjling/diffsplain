@@ -112,6 +112,17 @@ function fixture(version = "one") {
   return snapshot(version, files);
 }
 
+function livePatchFixture(version) {
+  const value = fixture(version);
+  value.files[1] = textFile(
+    "src/long-list.ts",
+    `Live patch ${version}`,
+    { truncated: true },
+  );
+  value.files[1].summary.title = `Live review ${version}`;
+  return value;
+}
+
 function excludedFixture(label, notes) {
   const value = fixture(`excluded-${label}`);
   const excluded = value.files[0];
@@ -660,13 +671,15 @@ test("keeps the newest live snapshot through late responses and faults", async (
     "ordered live refresh",
     { viewport: { width: 1280, height: 800 } },
     async (page) => {
-      await writeSnapshot(fixture("ordered-one"));
+      await writeSnapshot(livePatchFixture("ordered-one"));
       await page.goto(serverUrl);
       await page.getByRole("heading", { name: "Explain saved todos" }).waitFor();
       await selectFile(page, "long-list");
+      await page.getByRole("button", { name: "Read full diff" }).click();
       await page
         .getByRole("heading", { name: "Live review ordered-one" })
         .waitFor();
+      await page.getByText("Live patch ordered-one full patch").waitFor();
 
       const staleCaptured = deferred();
       const releaseStale = deferred();
@@ -687,12 +700,13 @@ test("keeps the newest live snapshot through late responses and faults", async (
       };
       await page.route("**/diff-data.json?*", delaySnapshot);
 
-      await writeSnapshot(fixture("ordered-stale"));
+      await writeSnapshot(livePatchFixture("ordered-stale"));
       await staleCaptured.promise;
-      await writeSnapshot(fixture("ordered-newest"));
+      await writeSnapshot(livePatchFixture("ordered-newest"));
       await page
         .getByRole("heading", { name: "Live review ordered-newest" })
         .waitFor();
+      await page.getByText("Live patch ordered-newest full patch").waitFor();
       releaseStale.resolve();
       await staleDelivered.promise;
       await page.unroute("**/diff-data.json?*", delaySnapshot);
@@ -701,6 +715,10 @@ test("keeps the newest live snapshot through late responses and faults", async (
       await page
         .getByRole("heading", { name: "Live review ordered-newest" })
         .waitFor();
+      await page.getByText("Live patch ordered-newest full patch").waitFor();
+      await page
+        .getByText("Live patch ordered-stale full patch")
+        .waitFor({ state: "hidden" });
       assert.equal(
         await page.locator(".current-path").textContent(),
         "src/long-list.ts",
@@ -716,14 +734,16 @@ test("keeps the newest live snapshot through late responses and faults", async (
           }),
         { times: 1 },
       );
-      await writeSnapshot(fixture("failed-refresh"));
+      await writeSnapshot(livePatchFixture("failed-refresh"));
       await page.getByText("Snapshot returned 503").waitFor();
       await page
         .getByRole("heading", { name: "Live review ordered-newest" })
         .waitFor();
+      await page.getByText("Live patch ordered-newest full patch").waitFor();
 
-      await writeSnapshot(fixture("recovered"));
+      await writeSnapshot(livePatchFixture("recovered"));
       await page.getByRole("heading", { name: "Live review recovered" }).waitFor();
+      await page.getByText("Live patch recovered full patch").waitFor();
       await page.getByText("Snapshot returned 503").waitFor({ state: "hidden" });
 
       await page.route(
@@ -736,14 +756,16 @@ test("keeps the newest live snapshot through late responses and faults", async (
           }),
         { times: 1 },
       );
-      await writeSnapshot(fixture("malformed-refresh"));
+      await writeSnapshot(livePatchFixture("malformed-refresh"));
       await page.getByText("Snapshot data is malformed").waitFor();
       await page.getByRole("heading", { name: "Live review recovered" }).waitFor();
+      await page.getByText("Live patch recovered full patch").waitFor();
 
-      await writeSnapshot(fixture("after-malformed"));
+      await writeSnapshot(livePatchFixture("after-malformed"));
       await page
         .getByRole("heading", { name: "Live review after-malformed" })
         .waitFor();
+      await page.getByText("Live patch after-malformed full patch").waitFor();
 
       await page.route(
         "**/diff-data.json?*",
@@ -755,16 +777,18 @@ test("keeps the newest live snapshot through late responses and faults", async (
           }),
         { times: 1 },
       );
-      await writeSnapshot(fixture("missing-refresh"));
+      await writeSnapshot(livePatchFixture("missing-refresh"));
       await page.getByText("Live snapshot is missing").waitFor();
       await page
         .getByRole("heading", { name: "Live review after-malformed" })
         .waitFor();
+      await page.getByText("Live patch after-malformed full patch").waitFor();
 
-      await writeSnapshot(fixture("after-missing"));
+      await writeSnapshot(livePatchFixture("after-missing"));
       await page
         .getByRole("heading", { name: "Live review after-missing" })
         .waitFor();
+      await page.getByText("Live patch after-missing full patch").waitFor();
       await page.getByText("Live snapshot is missing").waitFor({ state: "hidden" });
 
       const duplicate = page.waitForResponse(
@@ -772,7 +796,7 @@ test("keeps the newest live snapshot through late responses and faults", async (
           new URL(response.url()).pathname === "/diff-data.json" &&
           response.ok(),
       );
-      await writeSnapshot(fixture("after-missing"));
+      await writeSnapshot(livePatchFixture("after-missing"));
       await duplicate;
       assert.equal(
         await page

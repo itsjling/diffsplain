@@ -342,6 +342,7 @@ function DiffLines({ patch }: { patch: string }) {
       aria-label="Unified code diff"
     >
       <PatchDiff
+        key={renderablePatch}
         patch={renderablePatch}
         options={DIFF_OPTIONS}
         className="diff-renderer"
