@@ -190,7 +190,12 @@ function ThreadState({
   return (
     <section className={`chat-thread-state chat-thread-state--${thread.status}`} role="status">
       <div>
-        <h3>{statusTitle(thread.status)}</h3>
+        <h3>
+          {statusTitle(thread.status)}
+          {chatIsRunning(thread) ? (
+            <span aria-hidden="true" className="chat-status-pulse" />
+          ) : null}
+        </h3>
         {thread.error ? <p>{thread.error}</p> : null}
         {thread.pendingQuestion && !chatIsRunning(thread) ? (
           <p className="chat-pending-question">Pending: {thread.pendingQuestion}</p>

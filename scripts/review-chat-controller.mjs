@@ -1,4 +1,5 @@
 import { readFileSync } from 'node:fs';
+import { performance } from 'node:perf_hooks';
 import {
   ReviewChatError,
   chatInputLimit,
@@ -21,6 +22,33 @@ import {
 
 const noChange = () => {};
 const snapshotOnly = { mode: 'snapshot-only' };
+const defaultRunTimeoutMs = 120_000;
+const maximumProgressIntervalMs = 30_000;
+
+function runTimeout(options) {
+  const timeoutMs = options.runTimeoutMs ?? defaultRunTimeoutMs;
+  if (!Number.isSafeInteger(timeoutMs) || timeoutMs <= 0) {
+    throw new Error('Review chat run timeout must be a positive integer');
+  }
+  return timeoutMs;
+}
+
+function progressInterval(timeoutMs) {
+  return Math.min(maximumProgressIntervalMs, Math.max(10, Math.floor(timeoutMs / 2)));
+}
+
+function timeoutError(timeoutMs) {
+  const duration = timeoutMs >= 1_000
+    ? `${Math.round(timeoutMs / 1_000)} seconds`
+    : `${timeoutMs}ms`;
+  return new Error(`The chat provider timed out after ${duration}.`);
+}
+
+function lifecycleError(error) {
+  return typeof error?.lifecycleMessage === 'string'
+    ? error.lifecycleMessage
+    : publicError(error);
+}
 function snapshotRead(path) {
   try {
     return { value: JSON.parse(readFileSync(path, 'utf8')) };
@@ -133,6 +161,10 @@ export class ReviewChatController {
     this.snapshotPath = chatSnapshotPath(options);
     this.provider = options.provider;
     this.onChange = typeof options.onChange === 'function' ? options.onChange : noChange;
+    this.onLifecycle = typeof options.onLifecycle === 'function'
+      ? options.onLifecycle
+      : noChange;
+    this.runTimeoutMs = runTimeout(options);
     this.inputLimitBytes = chatInputLimit(options);
     this.accessMode = options.accessMode || snapshotOnly;
     this.threads = new Map();
@@ -237,6 +269,53 @@ export class ReviewChatController {
     thread.activeRunId = undefined;
   }
 
+  elapsed(run) {
+    return Math.max(0, Math.round(performance.now() - run.startedAt));
+  }
+
+  emitLifecycleSafely(type, run, details = {}) {
+    try {
+      this.onLifecycle({
+        type,
+        kind: run.kind,
+        runId: run.id,
+        elapsedMs: this.elapsed(run),
+        terminal: details.terminal === true,
+        ...(details.error ? { error: lifecycleError(details.error) } : {}),
+      });
+    } catch {}
+  }
+
+  clearSupervision(run) {
+    if (run.timeoutTimer) clearTimeout(run.timeoutTimer);
+    if (run.progressTimer) clearInterval(run.progressTimer);
+    run.timeoutTimer = undefined;
+    run.progressTimer = undefined;
+  }
+
+  finishLifecycle(run, type, error) {
+    if (run.lifecycle !== 'active') return false;
+    run.lifecycle = type;
+    this.clearSupervision(run);
+    this.emitLifecycleSafely(type, run, { terminal: true, error });
+    return true;
+  }
+
+  supervise(thread, run) {
+    run.lifecycle = 'active';
+    run.startedAt = performance.now();
+    this.emitLifecycleSafely('start', run);
+    run.progressTimer = setInterval(() => {
+      if (run.lifecycle === 'active') this.emitLifecycleSafely('progress', run);
+    }, progressInterval(this.runTimeoutMs));
+    run.progressTimer.unref?.();
+    run.timeoutTimer = setTimeout(
+      () => this.timeoutRun(thread, run),
+      this.runTimeoutMs,
+    );
+    run.timeoutTimer.unref?.();
+  }
+
   markFailure(thread, run, error) {
     this.clearRun(thread);
     thread.error = publicError(error);
@@ -244,7 +323,9 @@ export class ReviewChatController {
   }
 
   markUnavailableRun(thread, run) {
-    this.markFailure(thread, run, new Error('The current review snapshot is not available.'));
+    const error = new Error('The current review snapshot is not available.');
+    if (!this.finishLifecycle(run, 'failure', error)) return;
+    this.markFailure(thread, run, error);
     this.refresh({ notify: false });
     this.notify();
   }
@@ -266,6 +347,7 @@ export class ReviewChatController {
 
   finishFailure(thread, run, error) {
     if (this.fenceChangedReview(thread, run)) return;
+    if (!this.finishLifecycle(run, 'failure', error)) return;
     this.markFailure(thread, run, error);
     this.notify();
   }
@@ -282,14 +364,6 @@ export class ReviewChatController {
 
   completeCompaction(thread, run, answer) {
     const messages = [{ role: 'compacted', answer }, ...run.preserved];
-    if (inputBytes(messages, thread.pendingQuestion) > this.inputLimitBytes) {
-      this.finishFailure(
-        thread,
-        run,
-        new Error('The compacted chat history still exceeds the input limit.'),
-      );
-      return;
-    }
     this.clearRun(thread);
     thread.messages = messages;
     thread.needsCompaction = false;
@@ -309,6 +383,21 @@ export class ReviewChatController {
       this.finishFailure(thread, run, result.error);
       return;
     }
+    if (
+      run.kind === 'compact' &&
+      inputBytes(
+        [{ role: 'compacted', answer: result.answer }, ...run.preserved],
+        thread.pendingQuestion,
+      ) > this.inputLimitBytes
+    ) {
+      this.finishFailure(
+        thread,
+        run,
+        new Error('The compacted chat history still exceeds the input limit.'),
+      );
+      return;
+    }
+    if (!this.finishLifecycle(run, 'complete')) return;
     this.completeRun(thread, run, result.answer);
   }
 
@@ -323,6 +412,7 @@ export class ReviewChatController {
     thread.status = run.kind === 'compact' ? 'compacting' : 'running';
     thread.error = undefined;
     this.notify();
+    this.supervise(thread, run);
     const result = executionResult(this.provider, input);
     if (result.error) {
       this.finishFailure(thread, run, result.error);
@@ -401,9 +491,21 @@ export class ReviewChatController {
     }
   }
 
+  timeoutRun(thread, run) {
+    if (!this.currentRun(thread, run)) return;
+    const error = timeoutError(this.runTimeoutMs);
+    if (!this.finishLifecycle(run, 'timeout', error)) return;
+    this.clearRun(thread);
+    this.cancelProvider(run);
+    thread.error = publicError(error);
+    Object.assign(thread, runState(run));
+    this.notify();
+  }
+
   cancelRun(thread, { stale = false } = {}) {
     const run = thread.run;
     if (!run) return false;
+    if (!this.finishLifecycle(run, 'cancel')) return false;
     this.clearRun(thread);
     this.cancelProvider(run);
     if (!stale) Object.assign(thread, cancelledState(run));

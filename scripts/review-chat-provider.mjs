@@ -44,7 +44,9 @@ function childOutput(chunks) {
 function childFailure(agent, status, signal, stdout, stderr) {
   const detail = stderr.trim() || stdout.trim();
   const suffix = detail ? `: ${detail.slice(-600)}` : '';
-  return new Error(`${agent} exited with status ${status ?? signal}${suffix}`);
+  const error = new Error(`${agent} exited with status ${status ?? signal}${suffix}`);
+  error.lifecycleMessage = `${agent} exited with status ${status ?? signal}`;
+  return error;
 }
 
 function aborted(signal) {

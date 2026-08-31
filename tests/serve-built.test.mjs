@@ -123,6 +123,17 @@ function waitForText(stream, pattern) {
   });
 }
 
+async function readUntil(reader, pattern) {
+  const decoder = new TextDecoder();
+  let output = '';
+  while (!pattern.test(output)) {
+    const next = await within(reader.read(), `Did not find ${pattern}: ${output}`);
+    if (next.done) throw new Error(`Stream ended before ${pattern}: ${output}`);
+    output += decoder.decode(next.value, { stream: true });
+  }
+  return output;
+}
+
 function reviewUrl(ready, path) {
   const url = new URL(path, ready.url);
   url.searchParams.set('access', ready.access);
@@ -430,7 +441,7 @@ test('hands a prior protected tab the current access value', async () => {
     assert.equal(response.status, 200);
     assert.equal(deniedData.status, 403);
     reader = response.body.getReader();
-    const initialEvents = new TextDecoder().decode((await reader.read()).value);
+    const initialEvents = await readUntil(reader, /event: access/);
     assert.match(initialEvents, /event: access/);
     assert.match(initialEvents, new RegExp(access));
   } finally {
@@ -473,7 +484,49 @@ test('starts complete chat answers asynchronously with the selected provider', a
     await writeProviderFixture(output, provider, calls, argumentsLog);
     child = start(selectedProviderArgs(output, provider));
     const ready = await waitForReady(child);
+    const lifecycle = waitForText(child.stdout, /answer completed/);
     await exerciseSelectedProvider(ready, calls, argumentsLog);
+    const outputText = await lifecycle;
+    assert.match(outputText, /Diffsplain chat #\d+: answer started/);
+    assert.doesNotMatch(outputText, /Why\?|And then\?|changed\.txt|Complete answer/);
+  } finally {
+    if (child && child.exitCode === null) await stop(child);
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test('reports provider failures to chat state and redacted stdout lifecycle logs', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'diffsplain-chat-error-'));
+  const output = join(directory, 'diff-data.json');
+  const provider = join(directory, 'codex');
+  let child;
+
+  try {
+    await writeFile(output, JSON.stringify(providerSnapshot()));
+    await writeFile(provider, [
+      '#!/bin/sh',
+      "printf '%s' 'raw-provider-diagnostic' >&2",
+      'exit 7',
+      '',
+    ].join('\n'));
+    await chmod(provider, 0o755);
+    child = start(selectedProviderArgs(output, provider));
+    const ready = await waitForReady(child);
+    const lifecycle = waitForText(child.stdout, /answer failed/);
+    const endpoint = reviewUrl(ready, 'api/chat');
+    await chatCommand(endpoint, { type: 'new', scope: 'review' });
+    await askProviderChat(endpoint, 'private-question');
+    const failed = await waitForChat(
+      ready,
+      (state) => state.threads[0]?.status === 'failed',
+    );
+    assert.match(failed.threads[0].error, /raw-provider-diagnostic/);
+    const outputText = await lifecycle;
+    assert.match(outputText, /codex exited with status 7/);
+    assert.doesNotMatch(
+      outputText,
+      /private-question|changed\.txt|raw-provider-diagnostic|responseSchema/,
+    );
   } finally {
     if (child && child.exitCode === null) await stop(child);
     await rm(directory, { recursive: true, force: true });
@@ -625,12 +678,14 @@ test('contains handler failures and keeps the review server available', async ()
       DIFFSPLAIN_TEST_HANDLER_FAILURE: '1',
     });
     const ready = await waitForReady(child);
+    const logged = waitForText(child.stdout, /Diffsplain request handler error/);
     const failed = await rawRequest(ready, { path: '/__test/fail' });
     assert.equal(failed.status, 500);
     assert.equal(failed.body, 'Internal server error');
     assert.doesNotMatch(failed.body, /forced|handler/i);
     assert.equal((await fetch(ready.url)).status, 200);
     assert.equal(child.exitCode, null);
+    assert.match(await logged, /forced request handler failure/);
   } finally {
     if (child && child.exitCode === null) await stop(child);
     await rm(directory, { recursive: true, force: true });

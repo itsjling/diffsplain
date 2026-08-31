@@ -191,6 +191,7 @@ test("keeps chat threads, markdown, recovery, and review controls inside the sum
       const commands = [];
       const requestedAccesses = [];
       let allowChatFetch = false;
+      let failNextAskAfterAccept = false;
       let nextThread = 1;
       let state = chatState();
 
@@ -279,6 +280,15 @@ test("keeps chat threads, markdown, recovery, and review controls inside the sum
           current.canRetryCompaction = false;
         }
 
+        if (command.type === "ask" && failNextAskAfterAccept) {
+          failNextAskAfterAccept = false;
+          await route.fulfill({
+            json: { error: "The command response was lost." },
+            status: 504,
+          });
+          return;
+        }
+
         await route.fulfill({
           json: state,
           status: command.type === "ask" ? 202 : 200,
@@ -321,6 +331,14 @@ test("keeps chat threads, markdown, recovery, and review controls inside the sum
       assert.equal(await page.getByRole("dialog", { name: "Choose a changed file" }).count(), 0);
       await fileQuestion.press("Control+Enter");
       await page.getByRole("heading", { name: "Writing an answer" }).waitFor();
+      const pulse = page.locator(".chat-status-pulse");
+      assert.equal(await pulse.getAttribute("aria-hidden"), "true");
+      await page.emulateMedia({ reducedMotion: "reduce" });
+      assert.equal(
+        await pulse.evaluate((element) => getComputedStyle(element).animationName),
+        "none",
+      );
+      await page.emulateMedia({ reducedMotion: "no-preference" });
       assert.deepEqual(commands.slice(0, 2), [
         { type: "new", scope: "file", path: "src/new-name.ts" },
         {
@@ -353,9 +371,7 @@ test("keeps chat threads, markdown, recovery, and review controls inside the sum
       await emitChat(page);
 
       await emitReviewChatEvent(page, "error");
-      await page
-        .getByRole("heading", { name: "Chat opens in a live review." })
-        .waitFor();
+      await page.getByRole("heading", { name: "Writing an answer" }).waitFor();
       const fileThread = state.threads.find((threadValue) => threadValue.current);
       fileThread.status = "ready";
       fileThread.pendingQuestion = undefined;
@@ -387,7 +403,6 @@ test("keeps chat threads, markdown, recovery, and review controls inside the sum
         },
       });
       await emitReviewChatEvent(page, "ready");
-      await emitReviewChatEvent(page, "access", access);
       await page.getByRole("heading", { name: "Finding" }).waitFor();
       await page
         .getByRole("heading", { name: "Writing an answer" })
@@ -420,8 +435,10 @@ test("keeps chat threads, markdown, recovery, and review controls inside the sum
       await page.getByRole("button", { name: "Review" }).click();
       const reviewQuestion = page.getByRole("textbox", { name: "Ask about this review" });
       await reviewQuestion.fill("How do the changes fit together?");
+      failNextAskAfterAccept = true;
       await reviewQuestion.press("Control+Enter");
       await page.getByRole("heading", { name: "Writing an answer" }).waitFor();
+      await page.getByRole("heading", { name: "Chat could not update." }).waitFor();
       assert.deepEqual(commands.slice(-2), [
         { type: "new", scope: "review" },
         {
@@ -444,8 +461,16 @@ test("keeps chat threads, markdown, recovery, and review controls inside the sum
           }),
         ],
       });
-      await emitChat(page);
       await page.getByRole("heading", { name: "The answer failed" }).waitFor();
+      await page.getByText("The provider stopped.").waitFor();
+      assert.equal(
+        commands.filter(
+          (command) =>
+            command.type === "ask" &&
+            command.question === "How do the changes fit together?",
+        ).length,
+        1,
+      );
       await page.getByRole("button", { name: "Retry" }).click();
       await page.getByRole("heading", { name: "Writing an answer" }).waitFor();
       assert.deepEqual(commands.at(-1), { type: "retry", scope: "review" });
@@ -636,7 +661,8 @@ test("keeps chat threads, markdown, recovery, and review controls inside the sum
     },
     {
       ignoredConsoleError: (message) =>
-        message.includes("503 (Service Unavailable)"),
+        message.includes("503 (Service Unavailable)") ||
+        message.includes("504 (Gateway Timeout)"),
       serverLog: () => server.log(),
     },
   );
@@ -775,13 +801,9 @@ test("waits for the current access handoff before it loads protected chat", asyn
       ]);
       assert.ok(requestedAccesses.every((value) => value === currentAccess));
 
-      const requestsBeforeReady = requestedAccesses.length;
-      await emitReviewChatEvent(page, "ready");
-      await page
-        .getByRole("heading", { name: "Chat opens in a live review." })
-        .waitFor();
+      await emitReviewChatEvent(page, "error");
       await page.waitForTimeout(100);
-      assert.equal(requestedAccesses.length, requestsBeforeReady);
+      await page.getByRole("heading", { name: "Writing an answer" }).waitFor();
 
       const restoredChat = page.waitForResponse(
         (response) =>
@@ -789,7 +811,7 @@ test("waits for the current access handoff before it loads protected chat", asyn
           response.request().method() === "GET" &&
           new URL(response.url()).searchParams.get("access") === currentAccess,
       );
-      await emitReviewChatEvent(page, "access", currentAccess);
+      await emitReviewChatEvent(page, "ready");
       await restoredChat;
       await page.getByRole("heading", { name: "Writing an answer" }).waitFor();
       assert.ok(requestedAccesses.every((value) => value === currentAccess));

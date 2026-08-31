@@ -289,7 +289,6 @@ export function useLiveSnapshot<T extends SnapshotShape>() {
         if (!active) return;
         stopPolling();
         setStreamError(null);
-        setConfirmedChatAccess(null);
         setChatRevision((revision) => revision + 1);
         requestRefresh();
       });
@@ -325,7 +324,6 @@ export function useLiveSnapshot<T extends SnapshotShape>() {
       });
       events.addEventListener("error", () => {
         if (!active) return;
-        setConfirmedChatAccess(null);
         setStreamError(
           "Live updates disconnected. Polling while the stream reconnects.",
         );
