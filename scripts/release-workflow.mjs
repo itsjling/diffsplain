@@ -608,13 +608,21 @@ export async function prepareReleaseWorkflow(versionInput, overrides = {}) {
   return plan;
 }
 
+function registryHasVersion(deps, version) {
+  try {
+    return deps.registryVersion(packageName, version) === version;
+  } catch {
+    return false;
+  }
+}
+
 async function verifyPublishedVersion(deps, version, attempt = 0) {
   const delays = [0, 1_000, 2_000, 4_000];
   if (attempt >= delays.length) {
     throw new Error(`npm did not return ${packageName}@${version} after publishing.`);
   }
   if (delays[attempt] > 0) await deps.wait(delays[attempt]);
-  if (deps.registryVersion(packageName, version) === version) return;
+  if (registryHasVersion(deps, version)) return;
   await verifyPublishedVersion(deps, version, attempt + 1);
 }
 
