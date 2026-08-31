@@ -328,6 +328,17 @@ function pickerRow(page, path) {
   return page.locator(".picker-row").filter({ hasText: path });
 }
 
+async function assertNoHorizontalOverflow(locator, label) {
+  const widths = await locator.evaluate((element) => ({
+    client: element.clientWidth,
+    scroll: element.scrollWidth,
+  }));
+  assert.ok(
+    widths.scroll <= widths.client,
+    `${label} width ${JSON.stringify(widths)}`,
+  );
+}
+
 async function assertPickerNoteState(page, path, state) {
   const row = pickerRow(page, path);
   await row
@@ -1069,25 +1080,13 @@ test("keeps the supported narrow layouts within the viewport", async () => {
           .getByRole("dialog", { name: "Choose a changed file" })
           .waitFor();
 
-        const widths = await page.evaluate(() => ({
-          body: document.body.scrollWidth,
-          dialog: document.querySelector(".picker-dialog")?.scrollWidth,
-          dialogClient: document.querySelector(".picker-dialog")?.clientWidth,
-          list: document.querySelector(".picker-list")?.scrollWidth,
-          listClient: document.querySelector(".picker-list")?.clientWidth,
-          root: document.documentElement.scrollWidth,
-          row: document.querySelector(".picker-row")?.scrollWidth,
-          rowClient: document.querySelector(".picker-row")?.clientWidth,
-          viewport: document.documentElement.clientWidth,
-        }));
-        assert.ok(
-          widths.root <= widths.viewport &&
-            widths.body <= widths.viewport &&
-            widths.dialog <= widths.dialogClient &&
-            widths.list <= widths.listClient &&
-            widths.row <= widths.rowClient,
-          `page width ${JSON.stringify(widths)}`,
-        );
+        await Promise.all([
+          assertNoHorizontalOverflow(page.locator("html"), "page"),
+          assertNoHorizontalOverflow(page.locator("body"), "body"),
+          assertNoHorizontalOverflow(page.locator(".picker-dialog"), "dialog"),
+          assertNoHorizontalOverflow(page.locator(".picker-list"), "list"),
+          assertNoHorizontalOverflow(page.locator(".picker-row").first(), "row"),
+        ]);
       },
     );
   }
