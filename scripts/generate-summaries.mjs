@@ -16,6 +16,7 @@ import {
   agentCommand,
   agentReadOnlyWarning,
   assertReasoningSupported,
+  codingAgentFromSelectionError,
   codingAgentAvailability,
   codingAgentBinary,
   parseAgentResponse,
@@ -1214,7 +1215,9 @@ async function selectAgentForNotes() {
       safeCommandVersion(selectedAgent, agentBinary),
     );
   } catch (error) {
-    supportRecorder?.setProvider(requestedAgent || 'unknown');
+    supportRecorder?.setProvider(
+      codingAgentFromSelectionError(error) || requestedAgent || 'unknown',
+    );
     if (error instanceof Error) error.exitCode = 2;
     throw error;
   }

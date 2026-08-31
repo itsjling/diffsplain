@@ -2449,6 +2449,50 @@ test("prints a support record when the requested agent is unavailable", async ()
   }
 });
 
+test("prints the configured agent in a failed support record", async () => {
+  const repo = await makeRepo();
+  const configBase = join(repo, "config-home");
+
+  try {
+    await mkdir(join(configBase, "diffsplain"), { recursive: true });
+    await writeFile(
+      join(configBase, "diffsplain", "config.json"),
+      JSON.stringify({ agent: "codex" }),
+    );
+    const result = spawnSync(
+      process.execPath,
+      [
+        script,
+        "--repo",
+        repo,
+        "--codex-bin",
+        join(repo, "missing-codex"),
+        "--support-record",
+      ],
+      {
+        encoding: "utf8",
+        env: { ...process.env, XDG_CONFIG_HOME: configBase },
+        input: "",
+      },
+    );
+
+    assert.equal(result.status, 2);
+    assert.match(result.stderr, /not available/i);
+    const marker = "Diffsplain support record:\n";
+    const markerIndex = result.stderr.lastIndexOf(marker);
+    assert.ok(markerIndex >= 0, result.stderr);
+    const record = JSON.parse(
+      result.stderr.slice(markerIndex + marker.length),
+    );
+    assert.deepEqual(record.provider, {
+      name: "codex",
+      version: null,
+    });
+  } finally {
+    await rm(repo, { recursive: true, force: true });
+  }
+});
+
 test("exports and prints redacted support records for a failed run", async () => {
   const repo = await makeRepo();
   const summaries = join(repo, "notes.json");

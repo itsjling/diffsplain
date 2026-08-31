@@ -182,6 +182,48 @@ test('requires an agent choice before the presenter starts', async () => {
   }
 });
 
+test('prints the configured agent when provider selection fails', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'diffsplain-present-provider-'));
+  const repo = join(root, 'not-a-repo');
+  const configRoot = join(root, 'config');
+
+  try {
+    await mkdir(repo);
+    await mkdir(join(configRoot, 'diffsplain'), { recursive: true });
+    await writeFile(
+      join(configRoot, 'diffsplain', 'config.json'),
+      JSON.stringify({ agent: 'codex' }),
+    );
+    const result = spawnSync(
+      process.execPath,
+      [
+        script,
+        '--repo',
+        repo,
+        '--codex-bin',
+        join(root, 'missing-codex'),
+        '--support-record',
+      ],
+      {
+        cwd: root,
+        encoding: 'utf8',
+        env: { ...process.env, XDG_CONFIG_HOME: configRoot },
+      },
+    );
+
+    assert.equal(result.status, 1, result.stderr);
+    assert.match(result.stderr, /not available/i);
+    const record = parseLastSupportRecord(result.stderr);
+    assert.deepEqual(record.provider, {
+      name: 'codex',
+      version: null,
+    });
+    assert.equal(record.stages.agent.state, 'failed');
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test('rejects a missing base before agent selection or page setup', async () => {
   const root = await mkdtemp(join(tmpdir(), 'diffsplain-present-missing-base-'));
   const repo = join(root, 'repo');

@@ -21,6 +21,7 @@ import { applyAgentConfigOperation } from './agent-config.mjs';
 import {
   agentReadOnlyWarning,
   assertReasoningSupported,
+  codingAgentFromSelectionError,
   codingAgentAvailability,
   codingAgentBinary,
   selectCodingAgent,
@@ -280,7 +281,9 @@ if (agentEnabled) {
       agentArgs.push('--provider-read-only-warning-emitted');
     }
   } catch (error) {
-    recordSelectedProvider(cli.agent || 'unknown');
+    recordSelectedProvider(
+      codingAgentFromSelectionError(error) || cli.agent || 'unknown',
+    );
     supportRecorder?.addStage(
       'agent',
       performance.now() - selectionStarted,

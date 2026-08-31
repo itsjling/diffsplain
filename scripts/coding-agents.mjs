@@ -264,21 +264,42 @@ function nonInteractiveSelectionError() {
   );
 }
 
+class CodingAgentSelectionError extends Error {
+  constructor(agent, message) {
+    super(message);
+    this.agent = agent;
+  }
+}
+
+export function codingAgentFromSelectionError(error) {
+  return error instanceof CodingAgentSelectionError
+    ? error.agent
+    : undefined;
+}
+
 function unsupportedSelectionError(requested, configured) {
   if (configured) {
-    return new Error(
+    return new CodingAgentSelectionError(
+      requested,
       `Configured coding agent "${requested}" is unsupported. Choose ${enabledCodingAgents.join(', ')} with diffsplain config agent NAME, or use --agent NAME for this run.`,
     );
   }
-  return new Error(
+  return new CodingAgentSelectionError(
+    requested,
     `Unsupported agent "${requested}". Choose ${enabledCodingAgents.join(', ')}.`,
   );
 }
 
 function unavailableSelectionError(requested, result, configured) {
-  if (!configured) return unavailableAgentError(requested, result);
+  if (!configured) {
+    return new CodingAgentSelectionError(
+      requested,
+      unavailableAgentError(requested, result).message,
+    );
+  }
   const reason = typeof result === 'object' ? result.reason : undefined;
-  return new Error(
+  return new CodingAgentSelectionError(
+    requested,
     `Configured coding agent "${requested}" is not available.${reason ? ` ${reason}` : ''} Change it with diffsplain config agent NAME, or use --agent NAME for this run.`,
   );
 }
