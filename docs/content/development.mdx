@@ -304,16 +304,21 @@ Create the protected `npm-publish` environment in GitHub. Allow this workflow's
 rules. Configure any required environment reviewers. These npm and GitHub
 settings are prerequisites; the repository does not prove that they exist.
 
-The workflow installs the pinned toolchain, validates its GitHub OIDC context,
-runs the full release verification, pushes the exact version commit and tag
-atomically, and then publishes the verified tarball. Stable versions use the
-`latest` npm tag and prereleases use `next`. Releases are serialized so two
-workflow runs cannot publish concurrently.
+The workflow prepares and verifies the release without repository write access
+or an npm identity. It passes the tarball, verification receipt, release commit,
+and tag to a separate protected job. Only that final job receives GitHub write
+access and the npm OIDC identity. It independently checks the artifact, pushes
+the exact version commit and tag atomically, and publishes the tarball with
+package lifecycle scripts disabled. Stable versions use the `latest` npm tag
+and prereleases use `next`. Releases are serialized so two workflow runs cannot
+publish concurrently.
 
 ### Recover a workflow release
 
-Rerun the workflow with the same exact version after a failure. It accepts only
-these states:
+Rerun the existing workflow run or start a new run with the same exact version
+after a failure. Native reruns retain the original dispatch commit and are
+accepted when that commit is the parent of the pushed release. The workflow
+accepts only these states:
 
 - **Create:** `main` still contains the previous package version, the requested
   tag and npm version do not exist, and local `main` matches `origin/main`.

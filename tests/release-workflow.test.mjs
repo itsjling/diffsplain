@@ -4,11 +4,14 @@ import test from 'node:test';
 import {
   classifyReleaseState,
   compareExactVersions,
+  finalizeReleaseWorkflow,
+  prepareReleaseWorkflow,
   requireMatchingIntegrity,
-  runReleaseWorkflow,
   sha512Integrity,
+  validateDispatchCommit,
   validateExactVersion,
   validateOidcContext,
+  validatePrepareContext,
 } from '../scripts/release-workflow.mjs';
 
 const projectRoot = new URL('..', import.meta.url);
@@ -71,7 +74,6 @@ test('accepts only exact canonical stable and prerelease SemVer', () => {
 
 test('requires the exact GitHub trusted-publisher context and no token auth', () => {
   assert.deepEqual(validateOidcContext(oidc), {
-    account: 'GitHub Actions OIDC',
     dispatchCommit: 'base',
   });
   for (const name of [
@@ -95,6 +97,24 @@ test('requires the exact GitHub trusted-publisher context and no token auth', ()
         new RegExp(name),
       );
     }
+  }
+});
+
+test('requires release preparation to have no publish credential', () => {
+  const prepare = { ...oidc };
+  delete prepare.ACTIONS_ID_TOKEN_REQUEST_URL;
+  delete prepare.ACTIONS_ID_TOKEN_REQUEST_TOKEN;
+  assert.deepEqual(validatePrepareContext(prepare), { dispatchCommit: 'base' });
+  for (const name of [
+    'ACTIONS_ID_TOKEN_REQUEST_URL',
+    'ACTIONS_ID_TOKEN_REQUEST_TOKEN',
+    'NODE_AUTH_TOKEN',
+    'NPM_TOKEN',
+  ]) {
+    assert.throws(
+      () => validatePrepareContext({ ...prepare, [name]: 'credential' }),
+      new RegExp(name),
+    );
   }
 });
 
@@ -181,98 +201,189 @@ test('computes npm SHA-512 SRI and rejects a different published tarball', () =>
   );
 });
 
-function workflowDeps(observation, calls, overrides = {}) {
+test('accepts the release parent only for a pushed release rerun', () => {
+  assert.doesNotThrow(() => validateDispatchCommit(resumeObservation, 'base'));
+  assert.doesNotThrow(() => validateDispatchCommit(resumeObservation, 'release'));
+  assert.throws(
+    () => validateDispatchCommit(createObservation, 'different'),
+    /dispatch commit/,
+  );
+});
+
+function preparationDeps(observation, calls, overrides = {}) {
   return {
     assertCleanMain: () => calls.push('clean'),
-    classify: classifyReleaseState,
+    bundleRelease: (tag) => calls.push(['bundle', tag]),
+    context: { dispatchCommit: observation.headCommit },
     createVersion: (version) => calls.push(['version', version]),
     fetchMain: () => calls.push('fetch'),
     localTarballIntegrity: async () => 'sha512-matching',
     observe: async () => observation,
-    publishRelease: async (version, publishOverrides) => {
-      calls.push(['publish', version]);
-      assert.equal(publishOverrides.registryVersionExists(), false);
-      assert.equal(publishOverrides.requireNpmLogin(), 'oidc-account');
-    },
-    pushRelease: (tag) => calls.push(['push', tag]),
     readHead: () => 'release',
     readLocalTag: () => 'release',
     readRemoteMain: () =>
       observation.packageVersion === observation.version ? 'release' : 'base',
     readRemoteTag: () =>
       observation.packageVersion === observation.version ? 'release' : null,
-    registryIntegrity: () => null,
-    validateContext: () => {
-      calls.push('oidc');
+    verifyRelease: async () => {
+      calls.push('verify');
       return {
-        account: 'oidc-account',
-        dispatchCommit: observation.headCommit,
+        package: 'diffsplain',
+        version: observation.version,
+        tag: observation.tag,
+        commit: 'release',
+        tarball: '.cache/diffsplain-release.tgz',
+        sha256: 'sha256-matching',
       };
     },
-    verifyRelease: async () => calls.push('verify'),
+    writePlan: async () => calls.push('plan'),
     ...overrides,
   };
 }
 
-test('creates, verifies, atomically pushes, then publishes a fresh release', async () => {
+test('prepares and verifies a fresh release without pushing or publishing', async () => {
   const calls = [];
-  const result = await runReleaseWorkflow(
+  const result = await prepareReleaseWorkflow(
     '1.3.0',
-    workflowDeps(createObservation, calls),
+    preparationDeps(createObservation, calls),
   );
 
   assert.equal(result.mode, 'create');
-  assert.equal(result.headCommit, 'release');
+  assert.equal(result.releaseCommit, 'release');
   assert.deepEqual(calls, [
-    'oidc',
     'clean',
     'fetch',
     ['version', '1.3.0'],
     'verify',
     'fetch',
-    ['push', 'v1.3.0'],
-    ['publish', '1.3.0'],
+    ['bundle', 'v1.3.0'],
+    'plan',
   ]);
 });
 
-test('resumes only an already-pushed release and does not recreate or push it', async () => {
+test('prepares an already-pushed release without recreating it', async () => {
   const calls = [];
-  const result = await runReleaseWorkflow(
+  const result = await prepareReleaseWorkflow(
     '1.3.0',
-    workflowDeps(resumeObservation, calls),
+    preparationDeps(resumeObservation, calls),
   );
 
   assert.equal(result.mode, 'resume');
   assert.deepEqual(calls, [
-    'oidc',
     'clean',
     'fetch',
     'verify',
     'fetch',
+    ['bundle', 'v1.3.0'],
+    'plan',
+  ]);
+});
+
+test('accepts a native rerun dispatched from the release parent', async () => {
+  const calls = [];
+  const result = await prepareReleaseWorkflow(
+    '1.3.0',
+    preparationDeps(resumeObservation, calls, {
+      context: { dispatchCommit: 'base' },
+    }),
+  );
+
+  assert.equal(result.mode, 'resume');
+  assert.deepEqual(calls, [
+    'clean',
+    'fetch',
+    'verify',
+    'fetch',
+    ['bundle', 'v1.3.0'],
+    'plan',
+  ]);
+});
+
+const baseCommit = 'a'.repeat(40);
+const releaseCommit = 'b'.repeat(40);
+const plan = {
+  schemaVersion: 1,
+  package: 'diffsplain',
+  version: '1.3.0',
+  tag: 'v1.3.0',
+  mode: 'create',
+  dispatchCommit: baseCommit,
+  baseCommit,
+  releaseCommit,
+  tarball: '.cache/diffsplain-release.tgz',
+  bundle: '.cache/diffsplain-release.bundle',
+  sha256: 'sha256-matching',
+  sha512: 'sha512-matching',
+};
+const artifactReceipt = {
+  package: plan.package,
+  version: plan.version,
+  tag: plan.tag,
+  commit: plan.releaseCommit,
+  tarball: plan.tarball,
+  sha256: plan.sha256,
+};
+
+function finalizationDeps(calls, overrides = {}) {
+  return {
+    assertCleanMain: () => calls.push('clean'),
+    context: { dispatchCommit: baseCommit },
+    fetchMain: () => calls.push('fetch'),
+    importBundle: (tag) => calls.push(['import', tag]),
+    localTarballIntegrity: async () => plan.sha512,
+    localTarballSha256: async () => plan.sha256,
+    publish: (version) => calls.push(['publish', version]),
+    pushRelease: (commit, tag) => calls.push(['push', commit, tag]),
+    readArtifactCommit: () => releaseCommit,
+    readCommitManifest: () => ({ name: 'diffsplain', version: '1.3.0' }),
+    readCommitParents: () => [baseCommit],
+    readLocalTag: () => releaseCommit,
+    readPlan: async () => plan,
+    readReceipt: async () => artifactReceipt,
+    readRemoteMain: () => baseCommit,
+    readRemoteTag: () => null,
+    registryIntegrity: () => null,
+    registryVersion: () => '1.3.0',
+    wait: async () => {},
+    ...overrides,
+  };
+}
+
+test('finalizes only the verified artifact with push and publish authority', async () => {
+  const calls = [];
+  const result = await finalizeReleaseWorkflow(
+    '1.3.0',
+    finalizationDeps(calls),
+  );
+
+  assert.equal(result.mode, 'create');
+  assert.deepEqual(calls, [
+    'clean',
+    'fetch',
+    ['import', 'v1.3.0'],
+    ['push', releaseCommit, 'v1.3.0'],
     ['publish', '1.3.0'],
   ]);
 });
 
 test('accepts an already-published release only when tarball integrity matches', async () => {
-  const calls = [];
-  const complete = {
-    ...resumeObservation,
-    registryIntegrity: 'sha512-matching',
-  };
-  const result = await runReleaseWorkflow(
+  const result = await finalizeReleaseWorkflow(
     '1.3.0',
-    workflowDeps(complete, calls, {
+    finalizationDeps([], {
+      readRemoteMain: () => releaseCommit,
+      readRemoteTag: () => releaseCommit,
       registryIntegrity: () => 'sha512-matching',
     }),
   );
 
   assert.equal(result.mode, 'complete');
-  assert.deepEqual(calls, ['oidc', 'clean', 'fetch', 'verify', 'fetch']);
 
   await assert.rejects(
-    runReleaseWorkflow(
+    finalizeReleaseWorkflow(
       '1.3.0',
-      workflowDeps(complete, [], {
+      finalizationDeps([], {
+        readRemoteMain: () => releaseCommit,
+        readRemoteTag: () => releaseCommit,
         registryIntegrity: () => 'sha512-other',
       }),
     ),
@@ -280,18 +391,44 @@ test('accepts an already-published release only when tarball integrity matches',
   );
 });
 
+test('rejects a finalization artifact with altered contents or release history', async () => {
+  await assert.rejects(
+    finalizeReleaseWorkflow(
+      '1.3.0',
+      finalizationDeps([], { localTarballSha256: async () => 'changed' }),
+    ),
+    /SHA-256/,
+  );
+  await assert.rejects(
+    finalizeReleaseWorkflow(
+      '1.3.0',
+      finalizationDeps([], { readCommitParents: () => ['different'] }),
+    ),
+    /release parent/,
+  );
+  await assert.rejects(
+    finalizeReleaseWorkflow(
+      '1.3.0',
+      finalizationDeps([], {
+        readCommitManifest: () => ({ name: 'other', version: '1.3.0' }),
+      }),
+    ),
+    /package identity/,
+  );
+});
+
 test('stops if main or the tag moves during verification', async () => {
   await assert.rejects(
-    runReleaseWorkflow(
+    prepareReleaseWorkflow(
       '1.3.0',
-      workflowDeps(createObservation, [], { readRemoteMain: () => 'moved' }),
+      preparationDeps(createObservation, [], { readRemoteMain: () => 'moved' }),
     ),
     /changed while the release was verified/,
   );
   await assert.rejects(
-    runReleaseWorkflow(
+    prepareReleaseWorkflow(
       '1.3.0',
-      workflowDeps(resumeObservation, [], { readRemoteTag: () => 'moved' }),
+      preparationDeps(resumeObservation, [], { readRemoteTag: () => 'moved' }),
     ),
     /changed while the release was verified/,
   );
@@ -299,30 +436,40 @@ test('stops if main or the tag moves during verification', async () => {
 
 test('stops when checkout does not match the dispatch commit', async () => {
   await assert.rejects(
-    runReleaseWorkflow(
+    prepareReleaseWorkflow(
       '1.3.0',
-      workflowDeps(createObservation, [], {
-        validateContext: () => ({
-          account: 'oidc-account',
-          dispatchCommit: 'different',
-        }),
+      preparationDeps(createObservation, [], {
+        context: { dispatchCommit: 'different' },
       }),
     ),
     /dispatch commit/,
   );
 });
 
-test('workflow pins the trusted, serialized, single-job release contract', async () => {
+test('workflow pins the trusted, serialized, split-job release contract', async () => {
   const workflow = await readFile(
     new URL('.github/workflows/release.yml', projectRoot),
+    'utf8',
+  );
+  const helper = await readFile(
+    new URL('scripts/release-workflow.mjs', projectRoot),
     'utf8',
   );
 
   assert.match(workflow, /workflow_dispatch:/);
   assert.match(workflow, /group: npm-release/);
   assert.match(workflow, /cancel-in-progress: false/);
-  assert.match(workflow, /contents: write/);
-  assert.match(workflow, /id-token: write/);
+  assert.match(workflow, /^permissions: \{\}$/m);
+  assert.match(workflow, /^  prepare:\n(?:.|\n)*?    permissions:\n      contents: read/m);
+  assert.match(workflow, /persist-credentials: false/);
+  assert.match(workflow, /actions\/upload-artifact@v4/);
+  assert.match(workflow, /include-hidden-files: true/);
+  assert.match(workflow, /^  release:\n    needs: prepare/m);
+  assert.match(
+    workflow,
+    /^  release:\n(?:.|\n)*?    permissions:\n      contents: write\n      id-token: write/m,
+  );
+  assert.match(workflow, /actions\/download-artifact@v5/);
   assert.match(workflow, /if: github\.ref == 'refs\/heads\/main'/);
   assert.match(workflow, /runs-on: ubuntu-latest/);
   assert.match(workflow, /environment: npm-publish/);
@@ -331,13 +478,20 @@ test('workflow pins the trusted, serialized, single-job release contract', async
   assert.match(workflow, /registry-url: https:\/\/registry\.npmjs\.org/);
   assert.match(workflow, /package-manager-cache: false/);
   assert.match(workflow, /pnpm\/action-setup@v4/);
-  assert.match(workflow, /corepack@0\.34\.1/);
   assert.match(workflow, /npm@11\.5\.1/);
   assert.doesNotMatch(workflow, /^\s+cache:/m);
   assert.match(workflow, /RELEASE_VERSION: \$\{\{ inputs\.version \}\}/);
   assert.match(
     workflow,
-    /node scripts\/release-workflow\.mjs "\$RELEASE_VERSION"/,
+    /node scripts\/release-workflow\.mjs prepare "\$RELEASE_VERSION"/,
   );
-  assert.equal((workflow.match(/^  release:$/gm) ?? []).length, 1);
+  assert.match(
+    workflow,
+    /node scripts\/release-workflow\.mjs finalize "\$RELEASE_VERSION"/,
+  );
+  const releaseJob = workflow.slice(workflow.indexOf('\n  release:'));
+  assert.doesNotMatch(releaseJob, /pnpm install|release:verify/);
+  assert.doesNotMatch(helper, /^import .*release\.mjs/m);
+  assert.match(helper, /'--ignore-scripts'/);
+  assert.equal((workflow.match(/^  (?:prepare|release):$/gm) ?? []).length, 2);
 });
