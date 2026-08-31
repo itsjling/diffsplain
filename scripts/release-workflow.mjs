@@ -23,27 +23,34 @@ const exactVersionPattern = new RegExp(
   `^(?:0|[1-9]\\d*)\\.(?:0|[1-9]\\d*)\\.(?:0|[1-9]\\d*)(?:-${semverIdentifier}(?:\\.${semverIdentifier})*)?$`,
 );
 
-function run(
-  command,
-  args,
-  { allowFailure = false, capture = false, env } = {},
-) {
-  const result = spawnSync(command, args, {
+function commandOptions(capture, env) {
+  return {
     cwd: root,
     encoding: capture ? 'utf8' : undefined,
     stdio: capture ? 'pipe' : 'inherit',
     env: env ? { ...process.env, ...env } : process.env,
-  });
-  if (result.error) throw result.error;
-  const status = result.status ?? 1;
-  if (!allowFailure && status !== 0) {
-    throw new Error(`${command} ${args.join(' ')} failed with exit code ${status}.`);
-  }
+  };
+}
+
+function commandOutput(result, capture) {
   return {
-    status,
+    status: result.status ?? 1,
     stdout: capture ? result.stdout.trim() : '',
     stderr: capture ? result.stderr.trim() : '',
   };
+}
+
+function run(command, args, options = {}) {
+  const { allowFailure = false, capture = false, env } = options;
+  const result = spawnSync(command, args, commandOptions(capture, env));
+  if (result.error) throw result.error;
+  const output = commandOutput(result, capture);
+  if (!allowFailure && output.status !== 0) {
+    throw new Error(
+      `${command} ${args.join(' ')} failed with exit code ${output.status}.`,
+    );
+  }
+  return output;
 }
 
 function git(args, options = {}) {
@@ -128,11 +135,12 @@ function observedState(version, manifestVersion) {
   const remoteMainCommit = gitOutput(['rev-parse', 'refs/remotes/origin/main']);
   const localTagCommit = optionalGitCommit(`refs/tags/${tag}`);
   const publishedTagCommit = remoteTagCommit(tag);
-  const pushedRelease =
-    manifestVersion === version &&
-    localTagCommit === headCommit &&
-    publishedTagCommit === headCommit &&
-    remoteMainCommit === headCommit;
+  const pushedRelease = allEqual([
+    [manifestVersion, version],
+    [localTagCommit, headCommit],
+    [publishedTagCommit, headCommit],
+    [remoteMainCommit, headCommit],
+  ]);
   return {
     version,
     packageVersion: manifestVersion,
@@ -145,6 +153,10 @@ function observedState(version, manifestVersion) {
   };
 }
 
+function allEqual(pairs) {
+  return pairs.every(([actual, expected]) => actual === expected);
+}
+
 export function validateExactVersion(value) {
   if (typeof value !== 'string' || !exactVersionPattern.test(value)) {
     throw new Error(
@@ -154,6 +166,22 @@ export function validateExactVersion(value) {
   return value;
 }
 
+function requireEnvironment(env, expected) {
+  for (const [name, value] of Object.entries(expected)) {
+    if (env[name] !== value) {
+      throw new Error(`Refusing release workflow: ${name} is not ${value}.`);
+    }
+  }
+}
+
+function rejectEnvironment(env, names, reason) {
+  for (const name of names) {
+    if (env[name] !== undefined) {
+      throw new Error(`${reason} while ${name} is set.`);
+    }
+  }
+}
+
 function validateWorkflowIdentity(env) {
   const expected = {
     GITHUB_ACTIONS: 'true',
@@ -161,32 +189,25 @@ function validateWorkflowIdentity(env) {
     GITHUB_REF: 'refs/heads/main',
     GITHUB_WORKFLOW_REF: workflowRef,
   };
-  for (const [name, value] of Object.entries(expected)) {
-    if (env[name] !== value) {
-      throw new Error(`Refusing release workflow: ${name} is not ${value}.`);
-    }
-  }
+  requireEnvironment(env, expected);
   if (!env.GITHUB_SHA) {
     throw new Error('Refusing release workflow: GITHUB_SHA is missing.');
   }
-  for (const name of ['NODE_AUTH_TOKEN', 'NPM_TOKEN']) {
-    if (env[name] !== undefined) {
-      throw new Error(`Refusing release workflow while ${name} is set.`);
-    }
-  }
+  rejectEnvironment(
+    env,
+    ['NODE_AUTH_TOKEN', 'NPM_TOKEN'],
+    'Refusing release workflow',
+  );
   return { dispatchCommit: env.GITHUB_SHA };
 }
 
 export function validatePrepareContext(env) {
   const context = validateWorkflowIdentity(env);
-  for (const name of [
-    'ACTIONS_ID_TOKEN_REQUEST_URL',
-    'ACTIONS_ID_TOKEN_REQUEST_TOKEN',
-  ]) {
-    if (env[name] !== undefined) {
-      throw new Error(`Refusing unprivileged preparation while ${name} is set.`);
-    }
-  }
+  rejectEnvironment(
+    env,
+    ['ACTIONS_ID_TOKEN_REQUEST_URL', 'ACTIONS_ID_TOKEN_REQUEST_TOKEN'],
+    'Refusing unprivileged preparation',
+  );
   return context;
 }
 
@@ -215,90 +236,88 @@ function parseVersion(version) {
   };
 }
 
+function compareValues(left, right) {
+  if (left === right) return 0;
+  return left < right ? -1 : 1;
+}
+
 function compareIdentifiers(left, right) {
   const leftNumber = /^\d+$/.test(left);
   const rightNumber = /^\d+$/.test(right);
-  if (leftNumber && rightNumber) {
-    const leftValue = BigInt(left);
-    const rightValue = BigInt(right);
-    return leftValue === rightValue ? 0 : leftValue < rightValue ? -1 : 1;
-  }
   if (leftNumber !== rightNumber) return leftNumber ? -1 : 1;
-  return left === right ? 0 : left < right ? -1 : 1;
+  if (leftNumber) return compareValues(BigInt(left), BigInt(right));
+  return compareValues(left, right);
+}
+
+function compareLists(left, right, compare) {
+  const sharedLength = Math.min(left.length, right.length);
+  for (let index = 0; index < sharedLength; index += 1) {
+    const difference = compare(left[index], right[index]);
+    if (difference !== 0) return difference;
+  }
+  return Math.sign(left.length - right.length);
+}
+
+function comparePrereleases(left, right) {
+  if (left === null) return right === null ? 0 : 1;
+  if (right === null) return -1;
+  return compareLists(left, right, compareIdentifiers);
 }
 
 export function compareExactVersions(left, right) {
   const leftVersion = parseVersion(left);
   const rightVersion = parseVersion(right);
-  for (let index = 0; index < 3; index += 1) {
-    if (leftVersion.core[index] !== rightVersion.core[index]) {
-      return leftVersion.core[index] < rightVersion.core[index] ? -1 : 1;
-    }
-  }
-  if (leftVersion.prerelease === null || rightVersion.prerelease === null) {
-    if (leftVersion.prerelease === rightVersion.prerelease) return 0;
-    return leftVersion.prerelease === null ? 1 : -1;
-  }
-  const length = Math.max(
-    leftVersion.prerelease.length,
-    rightVersion.prerelease.length,
+  const coreDifference = compareLists(
+    leftVersion.core,
+    rightVersion.core,
+    compareValues,
   );
-  for (let index = 0; index < length; index += 1) {
-    const leftIdentifier = leftVersion.prerelease[index];
-    const rightIdentifier = rightVersion.prerelease[index];
-    if (leftIdentifier === undefined || rightIdentifier === undefined) {
-      return leftIdentifier === undefined ? -1 : 1;
-    }
-    const difference = compareIdentifiers(leftIdentifier, rightIdentifier);
-    if (difference !== 0) return difference;
+  if (coreDifference !== 0) {
+    return coreDifference;
   }
-  return 0;
+  return comparePrereleases(leftVersion.prerelease, rightVersion.prerelease);
+}
+
+function releaseStateShape(observed, mode) {
+  return {
+    mode,
+    version: observed.version,
+    tag: observed.tag,
+    headCommit: observed.headCommit,
+    baseCommit: observed.baseCommit,
+    remoteMainCommit: observed.remoteMainCommit,
+    registryIntegrity: observed.registryIntegrity ?? null,
+  };
+}
+
+function isFreshRelease(observed) {
+  return allEqual([
+    [compareExactVersions(observed.version, observed.packageVersion) > 0, true],
+    [observed.headCommit, observed.remoteMainCommit],
+    [observed.localTagCommit, null],
+    [observed.remoteTagCommit, null],
+    [observed.registryIntegrity ?? null, null],
+  ]);
+}
+
+function isPushedRelease(observed) {
+  return allEqual([
+    [observed.packageVersion, observed.version],
+    [observed.localTagCommit, observed.headCommit],
+    [observed.remoteTagCommit, observed.headCommit],
+    [observed.remoteMainCommit, observed.headCommit],
+  ]);
 }
 
 export function classifyReleaseState(observed) {
-  const {
-    version,
-    packageVersion,
-    tag,
-    headCommit,
-    baseCommit,
-    remoteMainCommit,
-    localTagCommit,
-    remoteTagCommit: publishedTagCommit,
-    registryIntegrity: publishedIntegrity = null,
-  } = observed;
-  const shape = (mode, integrity) => ({
-    mode,
-    version,
-    tag,
-    headCommit,
-    baseCommit,
-    remoteMainCommit,
-    registryIntegrity: integrity,
-  });
-
-  if (
-    packageVersion !== version &&
-    compareExactVersions(version, packageVersion) > 0 &&
-    headCommit === remoteMainCommit &&
-    localTagCommit === null &&
-    publishedTagCommit === null &&
-    publishedIntegrity === null
-  ) {
-    return shape('create', null);
-  }
-
-  const pushedRelease =
-    packageVersion === version &&
-    localTagCommit === headCommit &&
-    publishedTagCommit === headCommit &&
-    remoteMainCommit === headCommit;
-  if (pushedRelease) {
-    return shape(publishedIntegrity === null ? 'resume' : 'complete', publishedIntegrity);
+  if (isFreshRelease(observed)) return releaseStateShape(observed, 'create');
+  if (isPushedRelease(observed)) {
+    const mode = observed.registryIntegrity == null ? 'resume' : 'complete';
+    return releaseStateShape(observed, mode);
   }
 
   throw new Error(
-    `Release ${version} is in a mixed state; main, package.json, ${tag}, and npm must agree before continuing.`,
+    `Release ${observed.version} is in a mixed state; main, package.json, ${observed.tag}, and npm must agree before continuing.`,
   );
 }
 
@@ -325,19 +344,25 @@ export function requireMatchingIntegrity(localIntegrity, publishedIntegrity) {
   }
 }
 
+function parseRegistryValue(output) {
+  const value = JSON.parse(output);
+  return typeof value === 'string' ? value : null;
+}
+
+function registryResultValue(result) {
+  if (result.status === 0) return parseRegistryValue(result.stdout);
+  if (/E404|404 Not Found|No match found/.test(`${result.stdout}\n${result.stderr}`)) {
+    return null;
+  }
+  throw new Error(result.stderr || 'Could not check the npm registry.');
+}
+
 function registryValue(specifier, field) {
   const result = npm(
     ['view', specifier, field, '--json', '--registry', registry],
     { allowFailure: true, capture: true },
   );
-  if (result.status === 0) {
-    const value = JSON.parse(result.stdout);
-    return typeof value === 'string' && value ? value : null;
-  }
-  if (/E404|404 Not Found|No match found/.test(`${result.stdout}\n${result.stderr}`)) {
-    return null;
-  }
-  throw new Error(result.stderr || 'Could not check the npm registry.');
+  return registryResultValue(result);
 }
 
 function registryIntegrity(name, version) {
@@ -427,8 +452,22 @@ function dependencies(overrides) {
   return { ...defaults, ...overrides };
 }
 
+function requireMatchingFields(actual, expected, label) {
+  for (const [key, value] of Object.entries(expected)) {
+    if (actual[key] !== value) {
+      throw new Error(`Release artifact is invalid: ${label}${key} does not match.`);
+    }
+  }
+}
+
+function requireCommit(value, label) {
+  if (typeof value !== 'string' || !/^[0-9a-f]{40}$/.test(value)) {
+    throw new Error(`Release artifact is invalid: ${label} is not a commit.`);
+  }
+}
+
 function validateArtifactPlan(plan, receipt, version, dispatchCommit) {
-  const expected = {
+  requireMatchingFields(plan, {
     schemaVersion: 1,
     package: packageName,
     version,
@@ -436,51 +475,71 @@ function validateArtifactPlan(plan, receipt, version, dispatchCommit) {
     dispatchCommit,
     tarball,
     bundle: bundleFile,
-  };
-  for (const [key, value] of Object.entries(expected)) {
-    if (plan[key] !== value) {
-      throw new Error(`Release artifact is invalid: ${key} does not match.`);
-    }
-  }
-  for (const key of ['package', 'version', 'tag', 'tarball', 'sha256']) {
-    if (receipt[key] !== plan[key]) {
-      throw new Error(`Release artifact is invalid: receipt ${key} does not match.`);
-    }
-  }
-  if (receipt.commit !== plan.releaseCommit) {
-    throw new Error('Release artifact is invalid: receipt commit does not match.');
-  }
+  }, '');
+  requireMatchingFields(receipt, {
+    package: plan.package,
+    version: plan.version,
+    tag: plan.tag,
+    commit: plan.releaseCommit,
+    tarball: plan.tarball,
+    sha256: plan.sha256,
+  }, 'receipt ');
   if (!['create', 'resume', 'complete'].includes(plan.mode)) {
     throw new Error('Release artifact is invalid: mode is not recognized.');
   }
-  for (const key of ['baseCommit', 'releaseCommit']) {
-    if (typeof plan[key] !== 'string' || !/^[0-9a-f]{40}$/.test(plan[key])) {
-      throw new Error(`Release artifact is invalid: ${key} is not a commit.`);
-    }
+  requireCommit(plan.baseCommit, 'baseCommit');
+  requireCommit(plan.releaseCommit, 'releaseCommit');
+}
+
+function requireArtifactValue(actual, expected, label) {
+  if (actual !== expected) {
+    throw new Error(`Release artifact is invalid: ${label} does not match.`);
   }
 }
 
 async function verifyArtifact(deps, plan) {
-  if ((await deps.localTarballSha256()) !== plan.sha256) {
-    throw new Error('Release artifact is invalid: tarball SHA-256 does not match.');
-  }
-  const integrity = await deps.localTarballIntegrity();
-  if (integrity !== plan.sha512) {
-    throw new Error('Release artifact is invalid: tarball SHA-512 does not match.');
-  }
-  if (deps.readArtifactCommit() !== plan.releaseCommit) {
-    throw new Error('Release artifact is invalid: bundle commit does not match.');
-  }
-  if (deps.readLocalTag(plan.tag) !== plan.releaseCommit) {
-    throw new Error('Release artifact is invalid: bundle tag does not match.');
-  }
+  requireArtifactValue(
+    await deps.localTarballSha256(),
+    plan.sha256,
+    'tarball SHA-256',
+  );
+  requireArtifactValue(
+    await deps.localTarballIntegrity(),
+    plan.sha512,
+    'tarball SHA-512',
+  );
+  requireArtifactValue(
+    deps.readArtifactCommit(),
+    plan.releaseCommit,
+    'bundle commit',
+  );
+  requireArtifactValue(
+    deps.readLocalTag(plan.tag),
+    plan.releaseCommit,
+    'bundle tag',
+  );
   const parents = deps.readCommitParents(plan.releaseCommit);
-  if (parents.length !== 1 || parents[0] !== plan.baseCommit) {
-    throw new Error('Release artifact is invalid: release parent does not match.');
-  }
+  requireArtifactValue(parents.length, 1, 'release parent count');
+  requireArtifactValue(parents[0], plan.baseCommit, 'release parent');
   const manifest = deps.readCommitManifest(plan.releaseCommit);
-  if (manifest.name !== packageName || manifest.version !== plan.version) {
-    throw new Error('Release artifact is invalid: package identity does not match.');
+  requireArtifactValue(manifest.name, packageName, 'package identity');
+  requireArtifactValue(manifest.version, plan.version, 'package version');
+}
+
+function createReleaseVersion(deps, state, version) {
+  deps.createVersion(version);
+  const releaseCommit = deps.readHead();
+  requireArtifactValue(deps.readLocalTag(state.tag), releaseCommit, state.tag);
+  return { ...state, headCommit: releaseCommit };
+}
+
+function requireStablePreparation(deps, state) {
+  const remoteMain = deps.readRemoteMain();
+  const remoteTag = deps.readRemoteTag(state.tag);
+  const expectedMain = state.mode === 'create' ? state.baseCommit : state.headCommit;
+  const expectedTag = state.mode === 'create' ? null : state.headCommit;
+  if (!allEqual([[remoteMain, expectedMain], [remoteTag, expectedTag]])) {
+    throw new Error('origin/main or the release tag changed while the release was verified.');
   }
 }
 
@@ -496,28 +555,12 @@ export async function prepareReleaseWorkflow(versionInput, overrides = {}) {
   validateDispatchCommit(state, context.dispatchCommit);
 
   if (state.mode === 'create') {
-    deps.createVersion(version);
-    const releaseCommit = deps.readHead();
-    if (deps.readLocalTag(state.tag) !== releaseCommit) {
-      throw new Error(`${state.tag} was not created on the version commit.`);
-    }
-    state = { ...state, headCommit: releaseCommit };
+    state = createReleaseVersion(deps, state, version);
   }
 
   const receipt = await deps.verifyRelease();
   deps.fetchMain();
-  const currentRemoteMain = deps.readRemoteMain();
-  const currentRemoteTag = deps.readRemoteTag(state.tag);
-  if (state.mode === 'create') {
-    if (currentRemoteMain !== state.baseCommit || currentRemoteTag !== null) {
-      throw new Error('origin/main or the release tag changed while the release was verified.');
-    }
-  } else if (
-    currentRemoteMain !== state.headCommit ||
-    currentRemoteTag !== state.headCommit
-  ) {
-    throw new Error('The pushed release commit or tag changed while the release was verified.');
-  }
+  requireStablePreparation(deps, state);
 
   deps.bundleRelease(state.tag);
   const plan = {
@@ -538,16 +581,23 @@ export async function prepareReleaseWorkflow(versionInput, overrides = {}) {
   return plan;
 }
 
-async function verifyPublishedVersion(deps, version) {
+async function verifyPublishedVersion(deps, version, attempt = 0) {
   const delays = [0, 1_000, 2_000, 4_000];
-  let lastValue = null;
-  for (const delay of delays) {
-    if (delay > 0) await deps.wait(delay);
-    lastValue = deps.registryVersion(packageName, version);
-    if (lastValue === version) return;
+  if (attempt >= delays.length) {
+    throw new Error(`npm did not return ${packageName}@${version} after publishing.`);
+  }
+  if (delays[attempt] > 0) await deps.wait(delays[attempt]);
+  if (deps.registryVersion(packageName, version) === version) return;
+  await verifyPublishedVersion(deps, version, attempt + 1);
+}
+
+function remoteReleaseMode(plan, remoteMain, remoteTag) {
+  if (allEqual([[remoteMain, plan.baseCommit], [remoteTag, null]])) return 'create';
+  if (allEqual([[remoteMain, plan.releaseCommit], [remoteTag, plan.releaseCommit]])) {
+    return 'existing';
   }
   throw new Error(
-    `npm returned ${lastValue || 'no version'} after publishing ${packageName}@${version}.`,
+    `Release ${plan.version} is in a mixed state; main and ${plan.tag} must agree before continuing.`,
   );
 }
 
@@ -566,15 +616,8 @@ export async function finalizeReleaseWorkflow(versionInput, overrides = {}) {
 
   const remoteMain = deps.readRemoteMain();
   const remoteTag = deps.readRemoteTag(plan.tag);
-  if (remoteMain === plan.baseCommit && remoteTag === null) {
+  if (remoteReleaseMode(plan, remoteMain, remoteTag) === 'create') {
     deps.pushRelease(plan.releaseCommit, plan.tag);
-  } else if (
-    remoteMain !== plan.releaseCommit ||
-    remoteTag !== plan.releaseCommit
-  ) {
-    throw new Error(
-      `Release ${version} is in a mixed state; main and ${plan.tag} must agree before continuing.`,
-    );
   }
 
   const publishedIntegrity = deps.registryIntegrity(packageName, version);
