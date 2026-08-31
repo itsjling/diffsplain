@@ -49,6 +49,18 @@ function lifecycleError(error) {
     ? error.lifecycleMessage
     : publicError(error);
 }
+
+function compactedMessages(run, answer) {
+  return [{ role: 'compacted', answer }, ...run.preserved];
+}
+
+function oversizedCompaction(thread, run, answer, inputLimitBytes) {
+  if (run.kind !== 'compact') return false;
+  return inputBytes(
+    compactedMessages(run, answer),
+    thread.pendingQuestion,
+  ) > inputLimitBytes;
+}
 function snapshotRead(path) {
   try {
     return { value: JSON.parse(readFileSync(path, 'utf8')) };
@@ -363,7 +375,7 @@ export class ReviewChatController {
   }
 
   completeCompaction(thread, run, answer) {
-    const messages = [{ role: 'compacted', answer }, ...run.preserved];
+    const messages = compactedMessages(run, answer);
     this.clearRun(thread);
     thread.messages = messages;
     thread.needsCompaction = false;
@@ -383,13 +395,12 @@ export class ReviewChatController {
       this.finishFailure(thread, run, result.error);
       return;
     }
-    if (
-      run.kind === 'compact' &&
-      inputBytes(
-        [{ role: 'compacted', answer: result.answer }, ...run.preserved],
-        thread.pendingQuestion,
-      ) > this.inputLimitBytes
-    ) {
+    if (oversizedCompaction(
+      thread,
+      run,
+      result.answer,
+      this.inputLimitBytes,
+    )) {
       this.finishFailure(
         thread,
         run,
@@ -502,14 +513,24 @@ export class ReviewChatController {
     this.notify();
   }
 
-  cancelRun(thread, { stale = false } = {}) {
-    const run = thread.run;
-    if (!run) return false;
+  prepareCancellation(thread, run) {
     if (!this.finishLifecycle(run, 'cancel')) return false;
     this.clearRun(thread);
     this.cancelProvider(run);
-    if (!stale) Object.assign(thread, cancelledState(run));
-    if (!stale) thread.error = undefined;
+    return true;
+  }
+
+  restoreCancelledState(thread, run, stale) {
+    if (stale) return;
+    Object.assign(thread, cancelledState(run));
+    thread.error = undefined;
+  }
+
+  cancelRun(thread, { stale = false } = {}) {
+    const run = thread.run;
+    if (!run) return false;
+    if (!this.prepareCancellation(thread, run)) return false;
+    this.restoreCancelledState(thread, run, stale);
     return true;
   }
 

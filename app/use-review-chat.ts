@@ -209,6 +209,65 @@ function errorFromResponse(value: unknown, status: number) {
   return `Chat returned ${status}.`;
 }
 
+async function fetchChatState(access: string, signal: AbortSignal) {
+  const response = await fetch(endpoint(access), {
+    cache: "no-store",
+    signal,
+  });
+  const value = await responseData(response);
+  if (!response.ok) throw new Error(errorFromResponse(value, response.status));
+  return readState(value);
+}
+
+function canStartReconcile(
+  access: string | null,
+  currentAccess: string | null,
+  commandInFlight: boolean,
+  getController: AbortController | null,
+): access is string {
+  return Boolean(
+    access &&
+      currentAccess === access &&
+      !commandInFlight &&
+      !getController,
+  );
+}
+
+function acceptReconciledState(
+  activeAccess: string | null,
+  access: string,
+  next: ReviewChatState,
+  request: number,
+  preserveError: boolean,
+  applyResponse: (state: ReviewChatState, request: number) => boolean,
+  clearError: () => void,
+) {
+  if (activeAccess !== access) return;
+  if (!applyResponse(next, request)) return;
+  if (!preserveError) clearError();
+}
+
+function releaseGetController(
+  current: AbortController | null,
+  completed: AbortController,
+) {
+  return current === completed ? null : current;
+}
+
+function ignoreLoadError(
+  timedOut: boolean,
+  aborted: boolean,
+  request: number,
+  currentRequest: number,
+) {
+  return (!timedOut && aborted) || request !== currentRequest;
+}
+
+function loadErrorMessage(error: unknown, timedOut: boolean) {
+  if (timedOut) return "The chat request timed out.";
+  return error instanceof Error ? error.message : "Could not load chat.";
+}
+
 function commandTarget({ scope, path }: ThreadTarget) {
   return scope === "file" ? { scope, path } : { scope };
 }
@@ -266,14 +325,13 @@ export function useReviewChat({
 
   const reconcileBestEffort = useCallback(
     async ({ preserveError = false }: { preserveError?: boolean } = {}) => {
-      if (
-        !access ||
-        currentAccess.current !== access ||
-        commandInFlight.current ||
-        getController.current
-      ) {
-        return;
-      }
+      const canReconcile = canStartReconcile(
+        access,
+        currentAccess.current,
+        commandInFlight.current,
+        getController.current,
+      );
+      if (!canReconcile) return;
       const request = ++requestNumber.current;
       const controller = new AbortController();
       getController.current = controller;
@@ -282,20 +340,23 @@ export function useReviewChat({
         CHAT_GET_TIMEOUT_MS,
       );
       try {
-        const response = await fetch(endpoint(access), {
-          cache: "no-store",
-          signal: controller.signal,
-        });
-        const value = await responseData(response);
-        if (!response.ok) throw new Error(errorFromResponse(value, response.status));
-        const next = readState(value);
-        if (currentAccess.current === access && applyResponse(next, request)) {
-          if (!preserveError) setError(null);
-        }
+        const next = await fetchChatState(access, controller.signal);
+        acceptReconciledState(
+          currentAccess.current,
+          access,
+          next,
+          request,
+          preserveError,
+          applyResponse,
+          () => setError(null),
+        );
       } catch {
       } finally {
         window.clearTimeout(timeout);
-        if (getController.current === controller) getController.current = null;
+        getController.current = releaseGetController(
+          getController.current,
+          controller,
+        );
       }
     },
     [access, applyResponse],
@@ -327,37 +388,34 @@ export function useReviewChat({
     }, CHAT_GET_TIMEOUT_MS);
     setLoading(true);
     setError(null);
-    void fetch(endpoint(access), {
-      cache: "no-store",
-      signal: controller.signal,
-    })
-      .then(async (response) => {
-        const value = await responseData(response);
-        if (!response.ok) throw new Error(errorFromResponse(value, response.status));
-        return readState(value);
-      })
+    void fetchChatState(access, controller.signal)
       .then((next) => {
         if (currentAccess.current === access) applyResponse(next, request);
       })
       .catch((nextError: unknown) => {
-        if ((!timedOut && controller.signal.aborted) || request !== requestNumber.current) return;
-        setError(
-          timedOut
-            ? "The chat request timed out."
-            : nextError instanceof Error
-              ? nextError.message
-              : "Could not load chat.",
-        );
+        if (ignoreLoadError(
+          timedOut,
+          controller.signal.aborted,
+          request,
+          requestNumber.current,
+        )) return;
+        setError(loadErrorMessage(nextError, timedOut));
       })
       .finally(() => {
         window.clearTimeout(timeout);
-        if (getController.current === controller) getController.current = null;
+        getController.current = releaseGetController(
+          getController.current,
+          controller,
+        );
         if (request === requestNumber.current) setLoading(false);
       });
     return () => {
       window.clearTimeout(timeout);
       controller.abort();
-      if (getController.current === controller) getController.current = null;
+      getController.current = releaseGetController(
+        getController.current,
+        controller,
+      );
     };
   }, [access, applyResponse, applyState, refreshKey, reloadKey]);
 

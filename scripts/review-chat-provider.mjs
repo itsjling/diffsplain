@@ -41,11 +41,20 @@ function childOutput(chunks) {
   return Buffer.concat(chunks).toString('utf8');
 }
 
-function childFailure(agent, status, signal, stdout, stderr) {
+function childStatus(status, signal) {
+  return status ?? signal;
+}
+
+function childDiagnosticSuffix(stdout, stderr) {
   const detail = stderr.trim() || stdout.trim();
-  const suffix = detail ? `: ${detail.slice(-600)}` : '';
-  const error = new Error(`${agent} exited with status ${status ?? signal}${suffix}`);
-  error.lifecycleMessage = `${agent} exited with status ${status ?? signal}`;
+  return detail ? `: ${detail.slice(-600)}` : '';
+}
+
+function childFailure(agent, status, signal, stdout, stderr) {
+  const observedStatus = childStatus(status, signal);
+  const suffix = childDiagnosticSuffix(stdout, stderr);
+  const error = new Error(`${agent} exited with status ${observedStatus}${suffix}`);
+  error.lifecycleMessage = `${agent} exited with status ${observedStatus}`;
   return error;
 }
 
