@@ -94,7 +94,7 @@ test('documents ordered agent-context exclusions', () => {
   assert.match(snapshot, /full patch/i);
 });
 
-test('documents the picker order and Cursor CLI', () => {
+test('documents default selection, picker order, and Cursor CLI', () => {
   const providerNames = enabledCodingAgents.map(
     (agent) => (agent === 'opencode'
       ? 'OpenCode'
@@ -114,11 +114,15 @@ test('documents the picker order and Cursor CLI', () => {
   for (const document of [docs, agentNotes]) {
     const text = document.replace(/\s+/g, ' ');
     assert.match(text, /interactive terminal/i);
+    assert.match(text, /config agent (?:NAME|codex)/i);
+    assert.match(text, /configured default/i);
     assert.match(
       text,
-      /does not choose an agent for you|pass `--agent NAME` or (use )?`--no-agent`/i,
+      /does not (?:fall through|discover|switch)|instead of discovering/i,
     );
   }
+  assert.match(docs, /Selection order is `--no-agent`.*`--agent`/is);
+  assert.match(readme, /config agent --unset/);
   assert.doesNotMatch(helpText, /Automatic agent selection/);
   assert.match(notes, /non-interactive Ask mode/i);
   assert.match(notes, /--trust/i);

@@ -135,7 +135,7 @@ Options:
   --cache-dir PATH    Bare cache for fetched Git objects
   --agent NAME        Use codex, claude, copilot, cursor, or opencode
                       Cursor needs version 2026.08.11 or newer
-                      Without --agent, choose from usable agents in a terminal
+                      Overrides the configured default for this run
   --codex-bin FILE    Codex CLI path (default: codex)
   --model NAME        Model passed to the coding agent
   --reasoning LEVEL   Agent reasoning effort when supported
@@ -148,8 +148,9 @@ Options:
   --no-checkout-access
                       Limit notes to the supplied snapshot
 
-Without --agent, an interactive terminal is required. In scripts, pass
---agent NAME. Use diffsplain --no-agent for a plain review.`);
+Without --agent or a configured default, an interactive terminal is required.
+Use diffsplain config agent NAME to set a default. Use diffsplain --no-agent
+for a plain review.`);
   process.exit(0);
 }
 

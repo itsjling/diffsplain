@@ -8,6 +8,7 @@ import {
   isAbsolute,
   join,
 } from 'node:path';
+import { readConfiguredAgent } from './agent-config.mjs';
 
 export const codingAgentCapabilities = {
   codex: { binary: 'codex', model: true, reasoning: true },
@@ -263,14 +264,29 @@ function nonInteractiveSelectionError() {
   );
 }
 
-async function selectRequestedCodingAgent(requested, available) {
+async function selectRequestedCodingAgent(
+  requested,
+  available,
+  { configured = false } = {},
+) {
   if (!codingAgents.includes(requested)) {
+    if (configured) {
+      throw new Error(
+        `Configured coding agent "${requested}" is unsupported. Choose ${enabledCodingAgents.join(', ')} with diffsplain config agent NAME, or use --agent NAME for this run.`,
+      );
+    }
     throw new Error(
       `Unsupported agent "${requested}". Choose ${enabledCodingAgents.join(', ')}.`,
     );
   }
   const result = await available(requested);
   if (!availableResult(result)) {
+    if (configured) {
+      const reason = typeof result === 'object' ? result.reason : undefined;
+      throw new Error(
+        `Configured coding agent "${requested}" is not available.${reason ? ` ${reason}` : ''} Change it with diffsplain config agent NAME, or use --agent NAME for this run.`,
+      );
+    }
     throw unavailableAgentError(requested, result);
   }
   return requested;
@@ -340,13 +356,21 @@ export async function selectCodingAgent(
   requested,
   {
     available = commandAvailable,
+    configuredAgent = readConfiguredAgent,
     input = process.stdin,
     output = process.stderr,
     signal,
   } = {},
 ) {
-  if (requested) {
+  if (requested !== undefined) {
     return selectRequestedCodingAgent(requested, available);
+  }
+
+  const configured = await configuredAgent();
+  if (configured !== undefined) {
+    return selectRequestedCodingAgent(configured, available, {
+      configured: true,
+    });
   }
 
   if (!input?.isTTY || !output?.isTTY) {

@@ -473,6 +473,35 @@ test('accepts the doctor command without review options', () => {
   );
 });
 
+test('parses only the supported agent configuration commands', () => {
+  assert.deepEqual(parseCliArgs(['config', 'agent']), {
+    config: { kind: 'show' },
+  });
+  assert.deepEqual(parseCliArgs(['config', 'agent', 'claude']), {
+    config: { kind: 'set', agent: 'claude' },
+  });
+  assert.deepEqual(parseCliArgs(['config', 'agent', '--unset']), {
+    config: { kind: 'unset' },
+  });
+
+  for (const args of [
+    ['config'],
+    ['config', 'model'],
+    ['config', 'agent', 'claude', '--unset'],
+    ['config', 'agent', '--unset=true'],
+  ]) {
+    assert.throws(
+      () => parseCliArgs(args),
+      /diffsplain config agent/i,
+      args.join(' '),
+    );
+  }
+  assert.throws(
+    () => parseCliArgs(['config', 'agent', 'gemini']),
+    /unsupported agent.*codex.*claude.*copilot.*cursor.*opencode/i,
+  );
+});
+
 test('passes agent model, reasoning, and batch settings through', () => {
   const parsed = parseCliArgs(
     [

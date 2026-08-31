@@ -96,6 +96,32 @@ npx diffsplain \
   --head HEAD_REF
 ```
 
+## Choose a default agent
+
+Save one default coding agent for future reviews:
+
+```sh
+npx diffsplain config agent codex
+```
+
+Show or remove it later:
+
+```sh
+npx diffsplain config agent
+npx diffsplain config agent --unset
+```
+
+Selection order is `--no-agent`, an explicit `--agent`, then the configured
+default. The two per-run options cannot be combined. When none is present,
+Diffsplain keeps the interactive picker. The configured default also works in
+scripts and other non-interactive runs.
+
+Diffsplain validates a configured agent just like an explicit choice. A
+damaged preference, unsupported name, or unavailable agent stops the run; it
+does not fall through to discovery or the picker. Use `--agent NAME` for a
+one-run override or `--no-agent` for a plain review without reading the saved
+preference.
+
 ## Agent checkout access
 
 For the current checkout, `--worktree`, and `--base REF` without `--head`, a
@@ -206,6 +232,7 @@ pnpm run doctor
 | Argument | Use |
 | --- | --- |
 | `doctor` | Show dependency paths, versions, and readiness. |
+| `config agent [NAME\|--unset]` | Show, set, or unset the default coding agent. |
 | `REPO`, `--repo PATH\|URL\|OWNER/REPO` | Select a local path, Git URL, or GitHub repo. |
 | `--pr NUMBER\|URL` | Review a GitHub pull request. |
 | `--branch NAME` | Compare a remote branch with its default branch. |
@@ -248,14 +275,14 @@ accept `--model`. Only Codex and OpenCode accept `--reasoning`; its levels are
 `--batch-size` defaults to `12` and accepts `1` through `50`. `--jobs` defaults
 to `3` and accepts `1` through `8`. `--port` accepts `0` through `65535`. When
 you omit it, Diffsplain starts at `2299` and increments until it finds a free
-port. When you omit `--agent` in an interactive terminal, Diffsplain lists the
-usable choices in this order: Codex, Claude, Copilot, Cursor, then OpenCode.
-Choose one before the review starts. In a script or other non-interactive run,
-pass `--agent NAME` or `--no-agent`. Diffsplain does not choose an agent for
-you. Cursor Agent needs version 2026.08.11 or newer. Note batches run in Ask
-mode with the user's Cursor login and home. Diffsplain passes `--trust` and
-`--workspace` for its snapshot directory. Cursor still contacts its own
-service.
+port. When you omit `--agent` and have no configured default in an interactive
+terminal, Diffsplain lists the usable choices in this order: Codex, Claude,
+Copilot, Cursor, then OpenCode. Choose one before the review starts. In a
+script or other non-interactive run, configure a default, pass `--agent NAME`,
+or use `--no-agent`. Cursor Agent needs version 2026.08.11 or newer. Note
+batches run in Ask mode with the user's Cursor login and home. Diffsplain
+passes `--trust` and `--workspace` for its snapshot directory. Cursor still
+contacts its own service.
 `--agent cursor` reports an upgrade or flag error before note generation when
 the CLI is too old or missing required flags. Once Diffsplain chooses an
 agent, a failed check or run ends the command; Diffsplain does not switch
