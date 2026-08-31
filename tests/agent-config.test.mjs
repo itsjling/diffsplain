@@ -34,6 +34,14 @@ test('uses deterministic standard per-user paths on each platform', () => {
   );
   assert.equal(
     agentConfigPath({
+      platform: 'linux',
+      env: { XDG_CONFIG_HOME: 'relative/config' },
+      homeDirectory: '/home/reviewer',
+    }),
+    '/home/reviewer/.config/diffsplain/config.json',
+  );
+  assert.equal(
+    agentConfigPath({
       platform: 'darwin',
       env: {},
       homeDirectory: '/Users/reviewer',

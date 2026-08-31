@@ -31,7 +31,7 @@ function windowsConfigPath(paths, env, homeDirectory) {
 }
 
 function unixConfigPath(paths, env, homeDirectory, platform) {
-  if (env.XDG_CONFIG_HOME) {
+  if (paths.isAbsolute(env.XDG_CONFIG_HOME || '')) {
     return paths.join(env.XDG_CONFIG_HOME, 'diffsplain', 'config.json');
   }
   const base = platform === 'darwin'
