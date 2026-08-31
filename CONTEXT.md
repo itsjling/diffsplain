@@ -23,6 +23,20 @@ _Avoid_: Diff data, output file
 A short coding-agent explanation attached to one changed file.
 _Avoid_: Summary, review comment
 
+**Agent note state**:
+The state of one file's Agent note: waiting, ready, failed, or excluded.
+_Avoid_: Generation progress
+
+**Agent usage**:
+Provider-reported token use for Agent notes and Review chat during one Review.
+It covers input, output, and cache activity, but not account-wide history.
+_Avoid_: Cost, account usage
+
+**Fast mode**:
+An opt-in provider mode that asks a supported coding agent to respond faster
+without changing the selected model or Agent note cache identity.
+_Avoid_: Fast model, priority mode
+
 **Change summary**:
 A short explanation of the whole change rather than one file.
 _Avoid_: Agent note, file summary
