@@ -676,8 +676,19 @@ test("waits for the current access handoff before it loads protected chat", asyn
     async (page) => {
       const previousAccess = "b".repeat(43);
       const currentAccess = access;
+      const nextAccess = "c".repeat(43);
       const commands = [];
       const requestedAccesses = [];
+      let acceptedAccess = currentAccess;
+      let pauseNextNew = false;
+      let markNewPaused;
+      let resumeNew;
+      const newPaused = new Promise((resolve) => {
+        markNewPaused = resolve;
+      });
+      const newResumed = new Promise((resolve) => {
+        resumeNew = resolve;
+      });
       let state = chatState();
 
       await page.addInitScript(() => {
@@ -725,7 +736,7 @@ test("waits for the current access handoff before it loads protected chat", asyn
         const request = route.request();
         const requestAccess = new URL(request.url()).searchParams.get("access");
         requestedAccesses.push(requestAccess);
-        if (requestAccess !== currentAccess) {
+        if (requestAccess !== acceptedAccess) {
           await route.fulfill({
             json: { error: "Forbidden" },
             status: 403,
@@ -738,6 +749,10 @@ test("waits for the current access handoff before it loads protected chat", asyn
         }
         const command = JSON.parse(request.postData() ?? "{}");
         commands.push(command);
+        if (command.type === "new" && pauseNextNew) {
+          markNewPaused();
+          await newResumed;
+        }
         if (command.type === "new") {
           state = chatState({
             threads: [
@@ -815,6 +830,37 @@ test("waits for the current access handoff before it loads protected chat", asyn
       await restoredChat;
       await page.getByRole("heading", { name: "Writing an answer" }).waitFor();
       assert.ok(requestedAccesses.every((value) => value === currentAccess));
+
+      state = chatState({
+        threads: [
+          thread({
+            id: "stale-protected-thread",
+            path: "src/new-name.ts",
+            scope: "file",
+            status: "stale",
+          }),
+        ],
+      });
+      await emitReviewChatEvent(page, "chat");
+      const startNewThread = page.getByRole("button", { name: "Start new thread" });
+      await startNewThread.waitFor();
+      pauseNextNew = true;
+      const commandFinished = startNewThread.click();
+      await newPaused;
+      acceptedAccess = nextAccess;
+      const currentChatLoaded = page.waitForResponse(
+        (response) =>
+          new URL(response.url()).pathname === "/api/chat" &&
+          response.request().method() === "GET" &&
+          new URL(response.url()).searchParams.get("access") === nextAccess,
+        { timeout: 2_000 },
+      );
+      await emitReviewChatEvent(page, "access", nextAccess);
+      resumeNew();
+      await commandFinished;
+      await currentChatLoaded;
+      await page.getByRole("textbox", { name: "Ask about this file" }).waitFor();
+      assert.equal(requestedAccesses.at(-1), nextAccess);
     },
   );
 });

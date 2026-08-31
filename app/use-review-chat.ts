@@ -485,7 +485,11 @@ export function useReviewChat({
         window.clearTimeout(timeout);
         commandInFlight.current = false;
         setCommandPending(false);
-        if (ambiguousFailure) void reconcileBestEffort({ preserveError: true });
+        if (currentAccess.current !== access) {
+          setReloadKey((current) => current + 1);
+        } else if (ambiguousFailure) {
+          void reconcileBestEffort({ preserveError: true });
+        }
       }
     },
     [access, applyResponse, reconcileBestEffort],
