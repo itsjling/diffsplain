@@ -14,6 +14,7 @@ import {
   findCommand,
   inspectCursorCompatibility,
   parseAgentResponse,
+  parseAgentUsage,
   parseCursorStreamResponse,
   selectCodingAgent,
   summaryAgentEnvironment,
@@ -339,7 +340,7 @@ test('builds exact snapshot-only plans for each coding agent', () => {
   assert.deepEqual(agentCommand({ ...common, agent: 'codex' }), {
     command: '/agent',
     args: [
-      'exec', '--ephemeral', '--sandbox', 'read-only',
+      'exec', '--ephemeral', '--json', '--sandbox', 'read-only',
       '--ignore-user-config', '--ignore-rules', '--color', 'never',
       '--skip-git-repo-check', '-C', '/tmp', '--output-schema',
       '/tmp/schema.json', '--config', 'mcp_servers={}', '--config',
@@ -433,6 +434,7 @@ test('builds checkout-read-only provider plans with the real repo and normal env
     args: [
       'exec',
       '--ephemeral',
+      '--json',
       '--sandbox',
       'read-only',
       '--color',
@@ -690,6 +692,66 @@ test('reads structured output from each coding agent', () => {
       ),
     /OpenCode did not return summary JSON/,
   );
+});
+
+test('reads documented provider usage without guessing missing fields', () => {
+  const response = { change: { title: 'A note' } };
+  const codex = [
+    { type: 'item.completed', item: { type: 'agent_message', text: JSON.stringify(response) } },
+    {
+      type: 'turn.completed',
+      usage: {
+        input_tokens: 120,
+        output_tokens: 30,
+        cached_input_tokens: 80,
+        cache_write_input_tokens: 10,
+      },
+    },
+  ].map(JSON.stringify).join('\n');
+  assert.deepEqual(parseAgentResponse('codex', codex), response);
+  assert.deepEqual(parseAgentUsage('codex', codex), {
+    inputTokens: 120,
+    outputTokens: 30,
+    cacheReadTokens: 80,
+    cacheWriteTokens: 10,
+  });
+
+  assert.deepEqual(parseAgentUsage('claude', JSON.stringify({
+    structured_output: response,
+    usage: {
+      input_tokens: 25,
+      output_tokens: 9,
+      cache_read_input_tokens: 14,
+      cache_creation_input_tokens: 3,
+    },
+  })), {
+    inputTokens: 25,
+    outputTokens: 9,
+    cacheReadTokens: 14,
+    cacheWriteTokens: 3,
+  });
+
+  const openCode = [
+    { type: 'text', part: { text: JSON.stringify(response) } },
+    {
+      type: 'step_finish',
+      part: {
+        tokens: {
+          input: 40,
+          output: 11,
+          cache: { read: 17, write: 2 },
+        },
+      },
+    },
+  ].map(JSON.stringify).join('\n');
+  assert.deepEqual(parseAgentUsage('opencode', openCode), {
+    inputTokens: 40,
+    outputTokens: 11,
+    cacheReadTokens: 17,
+    cacheWriteTokens: 2,
+  });
+  assert.equal(parseAgentUsage('cursor', '{}'), undefined);
+  assert.equal(parseAgentUsage('copilot', '{}'), undefined);
 });
 
 test('uses the Cursor Agent binary name and allows an override', () => {

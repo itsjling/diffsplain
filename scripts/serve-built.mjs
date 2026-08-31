@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 
-import { randomBytes, timingSafeEqual } from 'node:crypto';
-import { watchFile, unwatchFile } from 'node:fs';
+import { createHash, randomBytes, timingSafeEqual } from 'node:crypto';
+import { readFileSync, watchFile, unwatchFile } from 'node:fs';
 import { readFile, stat } from 'node:fs/promises';
 import { createServer } from 'node:http';
 import { dirname, extname, resolve, sep } from 'node:path';
@@ -12,6 +12,13 @@ import {
   createReviewChat,
 } from './review-chat.mjs';
 import { publicError } from './review-chat-context.mjs';
+import {
+  emptyUsageAccumulator,
+  formatReviewUsage,
+  recordUsage,
+  reviewUsage,
+  usageSummary,
+} from './agent-usage.mjs';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const clientRoot = resolve(root, 'dist');
@@ -266,7 +273,7 @@ function matchingAccess(value, expectedValue) {
 
 async function fetchAsset(url) {
   if (url.pathname === '/diff-data.json') {
-    return fileResponse(output, { live: true });
+    return liveSnapshotResponse();
   }
   const pathname = decodeURIComponent(url.pathname);
   const file = resolve(
@@ -277,6 +284,28 @@ async function fetchAsset(url) {
     return clientError();
   }
   return fileResponse(file);
+}
+
+async function liveSnapshotResponse() {
+  let snapshot;
+  try {
+    snapshot = JSON.parse(await readFile(output, 'utf8'));
+  } catch {
+    return fileResponse(output, { live: true });
+  }
+  const fingerprint = snapshot?.notes?.reviewFingerprint;
+  if (!fingerprint) {
+    return fileResponse(output, { live: true });
+  }
+  const noteSummary = snapshot.usage?.agentNotes ||
+    usageSummary(emptyUsageAccumulator());
+  const chatSummary = currentChatUsage(fingerprint);
+  const usage = reviewUsage(noteSummary, chatSummary);
+  const version = createHash('sha256')
+    .update(JSON.stringify({ version: snapshot.version, usage }))
+    .digest('hex')
+    .slice(0, 12);
+  return jsonResponse({ ...snapshot, version, usage });
 }
 
 function jsonResponse(value, status = 200) {
@@ -399,6 +428,43 @@ function logObservedError(area, error) {
   console.log(`Diffsplain ${area.replaceAll('-', ' ')} error: ${publicError(error)}`);
 }
 
+let chatUsageFingerprint;
+let chatUsage = emptyUsageAccumulator();
+let reviewChat;
+
+function snapshotNoteUsage() {
+  try {
+    return JSON.parse(readFileSync(output, 'utf8')).usage?.agentNotes;
+  } catch {
+    return undefined;
+  }
+}
+
+function currentChatUsage(fingerprint) {
+  if (fingerprint !== chatUsageFingerprint) {
+    chatUsageFingerprint = fingerprint;
+    chatUsage = emptyUsageAccumulator();
+  }
+  return usageSummary(chatUsage);
+}
+
+function recordChatUsage({ reviewFingerprint, usage }) {
+  if (
+    !reviewFingerprint ||
+    reviewChat?.getState().fingerprint !== reviewFingerprint
+  ) {
+    return;
+  }
+  currentChatUsage(reviewFingerprint);
+  chatUsage = recordUsage(chatUsage, usage);
+  const totals = reviewUsage(
+    snapshotNoteUsage() || usageSummary(emptyUsageAccumulator()),
+    usageSummary(chatUsage),
+  );
+  console.log(formatReviewUsage(totals));
+  broadcastEvent('update');
+}
+
 const chatProviderAccess = chatAccessMode === 'checkout-read-only'
   ? { mode: chatAccessMode, root: resolve(chatAccessRoot) }
   : { mode: chatAccessMode, reason: 'target-mismatch' };
@@ -409,9 +475,10 @@ const chatProvider = chatAgent
       model: chatModel,
       reasoning: chatReasoning,
       accessMode: chatProviderAccess,
+      onUsage: recordChatUsage,
     })
   : undefined;
-const reviewChat = createReviewChat({
+reviewChat = createReviewChat({
   snapshotPath: chatSnapshot,
   provider: chatProvider,
   accessMode: chatProviderAccess,
@@ -611,6 +678,7 @@ watchFile(output, { interval: 100 }, (current, previous) => {
     return;
   }
   reviewChat.refresh();
+  currentChatUsage(reviewChat.getState().fingerprint);
   broadcastEvent('update');
 });
 

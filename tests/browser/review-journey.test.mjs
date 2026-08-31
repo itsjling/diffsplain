@@ -112,6 +112,25 @@ function fixture(version = "one") {
   return snapshot(version, files);
 }
 
+function usageFixture(version, reviewChat, combined) {
+  const value = fixture(version);
+  value.usage = {
+    agentNotes: {
+      status: "complete",
+      calls: 2,
+      reportedCalls: 2,
+      tokens: {
+        inputTokens: 12_400,
+        outputTokens: 840,
+        cacheReadTokens: 9_600,
+      },
+    },
+    reviewChat,
+    combined,
+  };
+  return value;
+}
+
 function excludedFixture(label, notes) {
   const value = fixture(`excluded-${label}`);
   const excluded = value.files[0];
@@ -539,6 +558,63 @@ test("shows error, empty, binary, truncated, and refreshed review states on desk
     await writeSnapshot(fixture("two"));
     await page.getByRole("heading", { name: "Binary note two" }).waitFor();
   });
+});
+
+test("shows complete, partial, unavailable, and live-updated usage at 320 pixels", async () => {
+  await runReviewJourney(
+    "agent usage states",
+    { viewport: { width: 320, height: 780 } },
+    async (page) => {
+      await writeSnapshot(usageFixture(
+        "usage-partial",
+        { status: "unavailable", calls: 1, reportedCalls: 0 },
+        {
+          status: "partial",
+          calls: 3,
+          reportedCalls: 2,
+          tokens: {
+            inputTokens: 12_400,
+            outputTokens: 840,
+            cacheReadTokens: 9_600,
+          },
+        },
+      ));
+      await page.goto(serverUrl);
+
+      const usage = page.getByRole("region", { name: "Agent usage" });
+      await usage.getByText("Unavailable").waitFor();
+      await usage.getByText("Partial", { exact: true }).first().waitFor();
+      await usage.getByText("Input 12,400", { exact: true }).first().waitFor();
+
+      await writeSnapshot(usageFixture(
+        "usage-complete",
+        {
+          status: "complete",
+          calls: 1,
+          reportedCalls: 1,
+          tokens: { inputTokens: 600, outputTokens: 40 },
+        },
+        {
+          status: "complete",
+          calls: 3,
+          reportedCalls: 3,
+          tokens: {
+            inputTokens: 13_000,
+            outputTokens: 880,
+            cacheReadTokens: 9_600,
+          },
+        },
+      ));
+      await usage.getByText("Input 13,000", { exact: true }).waitFor();
+      await usage.getByText("Unavailable").waitFor({ state: "hidden" });
+      assert.equal(
+        await page.evaluate(() => document.documentElement.scrollWidth),
+        320,
+      );
+      const results = await new AxeBuilder({ page }).include(".usage-panel").analyze();
+      assert.deepEqual(results.violations, []);
+    },
+  );
 });
 
 test("does not credit stale fallback text to the prior note writer", async () => {

@@ -461,6 +461,102 @@ test('timeout reaps a built-in provider child that ignores SIGTERM', async () =>
   }
 });
 
+test('reports structured usage for successful and failed provider calls', async () => {
+  const fixture = await createFixture();
+  const successBinary = join(fixture.directory, 'claude-success');
+  const failureBinary = join(fixture.directory, 'claude-failure');
+  const missingBinary = join(fixture.directory, 'claude-missing-usage');
+  const usage = {
+    input_tokens: 31,
+    output_tokens: 7,
+    cache_read_input_tokens: 19,
+    cache_creation_input_tokens: 4,
+  };
+  await writeFile(successBinary, [
+    '#!/usr/bin/env node',
+    `process.stdout.write(${JSON.stringify(JSON.stringify({ structured_output: answer(), usage }))});`,
+    '',
+  ].join('\n'));
+  await writeFile(failureBinary, [
+    '#!/usr/bin/env node',
+    `process.stdout.write(${JSON.stringify(JSON.stringify({ usage }))});`,
+    'process.exitCode = 1;',
+    '',
+  ].join('\n'));
+  await writeFile(missingBinary, [
+    '#!/usr/bin/env node',
+    `process.stdout.write(${JSON.stringify(JSON.stringify({ structured_output: answer() }))});`,
+    '',
+  ].join('\n'));
+  await chmod(successBinary, 0o755);
+  await chmod(failureBinary, 0o755);
+  await chmod(missingBinary, 0o755);
+  const events = [];
+  const request = {
+    prompt: 'Answer.',
+    responseSchema: { type: 'object' },
+  };
+
+  try {
+    const success = createCodingAgentChatProvider({
+      agent: 'claude',
+      binary: successBinary,
+      onUsage: (event) => events.push(event),
+    });
+    assert.deepEqual(
+      await success.run(request, { reviewFingerprint: 'review-one' }).promise,
+      answer(),
+    );
+    success.close();
+
+    const failure = createCodingAgentChatProvider({
+      agent: 'claude',
+      binary: failureBinary,
+      onUsage: (event) => events.push(event),
+    });
+    await assert.rejects(
+      failure.run(request, { reviewFingerprint: 'review-one' }).promise,
+      /exited with status 1/,
+    );
+    failure.close();
+
+    const missing = createCodingAgentChatProvider({
+      agent: 'claude',
+      binary: missingBinary,
+      onUsage: (event) => events.push(event),
+    });
+    assert.deepEqual(
+      await missing.run(request, { reviewFingerprint: 'review-one' }).promise,
+      answer(),
+    );
+    missing.close();
+
+    assert.deepEqual(events, [
+      {
+        reviewFingerprint: 'review-one',
+        usage: {
+          inputTokens: 31,
+          outputTokens: 7,
+          cacheReadTokens: 19,
+          cacheWriteTokens: 4,
+        },
+      },
+      {
+        reviewFingerprint: 'review-one',
+        usage: {
+          inputTokens: 31,
+          outputTokens: 7,
+          cacheReadTokens: 19,
+          cacheWriteTokens: 4,
+        },
+      },
+      { reviewFingerprint: 'review-one', usage: undefined },
+    ]);
+  } finally {
+    await rm(fixture.directory, { recursive: true, force: true });
+  }
+});
+
 test('sends prior thread history to each fresh provider question', async () => {
   const fixture = await createFixture();
   const provider = controlledProvider();

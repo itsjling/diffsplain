@@ -70,6 +70,7 @@ const requiredPackageFiles = [
   'package.json',
   'dist/index.html',
   'scripts/access-token.mjs',
+  'scripts/agent-usage.mjs',
   'scripts/agent-config.mjs',
   'scripts/agent-exclusions.mjs',
   'scripts/agent-review.mjs',
@@ -92,7 +93,7 @@ const requiredPackageFiles = [
   'scripts/summary-path.mjs',
   'scripts/support-record.mjs',
 ];
-const allowedPackageFile = /^(README(?:\.md)?|LICENSE(?:\.md)?|NOTICE(?:\.md)?|package\.json|dist\/.+|scripts\/(?:access-token|agent-config|agent-exclusions|agent-review|build-diff-data|cache|cli-args|coding-agents|dev|doctor|generate-summaries|local-target|mock-agent|present|presenter-runtime|review-chat(?:-context|-controller|-provider)?|serve-built|summary-path|support-record)\.mjs)$/;
+const allowedPackageFile = /^(README(?:\.md)?|LICENSE(?:\.md)?|NOTICE(?:\.md)?|package\.json|dist\/.+|scripts\/(?:access-token|agent-config|agent-exclusions|agent-review|agent-usage|build-diff-data|cache|cli-args|coding-agents|dev|doctor|generate-summaries|local-target|mock-agent|present|presenter-runtime|review-chat(?:-context|-controller|-provider)?|serve-built|summary-path|support-record)\.mjs)$/;
 const privatePackageFile = /(^|\/)(?:\.env|\.npmrc|\.git|\.github|\.agents|\.codex)(?:\/|$)|\.(?:pem|key)$/i;
 
 export function validatePackageManifest(pack) {

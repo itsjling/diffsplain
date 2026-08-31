@@ -9,6 +9,7 @@ import { join } from 'node:path';
 import {
   agentCommand,
   parseAgentResponse,
+  parseAgentUsage,
 } from './coding-agents.mjs';
 
 const maximumProviderOutputBytes = 1024 * 1024;
@@ -101,6 +102,7 @@ function providerOptions(options) {
     reasoning: options.reasoning,
     accessMode: options.accessMode,
     env: providerEnvironment(options),
+    onUsage: typeof options.onUsage === 'function' ? options.onUsage : noChange,
   };
 }
 
@@ -145,12 +147,15 @@ function preparedProviderRequest(options, request) {
 }
 
 class ChildExecution {
-  constructor({ invocation, input, agent, signal, temporary }) {
+  constructor({ invocation, input, agent, signal, temporary, onUsage, usageContext }) {
     this.invocation = invocation;
     this.input = input;
     this.agent = agent;
     this.signal = signal;
     this.temporary = temporary;
+    this.onUsage = onUsage;
+    this.usageContext = usageContext;
+    this.usageReported = false;
     this.child = undefined;
     this.settled = false;
     this.closed = false;
@@ -277,9 +282,21 @@ class ChildExecution {
   finishClose() {
     if (this.closed) return;
     this.closed = true;
+    this.reportUsage();
     this.clearForceKill();
     removeTemporary(this.temporary);
     this.resolveFinished();
+  }
+
+  reportUsage() {
+    if (this.usageReported) return;
+    this.usageReported = true;
+    try {
+      this.onUsage({
+        ...this.usageContext,
+        usage: parseAgentUsage(this.agent, childOutput(this.stdout)),
+      });
+    } catch {}
   }
 
   resolve(value) {
@@ -300,6 +317,7 @@ class ChildExecution {
 
   closeChild(status, signal) {
     this.clearForceKill();
+    this.reportUsage();
     if (!this.settled) {
       const error = closeError(this, status, signal);
       if (error) this.reject(error);
@@ -325,7 +343,7 @@ function trackExecution(executions, execution) {
   return execution;
 }
 
-function runRequest(options, executions, request) {
+function runRequest(options, executions, request, usageContext = {}) {
   const prepared = preparedProviderRequest(options, request);
   const controller = new AbortController();
   const execution = providerChild({
@@ -334,6 +352,8 @@ function runRequest(options, executions, request) {
     agent: options.agent,
     signal: controller.signal,
     temporary: prepared.temporary,
+    onUsage: options.onUsage,
+    usageContext,
   });
   const tracked = trackExecution(executions, execution);
   return {
@@ -353,8 +373,8 @@ export function createCodingAgentChatProvider(options = {}) {
   const configured = providerOptions(options);
   const executions = new Set();
   return {
-    run(request) {
-      return runRequest(configured, executions, request);
+    run(request, context) {
+      return runRequest(configured, executions, request, context);
     },
     close() {
       closeExecutions(executions);

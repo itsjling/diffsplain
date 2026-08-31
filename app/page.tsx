@@ -53,6 +53,32 @@ type DiffNotes = {
   reasoning?: string;
 };
 
+type TokenUsage = {
+  inputTokens?: number;
+  outputTokens?: number;
+  cacheReadTokens?: number;
+  cacheWriteTokens?: number;
+};
+
+type UsageSummary =
+  | {
+      status: "complete" | "partial";
+      calls: number;
+      reportedCalls: number;
+      tokens: TokenUsage;
+    }
+  | {
+      status: "unavailable";
+      calls: number;
+      reportedCalls: 0;
+    };
+
+type ReviewUsage = {
+  agentNotes: UsageSummary;
+  reviewChat: UsageSummary;
+  combined: UsageSummary;
+};
+
 type DiffSnapshot = {
   version: string;
   generatedAt: string;
@@ -88,6 +114,7 @@ type DiffSnapshot = {
   };
   files: DiffFile[];
   notes?: DiffNotes;
+  usage?: ReviewUsage;
 };
 
 const SWIPE_THRESHOLD = 48;
@@ -137,6 +164,79 @@ function noteWriter(notes?: DiffNotes) {
     ? (AGENT_NAMES[notes.agent.toLowerCase()] ?? formatName(notes.agent))
     : "Unknown agent";
   return `${model} (${agent})`;
+}
+
+const TOKEN_LABELS: Array<[keyof TokenUsage, string]> = [
+  ["inputTokens", "Input"],
+  ["outputTokens", "Output"],
+  ["cacheReadTokens", "Cache read"],
+  ["cacheWriteTokens", "Cache write"],
+];
+
+function usageState(summary: UsageSummary) {
+  if (summary.status === "unavailable") return "Unavailable";
+  return summary.status === "partial" ? "Partial" : "Complete";
+}
+
+function UsageRow({
+  label,
+  summary,
+}: {
+  label: string;
+  summary: UsageSummary;
+}) {
+  if (summary.status === "unavailable") {
+    return (
+      <div className="usage-row">
+        <dt>{label}</dt>
+        <dd className="usage-unavailable">Unavailable</dd>
+      </div>
+    );
+  }
+  const tokens = TOKEN_LABELS.flatMap(([field, label]) => {
+    const value = summary.tokens[field];
+    return value === undefined ? [] : [{ field, label, value }];
+  });
+  return (
+    <div className="usage-row">
+      <dt>{label}</dt>
+      <dd>
+        {summary.status === "partial" ? (
+          <span className="usage-partial">Partial</span>
+        ) : null}
+        {tokens.map(({ field, label: tokenLabel, value }, index) => (
+          <span
+            aria-label={`${tokenLabel} ${value.toLocaleString()}`}
+            className="usage-token"
+            key={field}
+          >
+            {index === 0 ? "" : "· "}
+            {tokenLabel} {value.toLocaleString()}
+          </span>
+        ))}
+      </dd>
+    </div>
+  );
+}
+
+function UsagePanel({ usage }: { usage: ReviewUsage }) {
+  return (
+    <section
+      aria-label="Agent usage"
+      aria-live="polite"
+      className="usage-panel"
+    >
+      <header>
+        <span>Agent usage</span>
+        <span>{usageState(usage.combined)}</span>
+      </header>
+      <dl>
+        <UsageRow label="Notes" summary={usage.agentNotes} />
+        <UsageRow label="Chat" summary={usage.reviewChat} />
+        <UsageRow label="Total" summary={usage.combined} />
+      </dl>
+    </section>
+  );
 }
 
 // fallow-ignore-next-line complexity -- This formats every supported review target.
@@ -857,6 +957,7 @@ export default function Home() {
                   Ask agent
                 </button>
               </div>
+              {snapshot.usage ? <UsagePanel usage={snapshot.usage} /> : null}
               <ReviewChatRunningNotice
                 chat={chat}
                 chatVisible={summaryMode === "chat"}

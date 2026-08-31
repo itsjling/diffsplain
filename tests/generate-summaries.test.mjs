@@ -70,7 +70,11 @@ async function makeRepo() {
   return repo;
 }
 
-async function fakeCodex(root, response, { captureSchema = false } = {}) {
+async function fakeCodex(
+  root,
+  response,
+  { captureSchema = false, usage } = {},
+) {
   const bin = join(root, "fake-codex.mjs");
   const argsFile = join(root, "codex-args.json");
   const schemaFile = join(root, "codex-schema.json");
@@ -89,7 +93,14 @@ if (schema) {
   schemas.push(JSON.parse(readFileSync(schema, "utf8")));
   writeFileSync(${JSON.stringify(schemaFile)}, JSON.stringify(schemas));
 }` : ""}
-process.stdout.write(readFileSync(${JSON.stringify(responseFile)}, "utf8"));
+const responseText = readFileSync(${JSON.stringify(responseFile)}, "utf8");
+${usage ? `process.stdout.write([
+  JSON.stringify({
+    type: "item.completed",
+    item: { type: "agent_message", text: responseText },
+  }),
+  JSON.stringify({ type: "turn.completed", usage: ${JSON.stringify(usage)} }),
+].join("\\n"));` : 'process.stdout.write(responseText);'}
 `,
   );
   await chmod(bin, 0o755);
@@ -795,6 +806,14 @@ test("generates notes with Codex and rebuilds a selected range", async () => {
           risks: ["Consumers may rely on the old value."],
         },
       }),
+      {
+        usage: {
+          input_tokens: 100,
+          output_tokens: 20,
+          cached_input_tokens: 60,
+          cache_write_input_tokens: 5,
+        },
+      },
     );
 
     const commandArgs = [
@@ -853,6 +872,49 @@ test("generates notes with Codex and rebuilds a selected range", async () => {
     );
     assert.equal(snapshot.notes.fresh, true);
     assert.equal(snapshot.notes.complete, true);
+    assert.deepEqual(snapshot.usage, {
+      agentNotes: {
+        status: "complete",
+        calls: 2,
+        reportedCalls: 2,
+        tokens: {
+          inputTokens: 200,
+          outputTokens: 40,
+          cacheReadTokens: 120,
+          cacheWriteTokens: 10,
+        },
+      },
+      reviewChat: {
+        status: "complete",
+        calls: 0,
+        reportedCalls: 0,
+        tokens: { inputTokens: 0, outputTokens: 0 },
+      },
+      combined: {
+        status: "complete",
+        calls: 2,
+        reportedCalls: 2,
+        tokens: {
+          inputTokens: 200,
+          outputTokens: 40,
+          cacheReadTokens: 120,
+          cacheWriteTokens: 10,
+        },
+      },
+    });
+    assert.match(result.stdout, /Agent note usage: input 200, output 40/);
+    assert.match(result.stdout, /Combined agent usage: input 200, output 40/);
+
+    const reused = run(repo, commandArgs);
+    assert.equal(reused.status, 0, reused.stderr);
+    assert.match(reused.stdout, /No file summaries changed/);
+    const reusedSnapshot = JSON.parse(await readFile(output, "utf8"));
+    assert.deepEqual(reusedSnapshot.usage.agentNotes, {
+      status: "complete",
+      calls: 0,
+      reportedCalls: 0,
+      tokens: { inputTokens: 0, outputTokens: 0 },
+    });
 
     await chmod(output, 0o640);
     const snapshotResult = run(repo, [
@@ -1746,6 +1808,11 @@ test("discards delayed provider output after a local review changes", async () =
       saved.meta.reviewFingerprint,
       published.notes.reviewFingerprint,
     );
+    assert.deepEqual(published.usage.agentNotes, {
+      status: "unavailable",
+      calls: 2,
+      reportedCalls: 0,
+    });
   } finally {
     await rm(directory, { recursive: true, force: true });
     await rm(repo, { recursive: true, force: true });

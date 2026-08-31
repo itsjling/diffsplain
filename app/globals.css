@@ -972,6 +972,70 @@ kbd {
   color: var(--paper);
 }
 
+.usage-panel {
+  border-bottom: 1px solid var(--line);
+  border-top: 1px solid var(--line);
+  margin-bottom: 22px;
+  padding: 13px 0 11px;
+}
+
+.usage-panel header {
+  align-items: center;
+  color: var(--muted);
+  display: flex;
+  font: 650 9px/1.2 var(--font-geist-mono), monospace;
+  justify-content: space-between;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+
+.usage-panel header span:last-child {
+  color: var(--ink);
+  letter-spacing: 0.04em;
+}
+
+.usage-panel dl {
+  display: grid;
+  gap: 7px;
+  margin: 11px 0 0;
+}
+
+.usage-row {
+  align-items: baseline;
+  display: grid;
+  gap: 10px;
+  grid-template-columns: 38px minmax(0, 1fr);
+}
+
+.usage-row dt,
+.usage-row dd {
+  margin: 0;
+}
+
+.usage-row dt {
+  color: var(--muted);
+  font-size: 10px;
+  font-weight: 620;
+}
+
+.usage-row dd {
+  color: var(--ink);
+  display: flex;
+  flex-wrap: wrap;
+  font: 500 9px/1.45 var(--font-geist-mono), monospace;
+  gap: 0 6px;
+  min-width: 0;
+}
+
+.usage-partial {
+  color: var(--amber);
+  font-weight: 680;
+}
+
+.usage-unavailable {
+  color: var(--muted) !important;
+}
+
 .chat-background-notice {
   align-items: center;
   border-bottom: 1px solid var(--blue);

@@ -463,6 +463,27 @@ function parseClaudeResponse(stdout) {
   return envelope;
 }
 
+function jsonLines(stdout) {
+  const lines = stdout.trim().split('\n').filter(Boolean);
+  if (!lines.length) return undefined;
+  const events = lines.map(parseEvent);
+  return events.every(Boolean) ? events : undefined;
+}
+
+function parseCodexResponse(stdout) {
+  const events = jsonLines(stdout);
+  const message = events && [...events]
+    .reverse()
+    .find((event) =>
+      event.type === 'item.completed' &&
+      event.item?.type === 'agent_message' &&
+      typeof event.item.text === 'string',
+    );
+  return message
+    ? parseJsonText(message.item.text, 'Codex')
+    : parseJsonText(stdout, 'Codex');
+}
+
 function parseEvent(line) {
   try {
     return JSON.parse(line);
@@ -521,8 +542,84 @@ export function parseAgentResponse(agent, stdout) {
   if (agent === 'claude') return parseClaudeResponse(stdout);
   if (agent === 'opencode') return parseOpenCodeResponse(stdout);
   if (agent === 'cursor') return parseCursorResponse(stdout);
-  const label = agent === 'copilot' ? 'Copilot' : 'Codex';
-  return parseJsonText(stdout, label);
+  if (agent === 'codex') return parseCodexResponse(stdout);
+  return parseJsonText(stdout, 'Copilot');
+}
+
+function sumProviderUsage(usages) {
+  if (!usages.length) return undefined;
+  const totals = {};
+  for (const usage of usages) {
+    for (const [field, count] of Object.entries(usage)) {
+      if (Number.isSafeInteger(count) && count >= 0) {
+        totals[field] = (totals[field] || 0) + count;
+      }
+    }
+  }
+  return Object.keys(totals).length ? totals : undefined;
+}
+
+function codexUsage(stdout) {
+  const events = jsonLines(stdout) || [];
+  return sumProviderUsage(events.flatMap((event) => {
+    if (event.type !== 'turn.completed' || !event.usage) return [];
+    return [{
+      inputTokens: event.usage.input_tokens,
+      outputTokens: event.usage.output_tokens,
+      ...(Number.isSafeInteger(event.usage.cached_input_tokens)
+        ? { cacheReadTokens: event.usage.cached_input_tokens }
+        : {}),
+      ...(Number.isSafeInteger(event.usage.cache_write_input_tokens)
+        ? { cacheWriteTokens: event.usage.cache_write_input_tokens }
+        : {}),
+    }];
+  }));
+}
+
+function claudeUsage(stdout) {
+  let envelope;
+  try {
+    envelope = parseJsonText(stdout, 'Claude');
+  } catch {
+    return undefined;
+  }
+  const usage = envelope?.usage;
+  if (!usage || typeof usage !== 'object') return undefined;
+  return sumProviderUsage([{
+    inputTokens: usage.input_tokens,
+    outputTokens: usage.output_tokens,
+    ...(Number.isSafeInteger(usage.cache_read_input_tokens)
+      ? { cacheReadTokens: usage.cache_read_input_tokens }
+      : {}),
+    ...(Number.isSafeInteger(usage.cache_creation_input_tokens)
+      ? { cacheWriteTokens: usage.cache_creation_input_tokens }
+      : {}),
+  }]);
+}
+
+function openCodeUsage(stdout) {
+  const events = jsonLines(stdout) || [];
+  return sumProviderUsage(events.flatMap((event) => {
+    if (event.type !== 'step_finish' || !event.part?.tokens) return [];
+    const tokens = event.part.tokens;
+    return [{
+      inputTokens: tokens.input,
+      outputTokens: tokens.output,
+      ...(Number.isSafeInteger(tokens.cache?.read)
+        ? { cacheReadTokens: tokens.cache.read }
+        : {}),
+      ...(Number.isSafeInteger(tokens.cache?.write)
+        ? { cacheWriteTokens: tokens.cache.write }
+        : {}),
+    }];
+  }));
+}
+
+export function parseAgentUsage(agent, stdout) {
+  if (agent === 'codex') return codexUsage(stdout);
+  if (agent === 'claude') return claudeUsage(stdout);
+  if (agent === 'opencode') return openCodeUsage(stdout);
+  return undefined;
 }
 
 function codexIsolationArgs(snapshotOnly) {
@@ -565,6 +662,7 @@ function codexCommand({
   const args = [
     'exec',
     '--ephemeral',
+    '--json',
     '--sandbox',
     'read-only',
     ...codexIsolationArgs(snapshotOnly),

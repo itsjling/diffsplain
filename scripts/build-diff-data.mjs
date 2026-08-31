@@ -32,6 +32,12 @@ import {
   createAgentReviewFingerprint,
 } from './agent-review.mjs';
 import { summaryPath } from './summary-path.mjs';
+import {
+  combineUsage,
+  emptyUsageAccumulator,
+  reviewUsage,
+  usageSummary,
+} from './agent-usage.mjs';
 
 const args = process.argv.slice(2);
 const fail = (message) => {
@@ -1342,6 +1348,13 @@ function build() {
         ? { accessMode: summaryDoc.meta.accessMode }
         : {}),
     },
+    usage: reviewUsage(
+      combineUsage(
+        summaryDoc.meta?.usage,
+        usageSummary(emptyUsageAccumulator()),
+      ),
+      usageSummary(emptyUsageAccumulator()),
+    ),
   };
   const version = createHash('sha256')
     .update(JSON.stringify(content))
