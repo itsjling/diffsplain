@@ -58,7 +58,7 @@ jobs:
             .cache/diffsplain-release.bundle
           include-hidden-files: true
           if-no-files-found: error
-          retention-days: 1
+          retention-days: 90
 
   release:
     needs: prepare

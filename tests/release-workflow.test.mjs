@@ -5,6 +5,7 @@ import {
   classifyReleaseState,
   compareExactVersions,
   finalizeReleaseWorkflow,
+  parseRegistryValue,
   prepareReleaseWorkflow,
   requirePinnedCommit,
   requireMatchingIntegrity,
@@ -210,6 +211,13 @@ test('computes npm SHA-512 SRI and rejects a different published tarball', () =>
   );
 });
 
+test('fails closed on unexpected successful npm registry output', () => {
+  assert.equal(parseRegistryValue('"sha512-matching"'), 'sha512-matching');
+  for (const output of ['null', '{}', '[]', '42']) {
+    assert.throws(() => parseRegistryValue(output), /unexpected response/);
+  }
+});
+
 test('accepts the release parent only for a pushed release rerun', () => {
   assert.doesNotThrow(() => validateDispatchCommit(resumeObservation, 'base'));
   assert.doesNotThrow(() => validateDispatchCommit(resumeObservation, 'release'));
@@ -351,7 +359,10 @@ function finalizationDeps(calls, overrides = {}) {
     readReceipt: async () => artifactReceipt,
     readRemoteMain: () => baseCommit,
     readRemoteTag: () => null,
-    registryIntegrity: () => null,
+    registryIntegrity: () => {
+      calls.push('registry');
+      return null;
+    },
     registryVersion: () => '1.3.0',
     wait: async () => {},
     ...overrides,
@@ -370,8 +381,50 @@ test('finalizes only the verified artifact with push and publish authority', asy
     ['pinned', baseCommit],
     'fetch',
     ['import', 'v1.3.0'],
+    'registry',
     ['push', releaseCommit, 'v1.3.0'],
     ['publish', '1.3.0'],
+  ]);
+});
+
+test('checks npm integrity before mutating release refs', async () => {
+  const mismatchCalls = [];
+  await assert.rejects(
+    finalizeReleaseWorkflow(
+      '1.3.0',
+      finalizationDeps(mismatchCalls, {
+        registryIntegrity: () => {
+          mismatchCalls.push('registry');
+          return 'sha512-other';
+        },
+      }),
+    ),
+    /integrity mismatch/,
+  );
+  assert.deepEqual(mismatchCalls, [
+    ['pinned', baseCommit],
+    'fetch',
+    ['import', 'v1.3.0'],
+    'registry',
+  ]);
+
+  const matchingCalls = [];
+  const result = await finalizeReleaseWorkflow(
+    '1.3.0',
+    finalizationDeps(matchingCalls, {
+      registryIntegrity: () => {
+        matchingCalls.push('registry');
+        return plan.sha512;
+      },
+    }),
+  );
+  assert.equal(result.mode, 'complete');
+  assert.deepEqual(matchingCalls, [
+    ['pinned', baseCommit],
+    'fetch',
+    ['import', 'v1.3.0'],
+    'registry',
+    ['push', releaseCommit, 'v1.3.0'],
   ]);
 });
 
@@ -482,6 +535,7 @@ test('workflow pins the trusted, serialized, split-job release contract', async 
   assert.match(workflow, /persist-credentials: false/);
   assert.match(workflow, /actions\/upload-artifact@v4/);
   assert.match(workflow, /include-hidden-files: true/);
+  assert.match(workflow, /retention-days: 90/);
   assert.match(workflow, /^  release:\n    needs: prepare/m);
   assert.match(
     workflow,

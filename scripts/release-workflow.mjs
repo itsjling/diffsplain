@@ -359,9 +359,12 @@ export function requireMatchingIntegrity(localIntegrity, publishedIntegrity) {
   }
 }
 
-function parseRegistryValue(output) {
+export function parseRegistryValue(output) {
   const value = JSON.parse(output);
-  return typeof value === 'string' ? value : null;
+  if (typeof value !== 'string') {
+    throw new Error('npm registry returned an unexpected response.');
+  }
+  return value;
 }
 
 function registryResultValue(result) {
@@ -625,6 +628,21 @@ function remoteReleaseMode(plan, remoteMain, remoteTag) {
   );
 }
 
+function preflightPublishedIntegrity(deps, plan) {
+  const integrity = deps.registryIntegrity(packageName, plan.version);
+  if (integrity !== null) requireMatchingIntegrity(plan.sha512, integrity);
+  return integrity;
+}
+
+async function publishOrComplete(deps, plan, publishedIntegrity) {
+  if (publishedIntegrity !== null) {
+    return { ...plan, mode: 'complete', registryIntegrity: publishedIntegrity };
+  }
+  deps.publish(plan.version);
+  await verifyPublishedVersion(deps, plan.version);
+  return { ...plan, registryIntegrity: null };
+}
+
 export async function finalizeReleaseWorkflow(versionInput, overrides = {}) {
   const version = validateExactVersion(versionInput);
   const deps = dependencies(overrides);
@@ -640,19 +658,12 @@ export async function finalizeReleaseWorkflow(versionInput, overrides = {}) {
 
   const remoteMain = deps.readRemoteMain();
   const remoteTag = deps.readRemoteTag(plan.tag);
-  if (remoteReleaseMode(plan, remoteMain, remoteTag) === 'create') {
+  const releaseMode = remoteReleaseMode(plan, remoteMain, remoteTag);
+  const publishedIntegrity = preflightPublishedIntegrity(deps, plan);
+  if (releaseMode === 'create') {
     deps.pushRelease(plan.releaseCommit, plan.tag);
   }
-
-  const publishedIntegrity = deps.registryIntegrity(packageName, version);
-  if (publishedIntegrity !== null) {
-    requireMatchingIntegrity(plan.sha512, publishedIntegrity);
-    return { ...plan, mode: 'complete', registryIntegrity: publishedIntegrity };
-  }
-
-  deps.publish(version);
-  await verifyPublishedVersion(deps, version);
-  return { ...plan, registryIntegrity: null };
+  return publishOrComplete(deps, plan, publishedIntegrity);
 }
 
 function errorMessage(error) {
