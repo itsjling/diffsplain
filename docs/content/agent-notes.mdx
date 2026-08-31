@@ -5,12 +5,17 @@ sidebar:
   order: 3
 ---
 
-A coding agent writes short notes for each changed file by default. When you
-omit `--agent` in an interactive terminal, Diffsplain lists usable agents in
-this order: Codex, Claude, Copilot, Cursor, then OpenCode. Choose one before
-the review starts. In a script or other non-interactive run, pass `--agent
-NAME` or use `--no-agent` for a plain review. Diffsplain does not choose an
-agent for you. Each CLI uses its current login.
+A coding agent writes short notes for each changed file by default. Configure
+one with `diffsplain config agent NAME`, or choose one run with `--agent NAME`.
+`--no-agent` overrides both for a plain review. With no configured or explicit
+choice, Diffsplain lists usable agents in this order in an interactive
+terminal: Codex, Claude, Copilot, Cursor, then OpenCode. Each CLI uses its
+current login. The two per-run options cannot be combined.
+
+A configured default works in non-interactive runs. If that preference is
+damaged, unsupported, or unavailable, Diffsplain stops instead of discovering
+or switching to another provider. An explicit `--agent` or `--no-agent` does
+not read the preference, so either can recover a run while you fix or unset it.
 
 ## Access to a local checkout
 

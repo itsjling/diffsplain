@@ -17,9 +17,11 @@ import { dirname, join, resolve } from 'node:path';
 import { createInterface } from 'node:readline';
 import { fileURLToPath } from 'node:url';
 import { helpText, parseCliArgs } from './cli-args.mjs';
+import { applyAgentConfigOperation } from './agent-config.mjs';
 import {
   agentReadOnlyWarning,
   assertReasoningSupported,
+  codingAgentFromSelectionError,
   codingAgentAvailability,
   codingAgentBinary,
   selectCodingAgent,
@@ -125,6 +127,22 @@ if (cli.version) {
   );
   console.log(`diffsplain ${packageJson.version}`);
   process.exit(0);
+}
+if (cli.config) {
+  try {
+    const result = applyAgentConfigOperation(cli.config);
+    if (result.kind === 'show') {
+      console.log(result.agent ?? 'No default coding agent is configured.');
+    } else if (result.kind === 'set') {
+      console.log(`Default coding agent set to "${result.agent}".`);
+    } else {
+      console.log('Default coding agent unset.');
+    }
+    process.exit(0);
+  } catch (error) {
+    console.error(error instanceof Error ? error.message : String(error));
+    process.exit(1);
+  }
 }
 if (cli.doctor) {
   if (cli.doctor.deep) {
@@ -263,7 +281,12 @@ if (agentEnabled) {
       agentArgs.push('--provider-read-only-warning-emitted');
     }
   } catch (error) {
-    recordSelectedProvider(cli.agent || 'unknown');
+    recordSelectedProvider(
+      codingAgentFromSelectionError(error) ||
+        selectedAgent ||
+        cli.agent ||
+        'unknown',
+    );
     supportRecorder?.addStage(
       'agent',
       performance.now() - selectionStarted,

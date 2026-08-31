@@ -465,7 +465,11 @@ test("requires an agent choice before building a standalone snapshot", async () 
       ],
       {
         encoding: "utf8",
-        env: { ...process.env, PATH: "" },
+        env: {
+          ...process.env,
+          PATH: "",
+          XDG_CONFIG_HOME: join(repo, "empty-config"),
+        },
       },
     );
 
@@ -474,6 +478,77 @@ test("requires an agent choice before building a standalone snapshot", async () 
     assert.match(result.stderr, /--agent.*--no-agent/i);
     await assert.rejects(stat(summaries), /ENOENT/);
     await assert.rejects(stat(output), /ENOENT/);
+  } finally {
+    await rm(repo, { recursive: true, force: true });
+  }
+});
+
+test("uses the configured agent in a non-interactive standalone run", async () => {
+  const repo = await makeRepo();
+  const configBase = join(repo, "config-home");
+  const summaries = join(repo, "notes.json");
+  const output = join(repo, "diff-data.json");
+
+  try {
+    const codex = await fakeCodex(repo, {
+      change: {
+        title: "Configured agent",
+        summary: "Uses the saved default in a non-interactive run.",
+        why: "Proves direct summary selection shares configuration.",
+        highlights: [],
+        risks: [],
+      },
+      files: [
+        {
+          path: "added.txt",
+          title: "Add text",
+          what: "Adds a file.",
+          why: "Exercises the fixture.",
+          details: [],
+          risks: [],
+        },
+        {
+          path: "changed.txt",
+          title: "Change text",
+          what: "Changes a file.",
+          why: "Exercises the fixture.",
+          details: [],
+          risks: [],
+        },
+      ],
+    });
+    await mkdir(join(configBase, "diffsplain"), { recursive: true });
+    await writeFile(
+      join(configBase, "diffsplain", "config.json"),
+      JSON.stringify({ agent: "codex" }),
+    );
+
+    const result = spawnSync(
+      process.execPath,
+      [
+        script,
+        "--repo",
+        repo,
+        "--range",
+        "HEAD~1..HEAD",
+        "--summaries",
+        summaries,
+        "--output",
+        output,
+        "--codex-bin",
+        codex.bin,
+      ],
+      {
+        encoding: "utf8",
+        env: { ...process.env, XDG_CONFIG_HOME: configBase },
+        input: "",
+      },
+    );
+
+    assert.equal(result.status, 0, result.stderr);
+    const notes = JSON.parse(await readFile(summaries, "utf8"));
+    assert.equal(notes.meta.agent, "codex");
+    assert.equal(notes.files["changed.txt"].title, "Change text");
   } finally {
     await rm(repo, { recursive: true, force: true });
   }
@@ -512,7 +587,11 @@ Object.defineProperty(process.stderr, "isTTY", { value: true });
         "HEAD~1..HEAD",
       ],
       {
-        env: { ...process.env, PATH: bin },
+        env: {
+          ...process.env,
+          PATH: bin,
+          XDG_CONFIG_HOME: join(repo, "empty-config"),
+        },
         stdio: "pipe",
       },
     );
@@ -2364,6 +2443,101 @@ test("prints a support record when the requested agent is unavailable", async ()
       state: "failed",
       code: 2,
       stage: "unknown",
+    });
+  } finally {
+    await rm(repo, { recursive: true, force: true });
+  }
+});
+
+test("prints the configured agent in a failed support record", async () => {
+  const repo = await makeRepo();
+  const configBase = join(repo, "config-home");
+
+  try {
+    await mkdir(join(configBase, "diffsplain"), { recursive: true });
+    await writeFile(
+      join(configBase, "diffsplain", "config.json"),
+      JSON.stringify({ agent: "codex" }),
+    );
+    const result = spawnSync(
+      process.execPath,
+      [
+        script,
+        "--repo",
+        repo,
+        "--codex-bin",
+        join(repo, "missing-codex"),
+        "--support-record",
+      ],
+      {
+        encoding: "utf8",
+        env: { ...process.env, XDG_CONFIG_HOME: configBase },
+        input: "",
+      },
+    );
+
+    assert.equal(result.status, 2);
+    assert.match(result.stderr, /not available/i);
+    const marker = "Diffsplain support record:\n";
+    const markerIndex = result.stderr.lastIndexOf(marker);
+    assert.ok(markerIndex >= 0, result.stderr);
+    const record = JSON.parse(
+      result.stderr.slice(markerIndex + marker.length),
+    );
+    assert.deepEqual(record.provider, {
+      name: "codex",
+      version: null,
+    });
+  } finally {
+    await rm(repo, { recursive: true, force: true });
+  }
+});
+
+test("keeps the configured agent when reasoning validation fails", async () => {
+  const repo = await makeRepo();
+  const configBase = join(repo, "config-home");
+  const claudeBin = join(repo, "claude");
+
+  try {
+    await mkdir(join(configBase, "diffsplain"), { recursive: true });
+    await writeFile(
+      join(configBase, "diffsplain", "config.json"),
+      JSON.stringify({ agent: "claude" }),
+    );
+    await writeFile(claudeBin, "#!/bin/sh\nexit 0\n");
+    await chmod(claudeBin, 0o755);
+    const result = spawnSync(
+      process.execPath,
+      [
+        script,
+        "--repo",
+        repo,
+        "--reasoning",
+        "high",
+        "--support-record",
+      ],
+      {
+        encoding: "utf8",
+        env: {
+          ...process.env,
+          CLAUDE_BIN: claudeBin,
+          XDG_CONFIG_HOME: configBase,
+        },
+        input: "",
+      },
+    );
+
+    assert.equal(result.status, 2);
+    assert.match(result.stderr, /reasoning is supported only/i);
+    const marker = "Diffsplain support record:\n";
+    const markerIndex = result.stderr.lastIndexOf(marker);
+    assert.ok(markerIndex >= 0, result.stderr);
+    const record = JSON.parse(
+      result.stderr.slice(markerIndex + marker.length),
+    );
+    assert.deepEqual(record.provider, {
+      name: "claude",
+      version: null,
     });
   } finally {
     await rm(repo, { recursive: true, force: true });

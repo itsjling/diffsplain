@@ -82,6 +82,8 @@ Commands:
   doctor [--json] [--deep]
                       Check review, agent, and pull request capabilities
   cache               Show or prune saved agent notes
+  config agent [NAME|--unset]
+                      Show, set, or unset the default coding agent
 
 Targets:
   --branch NAME       Show a remote branch against its default branch
@@ -118,8 +120,8 @@ Options:
   -v, --version       Show the installed version
 
 Agent choice:
-  Without --agent, an interactive terminal lists usable agents. In scripts,
-  pass --agent NAME or --no-agent.
+  Choice order is --no-agent, --agent, then the configured default.
+  Without any choice, an interactive terminal lists usable agents.
 
 Cursor:
   Requires Cursor Agent 2026.08.11 or newer. Uses the signed-in CLI in the
@@ -195,6 +197,31 @@ export function parseCliArgs(
     pathExists = existsSync,
   } = {},
 ) {
+  if (rawArgs[0] === 'config') {
+    if (rawArgs[1] !== 'agent') {
+      fail('Use: diffsplain config agent [NAME|--unset]');
+    }
+    if (rawArgs.length === 2) {
+      return { config: { kind: 'show' } };
+    }
+    if (rawArgs.length !== 3) {
+      fail('Use: diffsplain config agent [NAME|--unset]');
+    }
+    const value = rawArgs[2];
+    if (value === '--unset') {
+      return { config: { kind: 'unset' } };
+    }
+    if (value.startsWith('--')) {
+      fail('Use: diffsplain config agent [NAME|--unset]');
+    }
+    if (!codingAgents.includes(value)) {
+      fail(
+        `Unsupported agent "${value}". Choose ${enabledCodingAgents.join(', ')}.`,
+      );
+    }
+    return { config: { kind: 'set', agent: value } };
+  }
+
   if (rawArgs[0] === 'doctor') {
     const options = new Set(rawArgs.slice(1));
     for (const option of options) {

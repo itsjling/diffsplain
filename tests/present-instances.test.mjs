@@ -206,6 +206,9 @@ test('does not expose cached notes when --no-agent is set', async () => {
   try {
     const repo = await makeRepo(root, 'repo', 'note.txt');
     const cacheBase = join(root, 'cache');
+    const configBase = join(root, 'config');
+    await mkdir(join(configBase, 'diffsplain'), { recursive: true });
+    await writeFile(join(configBase, 'diffsplain', 'config.json'), '{');
     summaries = summaryPath({
       cacheRoot: join(cacheBase, 'diffsplain'),
       callerDirectory: root,
@@ -242,6 +245,7 @@ test('does not expose cached notes when --no-agent is set', async () => {
           ...process.env,
           BROWSER: 'true',
           XDG_CACHE_HOME: cacheBase,
+          XDG_CONFIG_HOME: configBase,
         },
         stdio: ['ignore', 'pipe', 'pipe'],
       },

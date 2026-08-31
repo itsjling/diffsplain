@@ -100,6 +100,7 @@ test("starts the note agent after the watch snapshot and stops cleanly", async (
   const events = join(root, "events.log");
   const response = join(root, "response.json");
   const cacheBase = join(root, "cache");
+  const configBase = join(root, "config");
   const summaries = summaryPath({
     cacheRoot: join(cacheBase, "diffsplain"),
     callerDirectory: root,
@@ -128,6 +129,11 @@ test("starts the note agent after the watch snapshot and stops cleanly", async (
     await writeFile(events, "");
     await mkdir(repo);
     await mkdir(bin);
+    await mkdir(join(configBase, "diffsplain"), { recursive: true });
+    await writeFile(
+      join(configBase, "diffsplain", "config.json"),
+      JSON.stringify({ agent: "codex" }),
+    );
 
     git(repo, "init", "-q");
     git(repo, "config", "user.email", "diffsplain@example.test");
@@ -167,8 +173,6 @@ test("starts the note agent after the watch snapshot and stops cleanly", async (
         "--repo",
         repo,
         "--worktree",
-        "--agent",
-        "codex",
         "--output",
         output,
         "--port",
@@ -184,6 +188,7 @@ test("starts the note agent after the watch snapshot and stops cleanly", async (
           PRESENTER_OUTPUT: output,
           PRESENTER_RESPONSE: response,
           XDG_CACHE_HOME: cacheBase,
+          XDG_CONFIG_HOME: configBase,
         },
         stdio: "pipe",
       },

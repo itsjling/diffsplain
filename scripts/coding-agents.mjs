@@ -8,6 +8,7 @@ import {
   isAbsolute,
   join,
 } from 'node:path';
+import { readConfiguredAgent } from './agent-config.mjs';
 
 export const codingAgentCapabilities = {
   codex: { binary: 'codex', model: true, reasoning: true },
@@ -263,15 +264,57 @@ function nonInteractiveSelectionError() {
   );
 }
 
-async function selectRequestedCodingAgent(requested, available) {
-  if (!codingAgents.includes(requested)) {
-    throw new Error(
-      `Unsupported agent "${requested}". Choose ${enabledCodingAgents.join(', ')}.`,
+class CodingAgentSelectionError extends Error {
+  constructor(agent, message) {
+    super(message);
+    this.agent = agent;
+  }
+}
+
+export function codingAgentFromSelectionError(error) {
+  return error instanceof CodingAgentSelectionError
+    ? error.agent
+    : undefined;
+}
+
+function unsupportedSelectionError(requested, configured) {
+  if (configured) {
+    return new CodingAgentSelectionError(
+      requested,
+      `Configured coding agent "${requested}" is unsupported. Choose ${enabledCodingAgents.join(', ')} with diffsplain config agent NAME, or use --agent NAME for this run.`,
     );
+  }
+  return new CodingAgentSelectionError(
+    requested,
+    `Unsupported agent "${requested}". Choose ${enabledCodingAgents.join(', ')}.`,
+  );
+}
+
+function unavailableSelectionError(requested, result, configured) {
+  if (!configured) {
+    return new CodingAgentSelectionError(
+      requested,
+      unavailableAgentError(requested, result).message,
+    );
+  }
+  const reason = typeof result === 'object' ? result.reason : undefined;
+  return new CodingAgentSelectionError(
+    requested,
+    `Configured coding agent "${requested}" is not available.${reason ? ` ${reason}` : ''} Change it with diffsplain config agent NAME, or use --agent NAME for this run.`,
+  );
+}
+
+async function selectRequestedCodingAgent(
+  requested,
+  available,
+  { configured = false } = {},
+) {
+  if (!codingAgents.includes(requested)) {
+    throw unsupportedSelectionError(requested, configured);
   }
   const result = await available(requested);
   if (!availableResult(result)) {
-    throw unavailableAgentError(requested, result);
+    throw unavailableSelectionError(requested, result, configured);
   }
   return requested;
 }
@@ -340,13 +383,21 @@ export async function selectCodingAgent(
   requested,
   {
     available = commandAvailable,
+    configuredAgent = readConfiguredAgent,
     input = process.stdin,
     output = process.stderr,
     signal,
   } = {},
 ) {
-  if (requested) {
+  if (requested !== undefined) {
     return selectRequestedCodingAgent(requested, available);
+  }
+
+  const configured = await configuredAgent();
+  if (configured !== undefined) {
+    return selectRequestedCodingAgent(configured, available, {
+      configured: true,
+    });
   }
 
   if (!input?.isTTY || !output?.isTTY) {

@@ -86,6 +86,7 @@ test('lists usable agents and uses the selected terminal choice', async () => {
   const input = terminalInput('2\n');
   const terminal = terminalOutput();
   const selected = await selectCodingAgent(undefined, {
+    configuredAgent: () => undefined,
     available: async (agent) => {
       checked.push(agent);
       return agent === 'claude' || agent === 'cursor';
@@ -105,6 +106,7 @@ test('fails before discovery without an interactive terminal', async () => {
   const checked = [];
   await assert.rejects(
     selectCodingAgent(undefined, {
+      configuredAgent: () => undefined,
       available: async (agent) => {
         checked.push(agent);
         return false;
@@ -125,6 +127,7 @@ test('fails cleanly when terminal input ends before a choice', async () => {
   const terminal = terminalOutput();
   await assert.rejects(
     selectCodingAgent(undefined, {
+      configuredAgent: () => undefined,
       available: async () => true,
       input: terminalInput(),
       output: terminal.output,
@@ -138,6 +141,7 @@ test('treats Ctrl+C as a cancelled terminal choice', async () => {
   input.isTTY = true;
   const terminal = terminalOutput();
   const selection = selectCodingAgent(undefined, {
+    configuredAgent: () => undefined,
     available: async () => true,
     input,
     output: terminal.output,
@@ -155,6 +159,7 @@ test('fails when no coding agent is usable', async () => {
   const terminal = terminalOutput();
   await assert.rejects(
     selectCodingAgent(undefined, {
+      configuredAgent: () => undefined,
       available: async () => false,
       input: terminalInput(),
       output: terminal.output,
@@ -178,6 +183,9 @@ test('validates an explicit agent without opening a picker', async () => {
   const checked = [];
   const output = new PassThrough();
   const selected = await selectCodingAgent('claude', {
+    configuredAgent: () => {
+      throw new Error('must not read configuration');
+    },
     available: async (agent) => {
       checked.push(agent);
       return true;
@@ -189,6 +197,67 @@ test('validates an explicit agent without opening a picker', async () => {
   assert.equal(selected, 'claude');
   assert.deepEqual(checked, ['claude']);
   assert.equal(output.read(), null);
+});
+
+test('uses a configured agent without discovery or a terminal', async () => {
+  const checked = [];
+  const selected = await selectCodingAgent(undefined, {
+    configuredAgent: () => 'opencode',
+    available: async (agent) => {
+      checked.push(agent);
+      return true;
+    },
+    input: new PassThrough(),
+    output: new PassThrough(),
+  });
+
+  assert.equal(selected, 'opencode');
+  assert.deepEqual(checked, ['opencode']);
+});
+
+test('does not fall back from unsupported or unavailable configured agents', async () => {
+  const unsupportedChecks = [];
+  await assert.rejects(
+    selectCodingAgent(undefined, {
+      configuredAgent: () => 'gemini',
+      available: async (agent) => {
+        unsupportedChecks.push(agent);
+        return true;
+      },
+    }),
+    /configured coding agent "gemini" is unsupported/i,
+  );
+  assert.deepEqual(unsupportedChecks, []);
+
+  const unavailableChecks = [];
+  await assert.rejects(
+    selectCodingAgent(undefined, {
+      configuredAgent: () => 'claude',
+      available: async (agent) => {
+        unavailableChecks.push(agent);
+        return false;
+      },
+    }),
+    /configured coding agent "claude" is not available/i,
+  );
+  assert.deepEqual(unavailableChecks, ['claude']);
+});
+
+test('surfaces damaged configuration before discovery', async () => {
+  const checked = [];
+  await assert.rejects(
+    selectCodingAgent(undefined, {
+      configuredAgent: () => {
+        throw new Error('Diffsplain agent configuration is damaged');
+      },
+      available: async (agent) => {
+        checked.push(agent);
+        return true;
+      },
+    }),
+    /configuration is damaged/i,
+  );
+  assert.deepEqual(checked, []);
 });
 
 test('suggests every supported agent for an unknown name', async () => {
