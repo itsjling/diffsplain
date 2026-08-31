@@ -215,17 +215,34 @@ function statusLabel(status: FileStatus) {
   return "Modified";
 }
 
+function readyAgentNoteState(
+  file: DiffFile,
+  notes: DiffNotes,
+): "ready" | undefined {
+  if (file.noteReady === true) return "ready";
+  if (file.noteReady === false) return undefined;
+  if (notes.complete) return "ready";
+  return undefined;
+}
+
+function unresolvedAgentNoteState(
+  file: DiffFile,
+  notes: DiffNotes,
+): "failed" | "waiting" {
+  if (file.noteFailure !== undefined) return "failed";
+  if (notes.status === "failed") return "failed";
+  return "waiting";
+}
+
 function agentNoteState(
   file: DiffFile,
   notes: DiffNotes | undefined,
 ): AgentNoteState | null {
-  if (!notes) return null;
+  if (notes === undefined) return null;
   if (file.agentExcluded === true) return "excluded";
-  if (file.noteReady ?? notes.complete) return "ready";
-  if (file.noteFailure !== undefined || notes.status === "failed") {
-    return "failed";
-  }
-  return "waiting";
+  const readyState = readyAgentNoteState(file, notes);
+  if (readyState !== undefined) return readyState;
+  return unresolvedAgentNoteState(file, notes);
 }
 
 function PickerAgentNoteState({ state }: { state: AgentNoteState }) {

@@ -1585,32 +1585,6 @@ kbd {
   white-space: nowrap;
 }
 
-.picker-note-state {
-  align-items: center;
-  border: 1px solid currentColor;
-  border-radius: 999px;
-  color: var(--ink);
-  display: inline-flex;
-  font: 650 8px/1 var(--font-geist-mono), monospace;
-  gap: 4px;
-  letter-spacing: 0.04em;
-  padding: 4px 6px;
-  text-transform: uppercase;
-  white-space: nowrap;
-}
-
-.picker-note-state--ready {
-  color: var(--green);
-}
-
-.picker-note-state--failed {
-  color: var(--red);
-}
-
-.picker-note-state--excluded {
-  border-style: dashed;
-}
-
 .picker-change-count {
   display: flex;
   font: 600 9px/1 var(--font-geist-mono), monospace;
@@ -2003,4 +1977,30 @@ kbd {
     scroll-behavior: auto !important;
     transition-duration: 0.01ms !important;
   }
+}
+
+.picker-note-state {
+  align-items: center;
+  border: 1px solid currentColor;
+  border-radius: 999px;
+  color: var(--ink);
+  display: inline-flex;
+  font: 650 8px/1 var(--font-geist-mono), monospace;
+  gap: 4px;
+  letter-spacing: 0.04em;
+  padding: 4px 6px;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+.picker-note-state--ready {
+  color: var(--green);
+}
+
+.picker-note-state--failed {
+  color: var(--red);
+}
+
+.picker-note-state--excluded {
+  border-style: dashed;
 }

@@ -145,27 +145,54 @@ function longFileListFixture() {
   );
 }
 
-function pickerAgentNoteFixture(
-  version,
-  { complete = false, failure = false, status = "generating" } = {},
-) {
+const PICKER_AGENT_NOTE_SCENARIOS = {
+  complete: {
+    complete: true,
+    completedFiles: 29,
+    secondFile: { noteReady: true },
+    status: "complete",
+  },
+  failed: {
+    complete: false,
+    completedFiles: 1,
+    secondFile: { noteReady: false },
+    status: "failed",
+  },
+  partialFailure: {
+    complete: false,
+    completedFiles: 1,
+    secondFile: {
+      noteFailure: "The fixture agent stopped.",
+      noteReady: false,
+    },
+    status: "generating",
+  },
+  retry: {
+    complete: false,
+    completedFiles: 1,
+    secondFile: { noteReady: false },
+    status: "generating",
+  },
+};
+
+function pickerAgentNoteFixture(version, scenarioName) {
+  const scenario = PICKER_AGENT_NOTE_SCENARIOS[scenarioName];
   const value = longFileListFixture();
   value.version = version;
   value.notes = {
     ...value.notes,
-    complete,
-    status,
-    completedFiles: complete ? 29 : 1,
+    complete: scenario.complete,
+    status: scenario.status,
+    completedFiles: scenario.completedFiles,
     totalFiles: 29,
   };
   for (const file of value.files) {
-    file.noteReady = complete;
+    file.noteReady = scenario.complete;
     delete file.noteFailure;
     delete file.agentExcluded;
   }
   value.files[0].noteReady = true;
-  if (!complete) value.files[1].noteReady = false;
-  if (failure) value.files[1].noteFailure = "The fixture agent stopped.";
+  Object.assign(value.files[1], scenario.secondFile);
   value.files[2].agentExcluded = true;
   value.files[2].noteReady = false;
   return value;
@@ -1071,7 +1098,7 @@ test("keeps the supported narrow layouts within the viewport", async () => {
       },
       async (page) => {
         await writeSnapshot(
-          pickerAgentNoteFixture(`narrow-${width}`, { failure: true }),
+          pickerAgentNoteFixture(`narrow-${width}`, "partialFailure"),
         );
         await page.goto(serverUrl);
         await page.getByRole("heading", { name: "Explain file 1" }).waitFor();
@@ -1147,7 +1174,7 @@ test("updates every picker Agent note state without disturbing the open picker",
     { viewport: { width: 1280, height: 800 } },
     async (page) => {
       await writeSnapshot(
-        pickerAgentNoteFixture("picker-partial", { failure: true }),
+        pickerAgentNoteFixture("picker-partial", "partialFailure"),
       );
       await page.goto(serverUrl);
       await page.getByRole("heading", { name: "Explain file 1" }).waitFor();
@@ -1184,19 +1211,16 @@ test("updates every picker Agent note state without disturbing the open picker",
       assert.ok((before.scrollTop ?? 0) > 0);
 
       await writeSnapshot(
-        pickerAgentNoteFixture("picker-failed", { status: "failed" }),
+        pickerAgentNoteFixture("picker-failed", "failed"),
       );
       await assertPickerNoteState(page, "src/file-04.ts", "failed");
 
-      await writeSnapshot(pickerAgentNoteFixture("picker-retry"));
+      await writeSnapshot(pickerAgentNoteFixture("picker-retry", "retry"));
       await assertPickerNoteState(page, "src/file-02.ts", "waiting");
       await assertPickerNoteState(page, "src/file-04.ts", "waiting");
 
       await writeSnapshot(
-        pickerAgentNoteFixture("picker-complete", {
-          complete: true,
-          status: "complete",
-        }),
+        pickerAgentNoteFixture("picker-complete", "complete"),
       );
       await assertPickerNoteState(page, "src/file-01.ts", "ready");
       await assertPickerNoteState(page, "src/file-02.ts", "ready");
