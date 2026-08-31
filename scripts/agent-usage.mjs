@@ -9,35 +9,52 @@ function tokenCount(value) {
   return Number.isSafeInteger(value) && value >= 0 ? value : undefined;
 }
 
-export function providerUsage(value) {
-  if (!value || typeof value !== 'object' || Array.isArray(value)) {
-    return undefined;
-  }
-  const tokens = Object.fromEntries(
-    tokenFields.flatMap((field) => {
-      const count = tokenCount(value[field]);
-      return count === undefined ? [] : [[field, count]];
-    }),
-  );
-  return Object.keys(tokens).length ? tokens : undefined;
+function usageObject(value) {
+  return value && typeof value === 'object' && !Array.isArray(value)
+    ? value
+    : undefined;
+}
+
+function usageEntries(value) {
+  return tokenFields.reduce((entries, field) => {
+    const count = tokenCount(value[field]);
+    return count === undefined ? entries : [...entries, [field, count]];
+  }, []);
+}
+
+function providerUsage(value) {
+  const usage = usageObject(value);
+  if (!usage) return undefined;
+  const tokens = Object.fromEntries(usageEntries(usage));
+  return Object.keys(tokens).length > 0 ? tokens : undefined;
+}
+
+function countOrZero(value) {
+  return tokenCount(value) || 0;
+}
+
+function summaryTokens(value) {
+  return providerUsage(value) || {};
 }
 
 export function emptyUsageAccumulator() {
   return { calls: 0, reportedCalls: 0, tokens: {} };
 }
 
+function mergedTokens(left, right) {
+  const tokens = { ...left };
+  for (const [field, count] of Object.entries(right || {})) {
+    tokens[field] = (tokens[field] || 0) + count;
+  }
+  return tokens;
+}
+
 export function recordUsage(accumulator, usage) {
   const reported = providerUsage(usage);
-  const tokens = { ...accumulator.tokens };
-  if (reported) {
-    for (const [field, count] of Object.entries(reported)) {
-      tokens[field] = (tokens[field] || 0) + count;
-    }
-  }
   return {
     calls: accumulator.calls + 1,
-    reportedCalls: accumulator.reportedCalls + (reported ? 1 : 0),
-    tokens,
+    reportedCalls: accumulator.reportedCalls + Number(Boolean(reported)),
+    tokens: mergedTokens(accumulator.tokens, reported),
   };
 }
 
@@ -68,25 +85,22 @@ export function usageSummary(accumulator) {
 }
 
 function accumulatorFromSummary(summary) {
-  if (!summary || typeof summary !== 'object') return emptyUsageAccumulator();
+  const usage = usageObject(summary);
+  if (!usage) return emptyUsageAccumulator();
   return {
-    calls: tokenCount(summary.calls) || 0,
-    reportedCalls: tokenCount(summary.reportedCalls) || 0,
-    tokens: providerUsage(summary.tokens) || {},
+    calls: countOrZero(usage.calls),
+    reportedCalls: countOrZero(usage.reportedCalls),
+    tokens: summaryTokens(usage.tokens),
   };
 }
 
 export function combineUsage(left, right) {
   const first = accumulatorFromSummary(left);
   const second = accumulatorFromSummary(right);
-  const tokens = { ...first.tokens };
-  for (const [field, count] of Object.entries(second.tokens)) {
-    tokens[field] = (tokens[field] || 0) + count;
-  }
   return usageSummary({
     calls: first.calls + second.calls,
     reportedCalls: first.reportedCalls + second.reportedCalls,
-    tokens,
+    tokens: mergedTokens(first.tokens, second.tokens),
   });
 }
 
@@ -105,11 +119,15 @@ const terminalLabels = {
   cacheWriteTokens: 'cache write',
 };
 
-export function formatUsage(label, summary) {
-  if (summary.status === 'unavailable') return `${label}: Unavailable`;
-  const totals = Object.entries(summary.tokens || {})
+function formatUsageTokens(tokens) {
+  return Object.entries(tokens || {})
     .map(([field, count]) => `${terminalLabels[field]} ${count.toLocaleString('en-US')}`)
     .join(', ');
+}
+
+export function formatUsage(label, summary) {
+  if (summary.status === 'unavailable') return `${label}: Unavailable`;
+  const totals = formatUsageTokens(summary.tokens);
   const prefix = summary.status === 'partial' ? 'Partial, ' : '';
   return `${label}: ${prefix}${totals || '0 tokens'}`;
 }

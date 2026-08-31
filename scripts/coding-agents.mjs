@@ -546,73 +546,83 @@ export function parseAgentResponse(agent, stdout) {
   return parseJsonText(stdout, 'Copilot');
 }
 
+function addUsageField(totals, [field, count]) {
+  if (!Number.isSafeInteger(count) || count < 0) return;
+  totals[field] = (totals[field] || 0) + count;
+}
+
+function addProviderUsage(totals, usage) {
+  Object.entries(usage).forEach((entry) => addUsageField(totals, entry));
+  return totals;
+}
+
 function sumProviderUsage(usages) {
-  if (!usages.length) return undefined;
-  const totals = {};
-  for (const usage of usages) {
-    for (const [field, count] of Object.entries(usage)) {
-      if (Number.isSafeInteger(count) && count >= 0) {
-        totals[field] = (totals[field] || 0) + count;
-      }
-    }
-  }
+  const totals = usages.reduce(addProviderUsage, {});
   return Object.keys(totals).length ? totals : undefined;
 }
 
-function codexUsage(stdout) {
-  const events = jsonLines(stdout) || [];
-  return sumProviderUsage(events.flatMap((event) => {
-    if (event.type !== 'turn.completed' || !event.usage) return [];
-    return [{
-      inputTokens: event.usage.input_tokens,
-      outputTokens: event.usage.output_tokens,
-      ...(Number.isSafeInteger(event.usage.cached_input_tokens)
-        ? { cacheReadTokens: event.usage.cached_input_tokens }
-        : {}),
-      ...(Number.isSafeInteger(event.usage.cache_write_input_tokens)
-        ? { cacheWriteTokens: event.usage.cache_write_input_tokens }
-        : {}),
-    }];
-  }));
+function providerUsage(inputTokens, outputTokens, cacheReadTokens, cacheWriteTokens) {
+  return { inputTokens, outputTokens, cacheReadTokens, cacheWriteTokens };
 }
 
-function claudeUsage(stdout) {
-  let envelope;
+function codexEventUsage(event) {
+  if (event.type !== 'turn.completed' || !event.usage) return undefined;
+  const usage = event.usage;
+  return providerUsage(
+    usage.input_tokens,
+    usage.output_tokens,
+    usage.cached_input_tokens,
+    usage.cache_write_input_tokens,
+  );
+}
+
+function eventPartTokens(event, type) {
+  if (event.type !== type) return undefined;
+  return event.part?.tokens;
+}
+
+function openCodeEventUsage(event) {
+  const tokens = eventPartTokens(event, 'step_finish');
+  if (!tokens) return undefined;
+  const cache = tokens.cache || {};
+  return providerUsage(
+    tokens.input,
+    tokens.output,
+    cache.read,
+    cache.write,
+  );
+}
+
+function eventUsage(stdout, extractUsage) {
+  const events = jsonLines(stdout) || [];
+  return sumProviderUsage(events.map(extractUsage).filter(Boolean));
+}
+
+function codexUsage(stdout) {
+  return eventUsage(stdout, codexEventUsage);
+}
+
+function safeProviderEnvelope(stdout, label) {
   try {
-    envelope = parseJsonText(stdout, 'Claude');
+    return parseJsonText(stdout, label);
   } catch {
     return undefined;
   }
-  const usage = envelope?.usage;
+}
+
+function claudeUsage(stdout) {
+  const usage = safeProviderEnvelope(stdout, 'Claude')?.usage;
   if (!usage || typeof usage !== 'object') return undefined;
-  return sumProviderUsage([{
-    inputTokens: usage.input_tokens,
-    outputTokens: usage.output_tokens,
-    ...(Number.isSafeInteger(usage.cache_read_input_tokens)
-      ? { cacheReadTokens: usage.cache_read_input_tokens }
-      : {}),
-    ...(Number.isSafeInteger(usage.cache_creation_input_tokens)
-      ? { cacheWriteTokens: usage.cache_creation_input_tokens }
-      : {}),
-  }]);
+  return sumProviderUsage([providerUsage(
+    usage.input_tokens,
+    usage.output_tokens,
+    usage.cache_read_input_tokens,
+    usage.cache_creation_input_tokens,
+  )]);
 }
 
 function openCodeUsage(stdout) {
-  const events = jsonLines(stdout) || [];
-  return sumProviderUsage(events.flatMap((event) => {
-    if (event.type !== 'step_finish' || !event.part?.tokens) return [];
-    const tokens = event.part.tokens;
-    return [{
-      inputTokens: tokens.input,
-      outputTokens: tokens.output,
-      ...(Number.isSafeInteger(tokens.cache?.read)
-        ? { cacheReadTokens: tokens.cache.read }
-        : {}),
-      ...(Number.isSafeInteger(tokens.cache?.write)
-        ? { cacheWriteTokens: tokens.cache.write }
-        : {}),
-    }];
-  }));
+  return eventUsage(stdout, openCodeEventUsage);
 }
 
 export function parseAgentUsage(agent, stdout) {

@@ -286,26 +286,42 @@ async function fetchAsset(url) {
   return fileResponse(file);
 }
 
-async function liveSnapshotResponse() {
-  let snapshot;
+async function parsedLiveSnapshot() {
   try {
-    snapshot = JSON.parse(await readFile(output, 'utf8'));
+    return JSON.parse(await readFile(output, 'utf8'));
   } catch {
-    return fileResponse(output, { live: true });
+    return undefined;
   }
-  const fingerprint = snapshot?.notes?.reviewFingerprint;
-  if (!fingerprint) {
-    return fileResponse(output, { live: true });
-  }
-  const noteSummary = snapshot.usage?.agentNotes ||
-    usageSummary(emptyUsageAccumulator());
-  const chatSummary = currentChatUsage(fingerprint);
-  const usage = reviewUsage(noteSummary, chatSummary);
-  const version = createHash('sha256')
+}
+
+function liveSnapshotVersion(snapshot, usage) {
+  return createHash('sha256')
     .update(JSON.stringify({ version: snapshot.version, usage }))
     .digest('hex')
     .slice(0, 12);
-  return jsonResponse({ ...snapshot, version, usage });
+}
+
+function snapshotNoteSummary(snapshot) {
+  return snapshot?.usage?.agentNotes ||
+    usageSummary(emptyUsageAccumulator());
+}
+
+function snapshotResponse(snapshot, usage) {
+  return jsonResponse({
+    ...snapshot,
+    version: liveSnapshotVersion(snapshot, usage),
+    usage,
+  });
+}
+
+async function liveSnapshotResponse() {
+  const snapshot = await parsedLiveSnapshot();
+  if (!snapshot) return fileResponse(output, { live: true });
+  const fingerprint = snapshot?.notes?.reviewFingerprint;
+  if (!fingerprint) return fileResponse(output, { live: true });
+  const chatSummary = currentChatUsage(fingerprint);
+  const usage = reviewUsage(snapshotNoteSummary(snapshot), chatSummary);
+  return snapshotResponse(snapshot, usage);
 }
 
 function jsonResponse(value, status = 200) {
