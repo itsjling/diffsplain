@@ -361,9 +361,7 @@ writeFileSync(accessPath, access, { mode: 0o600 });
 chmodSync(accessPath, 0o600);
 if (agentEnabled) {
   feedArgs.push('--ignore-summary-watch');
-  if (accessMode.mode === 'snapshot-only') {
-    agentArgs.push('--snapshot', rawSnapshotPath);
-  }
+  agentArgs.push('--snapshot', rawSnapshotPath);
 }
 
 const snapshotStarted = performance.now();
@@ -529,59 +527,91 @@ function startSite() {
   child.on('error', handleSiteError);
 }
 
+function savedReviewFingerprint(notes) {
+  if (!notes) return undefined;
+  if (notes.agentReviewFingerprint) return notes.agentReviewFingerprint;
+  return notes.reviewFingerprint;
+}
+
+function snapshotReviewFingerprint(snapshot) {
+  const savedFingerprint = savedReviewFingerprint(snapshot.notes);
+  if (savedFingerprint) return savedFingerprint;
+  const reviewData = {
+    repo: {
+      name: snapshot.repo.name,
+      base: snapshot.repo.base,
+      head: snapshot.repo.head,
+      branch: snapshot.repo.branch,
+      baseBranch: snapshot.repo.baseBranch,
+      remote: snapshot.repo.remote,
+      targetKind: snapshot.repo.target?.kind,
+    },
+    change: {
+      title: snapshot.change.title,
+      number: snapshot.change.number,
+    },
+    files: snapshot.files.map((file) => ({
+      path: file.path,
+      oldPath: file.oldPath,
+      status: file.status,
+      additions: file.additions,
+      deletions: file.deletions,
+      isBinary: file.isBinary,
+      patch: file.patch,
+    })),
+  };
+  return createHash('sha256')
+    .update(JSON.stringify(reviewData))
+    .digest('hex');
+}
+
+function noteMetadataMatches(notes, fingerprint) {
+  return [
+    notes.complete,
+    notes.fresh,
+    notes.generatedFor === fingerprint,
+    notes.accessMode === accessMode.mode,
+  ].every(Boolean);
+}
+
+function normalizedAgentSetting(value) {
+  return value ?? null;
+}
+
+function agentSettingsMatch(notes) {
+  return [
+    notes.agent === selectedAgent,
+    normalizedAgentSetting(notes.model) === normalizedAgentSetting(cli.model),
+    normalizedAgentSetting(notes.reasoning) ===
+      normalizedAgentSetting(cli.reasoning),
+  ].every(Boolean);
+}
+
+function emptyReview(files) {
+  return Array.isArray(files) && files.length === 0;
+}
+
+function hasCurrentAgentNotes(snapshot, fingerprint) {
+  const notes = snapshot.notes;
+  if (!savedReviewFingerprint(notes)) return false;
+  if (!noteMetadataMatches(notes, fingerprint)) return false;
+  if (emptyReview(snapshot.files)) return true;
+  return agentSettingsMatch(notes);
+}
+
+function snapshotStateFromSnapshot(snapshot) {
+  const fingerprint = snapshotReviewFingerprint(snapshot);
+  return {
+    fingerprint,
+    hasCurrentAgentNotes: hasCurrentAgentNotes(snapshot, fingerprint),
+  };
+}
+
 function snapshotState() {
   try {
-    const snapshot = JSON.parse(readFileSync(reviewSnapshotPath, 'utf8'));
-    if (snapshot.notes?.reviewFingerprint) {
-      const fingerprint =
-        snapshot.notes.agentReviewFingerprint ||
-        snapshot.notes.reviewFingerprint;
-      const emptyReview =
-        Array.isArray(snapshot.files) && snapshot.files.length === 0;
-      return {
-        fingerprint,
-        hasCurrentAgentNotes:
-          snapshot.notes.complete &&
-          snapshot.notes.fresh &&
-          snapshot.notes.generatedFor === fingerprint &&
-          snapshot.notes.accessMode === accessMode.mode &&
-          (emptyReview ||
-            (snapshot.notes.agent === selectedAgent &&
-              (snapshot.notes.model || null) === (cli.model || null) &&
-              (snapshot.notes.reasoning || null) ===
-                (cli.reasoning || null))),
-      };
-    }
-    const reviewData = {
-      repo: {
-        name: snapshot.repo.name,
-        base: snapshot.repo.base,
-        head: snapshot.repo.head,
-        branch: snapshot.repo.branch,
-        baseBranch: snapshot.repo.baseBranch,
-        remote: snapshot.repo.remote,
-        targetKind: snapshot.repo.target?.kind,
-      },
-      change: {
-        title: snapshot.change.title,
-        number: snapshot.change.number,
-      },
-      files: snapshot.files.map((file) => ({
-        path: file.path,
-        oldPath: file.oldPath,
-        status: file.status,
-        additions: file.additions,
-        deletions: file.deletions,
-        isBinary: file.isBinary,
-        patch: file.patch,
-      })),
-    };
-    return {
-      fingerprint: createHash('sha256')
-        .update(JSON.stringify(reviewData))
-        .digest('hex'),
-      hasCurrentAgentNotes: false,
-    };
+    return snapshotStateFromSnapshot(
+      JSON.parse(readFileSync(reviewSnapshotPath, 'utf8')),
+    );
   } catch {
     return undefined;
   }
@@ -722,12 +752,16 @@ function scheduleAgent(fingerprint) {
   if (agent) {
     if (selectedFingerprint !== agentFingerprint) {
       queuedFingerprint = selectedFingerprint;
+      console.log(
+        'Review changed while notes were generated. Restarting agent notes...',
+      );
       agent.kill('SIGTERM');
     }
     return;
   }
   clearTimeout(agentTimer);
   const delay = agentFingerprint ? 300 : 0;
+  console.log('Preparing agent notes...');
   agentTimer = setTimeout(() => runAgent(selectedFingerprint), delay);
 }
 
@@ -743,11 +777,37 @@ function markSnapshotReady() {
   );
 }
 
+function snapshotForPresentation(snapshot) {
+  if (snapshotStateFromSnapshot(snapshot).hasCurrentAgentNotes) {
+    return snapshot;
+  }
+  const content = {
+    ...snapshot,
+    notes: {
+      ...snapshot.notes,
+      complete: false,
+      status: 'generating',
+    },
+  };
+  delete content.version;
+  delete content.generatedAt;
+  return {
+    version: createHash('sha256')
+      .update(JSON.stringify(content))
+      .digest('hex')
+      .slice(0, 12),
+    generatedAt: new Date().toISOString(),
+    ...content,
+  };
+}
+
 function seedPresentationSnapshot() {
-  const raw = readFileSync(rawSnapshotPath);
+  const snapshot = snapshotForPresentation(
+    JSON.parse(readFileSync(rawSnapshotPath, 'utf8')),
+  );
   mkdirSync(dirname(outputPath), { recursive: true });
   const pendingOutput = `${outputPath}.${process.pid}.${randomBytes(8).toString('hex')}.tmp`;
-  writeFileSync(pendingOutput, raw);
+  writeFileSync(pendingOutput, `${JSON.stringify(snapshot, null, 2)}\n`);
   renameSync(pendingOutput, outputPath);
 }
 

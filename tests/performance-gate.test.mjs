@@ -34,7 +34,7 @@ test("reports every deterministic performance and quality case", () => {
   for (const fixture of ["working", "heldout"]) {
     assert.deepEqual(
       Object.keys(result.measurements[fixture]),
-      ["build", "summary", "present", "restart"],
+      ["build", "summary", "present", "agent-start", "restart"],
     );
     assert.deepEqual(
       Object.keys(result.quality[fixture]),
@@ -46,6 +46,10 @@ test("reports every deterministic performance and quality case", () => {
   assert.match(
     result.measurements.working.present.stop,
     /not browser rendering/,
+  );
+  assert.equal(
+    result.measurements.working["agent-start"].stop,
+    "first coding-agent request",
   );
   assert.equal(result.provider, "deterministic-fake");
   assert.equal(result.sampleRules.warmupSamples, 1);
@@ -63,6 +67,24 @@ test("runs one named performance case", () => {
 
   assert.deepEqual(Object.keys(result.measurements.working), ["summary"]);
   assert.deepEqual(Object.keys(result.measurements.heldout), ["summary"]);
+});
+
+test("runs the agent startup performance case", () => {
+  const output = execFileSync(
+    process.execPath,
+    [script, "--dry-run", "--case", "agent-start"],
+    { encoding: "utf8" },
+  );
+  const result = JSON.parse(output);
+
+  assert.deepEqual(
+    Object.keys(result.measurements.working),
+    ["agent-start"],
+  );
+  assert.equal(
+    result.measurements.working["agent-start"].thresholdMs,
+    1_000,
+  );
 });
 
 test("names the failed fixture, metric, and threshold", () => {

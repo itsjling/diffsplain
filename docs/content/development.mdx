@@ -252,12 +252,14 @@ Run the deterministic speed and note-quality gate locally:
 pnpm run benchmark:gate
 ```
 
-It measures build, summary, presentation transport, and restart separately.
-The presentation metric stops when the local transport is ready; it is not a
-browser rendering measure. The gate runs one warm-up and five measured samples
-for both the working and held-out fixtures. It compares each median with the
-limit in `benchmarks/performance-baseline.json` and records all samples plus
-their minimum, median, p95, and maximum.
+It measures build, summary, presentation transport, agent startup, and restart
+separately. The presentation metric stops when the local transport is ready;
+it is not a browser rendering measure. Agent startup covers the interval from
+that ready snapshot to the first coding-agent request. The gate runs one
+warm-up and five measured samples for both the working and held-out fixtures.
+It compares each median with the limit in
+`benchmarks/performance-baseline.json` and records all samples plus their
+minimum, median, p95, and maximum.
 
 The same gate scores fixed useful, incomplete, false, duplicate, and empty note
 cases from `benchmarks/quality-fixtures.json`. Full and summary runs also score

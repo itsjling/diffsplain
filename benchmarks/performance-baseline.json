@@ -7,12 +7,14 @@
       "build": 15000,
       "summary": 30000,
       "present": 15000,
+      "agent-start": 1000,
       "restart": 30000
     },
     "heldout": {
       "build": 15000,
       "summary": 30000,
       "present": 15000,
+      "agent-start": 1000,
       "restart": 30000
     }
   },
