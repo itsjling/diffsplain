@@ -22,12 +22,14 @@ jobs:
     permissions:
       contents: read
     steps:
-      - name: Check out main without credentials
+      - name: Check out the dispatch revision without credentials
         uses: actions/checkout@v6
         with:
-          ref: main
+          ref: ${{ github.sha }}
           fetch-depth: 0
           persist-credentials: false
+      - name: Create the pinned local release branch
+        run: git checkout -B main "$GITHUB_SHA"
       - name: Set up pinned pnpm
         uses: pnpm/action-setup@v4
       - name: Set up Node
@@ -68,10 +70,10 @@ jobs:
       contents: write
       id-token: write
     steps:
-      - name: Check out main with release credentials
+      - name: Check out the dispatch revision with release credentials
         uses: actions/checkout@v6
         with:
-          ref: main
+          ref: ${{ github.sha }}
           fetch-depth: 0
       - name: Set up Node and npm registry
         uses: actions/setup-node@v6

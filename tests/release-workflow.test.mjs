@@ -6,6 +6,7 @@ import {
   compareExactVersions,
   finalizeReleaseWorkflow,
   prepareReleaseWorkflow,
+  requirePinnedCommit,
   requireMatchingIntegrity,
   sha512Integrity,
   validateDispatchCommit,
@@ -116,6 +117,14 @@ test('requires release preparation to have no publish credential', () => {
       new RegExp(name),
     );
   }
+});
+
+test('requires the privileged checkout to match the dispatch commit', () => {
+  assert.doesNotThrow(() => requirePinnedCommit('dispatch', 'dispatch'));
+  assert.throws(
+    () => requirePinnedCommit('moved-main', 'dispatch'),
+    /privileged checkout.*dispatch commit/,
+  );
 });
 
 test('orders exact stable and prerelease versions', () => {
@@ -326,7 +335,7 @@ const artifactReceipt = {
 
 function finalizationDeps(calls, overrides = {}) {
   return {
-    assertCleanMain: () => calls.push('clean'),
+    assertPinnedCheckout: (commit) => calls.push(['pinned', commit]),
     context: { dispatchCommit: baseCommit },
     fetchMain: () => calls.push('fetch'),
     importBundle: (tag) => calls.push(['import', tag]),
@@ -358,7 +367,7 @@ test('finalizes only the verified artifact with push and publish authority', asy
 
   assert.equal(result.mode, 'create');
   assert.deepEqual(calls, [
-    'clean',
+    ['pinned', baseCommit],
     'fetch',
     ['import', 'v1.3.0'],
     ['push', releaseCommit, 'v1.3.0'],
@@ -414,6 +423,15 @@ test('rejects a finalization artifact with altered contents or release history',
       }),
     ),
     /package identity/,
+  );
+  await assert.rejects(
+    finalizeReleaseWorkflow(
+      '1.3.0',
+      finalizationDeps([], {
+        readPlan: async () => ({ ...plan, baseCommit: 'c'.repeat(40) }),
+      }),
+    ),
+    /dispatch commit.*release state/,
   );
 });
 
@@ -489,7 +507,16 @@ test('workflow pins the trusted, serialized, split-job release contract', async 
     workflow,
     /node scripts\/release-workflow\.mjs finalize "\$RELEASE_VERSION"/,
   );
+  const prepareJob = workflow.slice(
+    workflow.indexOf('\n  prepare:'),
+    workflow.indexOf('\n  release:'),
+  );
+  assert.match(prepareJob, /ref: \$\{\{ github\.sha \}\}/);
+  assert.doesNotMatch(prepareJob, /ref: main/);
+  assert.match(prepareJob, /git checkout -B main "\$GITHUB_SHA"/);
   const releaseJob = workflow.slice(workflow.indexOf('\n  release:'));
+  assert.match(releaseJob, /ref: \$\{\{ github\.sha \}\}/);
+  assert.doesNotMatch(releaseJob, /ref: main/);
   assert.doesNotMatch(releaseJob, /pnpm install|release:verify/);
   assert.doesNotMatch(helper, /^import .*release\.mjs/m);
   assert.match(helper, /'--ignore-scripts'/);

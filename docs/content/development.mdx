@@ -315,10 +315,12 @@ publish concurrently.
 
 ### Recover a workflow release
 
-Rerun the existing workflow run or start a new run with the same exact version
-after a failure. Native reruns retain the original dispatch commit and are
-accepted when that commit is the parent of the pushed release. The workflow
-accepts only these states:
+Rerun the failed publish job in the existing workflow run, or start a new run
+with the same exact version after a failure. The publish-job rerun retains the
+original verified artifact and dispatch commit, and is accepted when that
+commit is the parent of the pushed release. Rerunning every job from an older
+dispatch is rejected after `main` advances; start a new workflow run instead.
+The workflow accepts only these states:
 
 - **Create:** `main` still contains the previous package version, the requested
   tag and npm version do not exist, and local `main` matches `origin/main`.

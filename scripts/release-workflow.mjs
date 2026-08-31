@@ -98,14 +98,29 @@ function fetchMain() {
   ]);
 }
 
+function assertCleanCheckout() {
+  if (gitOutput(['status', '--porcelain'])) {
+    throw new Error('The release workflow requires a clean working tree.');
+  }
+}
+
 function assertCleanMain() {
   const branch = gitOutput(['branch', '--show-current']);
   if (branch !== 'main') {
     throw new Error(`The release workflow must run from main, not ${branch || 'a detached HEAD'}.`);
   }
-  if (gitOutput(['status', '--porcelain'])) {
-    throw new Error('The release workflow requires a clean working tree.');
+  assertCleanCheckout();
+}
+
+export function requirePinnedCommit(headCommit, dispatchCommit) {
+  if (headCommit !== dispatchCommit) {
+    throw new Error('The privileged checkout does not match the workflow dispatch commit.');
   }
+}
+
+function assertPinnedCheckout(dispatchCommit) {
+  requirePinnedCommit(gitOutput(['rev-parse', 'HEAD']), dispatchCommit);
+  assertCleanCheckout();
 }
 
 async function readJson(path) {
@@ -375,6 +390,7 @@ function registryVersion(name, version) {
 
 const defaults = {
   assertCleanMain,
+  assertPinnedCheckout,
   bundleRelease: (tag) =>
     git(['bundle', 'create', bundleFile, 'refs/heads/main', `refs/tags/${tag}`]),
   createVersion: (version) => run('pnpm', ['version', version]),
@@ -466,6 +482,11 @@ function requireCommit(value, label) {
   }
 }
 
+function hasValidDispatchState(plan) {
+  if (plan.mode === 'create') return plan.dispatchCommit === plan.baseCommit;
+  return [plan.baseCommit, plan.releaseCommit].includes(plan.dispatchCommit);
+}
+
 function validateArtifactPlan(plan, receipt, version, dispatchCommit) {
   requireMatchingFields(plan, {
     schemaVersion: 1,
@@ -489,6 +510,9 @@ function validateArtifactPlan(plan, receipt, version, dispatchCommit) {
   }
   requireCommit(plan.baseCommit, 'baseCommit');
   requireCommit(plan.releaseCommit, 'releaseCommit');
+  if (!hasValidDispatchState(plan)) {
+    throw new Error('Release artifact is invalid: dispatch commit does not match its release state.');
+  }
 }
 
 function requireArtifactValue(actual, expected, label) {
@@ -606,7 +630,7 @@ export async function finalizeReleaseWorkflow(versionInput, overrides = {}) {
   const deps = dependencies(overrides);
   const context = overrides.context ?? validateOidcContext(process.env);
 
-  deps.assertCleanMain();
+  deps.assertPinnedCheckout(context.dispatchCommit);
   deps.fetchMain();
   const plan = await deps.readPlan();
   const receipt = await deps.readReceipt();
