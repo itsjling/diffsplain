@@ -1369,11 +1369,12 @@ async function requestAgent(invocation, input, normalize, snapshot) {
     try {
       result = await runAgent(invocation, input);
     } catch (error) {
+      assertAgentReviewFresh(snapshot);
       recordAgentUsage(error?.providerUsage);
       throw error;
     }
-    recordAgentUsage(result.providerUsage);
     assertAgentReviewFresh(snapshot);
+    recordAgentUsage(result.providerUsage);
     if (result.stderr.trim()) {
       console.error(
         `${selectedAgent} wrote diagnostic output:\n${result.stderr.trim()}`,

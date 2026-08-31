@@ -394,6 +394,98 @@ process.stdout.write(JSON.stringify(input.files.length
   return { bin, calls };
 }
 
+async function concurrentUsageRaceCodex(directory, repo) {
+  const bin = join(directory, "concurrent-usage-race-codex.mjs");
+  const calls = join(directory, "concurrent-usage-race-calls.jsonl");
+  const gate = join(directory, "new-review-late-started");
+  const changedPath = join(repo, "changed.txt");
+  const addedPath = join(repo, "added.txt");
+  const latePath = join(repo, "late.txt");
+  await writeFile(
+    bin,
+    `#!/usr/bin/env node
+import { appendFileSync, existsSync, readFileSync, writeFileSync } from "node:fs";
+const input = JSON.parse(readFileSync(0, "utf8"));
+const call = existsSync(${JSON.stringify(calls)})
+  ? readFileSync(${JSON.stringify(calls)}, "utf8").trim().split("\\n").length + 1
+  : 1;
+const paths = input.files.map((file) => file.path);
+const selectedPath = paths[0];
+const overview = input.fileOverview.map((file) => file.path).sort();
+const isNewReview = overview.includes("late.txt");
+appendFileSync(
+  ${JSON.stringify(calls)},
+  JSON.stringify({ call, paths, overview, isNewReview }) + "\\n",
+);
+const usage = (inputTokens, outputTokens) => ({
+  input_tokens: inputTokens,
+  output_tokens: outputTokens,
+});
+const note = (path) => ({
+  path,
+  title: "Note " + call + " for " + path,
+  what: "Explains " + path + ".",
+  why: "Checks concurrent usage resets.",
+  details: [],
+  risks: [],
+});
+if (selectedPath === "changed.txt" && !isNewReview) {
+  writeFileSync(${JSON.stringify(changedPath)}, "after provider\\n");
+  writeFileSync(${JSON.stringify(addedPath)}, "new file\\n");
+  writeFileSync(${JSON.stringify(latePath)}, "late review only\\n");
+}
+if (selectedPath === "added.txt" && !isNewReview) {
+  const deadline = Date.now() + 5_000;
+  while (!existsSync(${JSON.stringify(gate)})) {
+    if (Date.now() >= deadline) {
+      throw new Error("Timed out waiting for rebuilt review");
+    }
+    await new Promise((resolve) => setTimeout(resolve, 20));
+  }
+}
+if (selectedPath === "late.txt" && isNewReview) {
+  writeFileSync(${JSON.stringify(gate)}, "started\\n");
+  await new Promise((resolve) => setTimeout(resolve, 200));
+}
+const response = input.files.length
+  ? { files: input.files.map((file) => note(file.path)) }
+  : {
+      change: {
+        title: "Change " + call,
+        summary: "Checks concurrent usage resets.",
+        why: "Keeps rebuilt review usage isolated.",
+        highlights: [],
+        risks: [],
+      },
+    };
+const reportedUsage =
+  selectedPath === "changed.txt" && !isNewReview
+    ? usage(101, 11)
+    : selectedPath === "added.txt" && !isNewReview
+      ? usage(202, 22)
+      : selectedPath === "changed.txt" && isNewReview
+        ? usage(11, 1)
+        : selectedPath === "late.txt" && isNewReview
+          ? usage(13, 3)
+          : usage(17, 7);
+process.stdout.write([
+  JSON.stringify({
+    type: "item.completed",
+    item: { type: "agent_message", text: JSON.stringify(response) },
+  }),
+  JSON.stringify({ type: "turn.completed", usage: reportedUsage }),
+].join("\\n"));
+`,
+  );
+  await chmod(bin, 0o755);
+  await ignoreProviderArtifacts(directory, [
+    "concurrent-usage-race-codex.mjs",
+    "concurrent-usage-race-calls.jsonl",
+    "new-review-late-started",
+  ]);
+  return { bin, calls };
+}
+
 async function malformedFileNoteCodex(root, recoverOnCall) {
   const bin = join(root, "malformed-file-note-codex.mjs");
   const calls = join(root, "malformed-file-note-calls.jsonl");
@@ -1813,6 +1905,66 @@ test("discards delayed provider output after a local review changes", async () =
       calls: 2,
       reportedCalls: 0,
     });
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+    await rm(repo, { recursive: true, force: true });
+  }
+});
+
+test("does not count late stale usage after a concurrent review rebuild", async () => {
+  const repo = await makeRepo();
+  const directory = await mkdtemp(join(tmpdir(), "diffsplain-agent-usage-race-"));
+  const summaries = join(repo, "notes.json");
+  const output = join(repo, "diff-data.json");
+
+  try {
+    await writeFile(join(repo, "changed.txt"), "before provider\n");
+    await writeFile(join(repo, "added.txt"), "before added provider\n");
+    const codex = await concurrentUsageRaceCodex(directory, repo);
+    const result = run(repo, [
+      "--worktree",
+      "--codex-bin",
+      codex.bin,
+      "--batch-size",
+      "1",
+      "--jobs",
+      "2",
+      "--summaries",
+      summaries,
+      "--output",
+      output,
+    ]);
+
+    assert.equal(result.status, 0, result.stderr);
+    assert.match(result.stdout, /review changed while notes were generated/i);
+    const published = JSON.parse(await readFile(output, "utf8"));
+    assert.equal(published.notes.complete, true);
+    assert.deepEqual(
+      published.files.map((file) => file.path).sort(),
+      ["changed.txt", "late.txt"],
+    );
+    assert.deepEqual(published.usage.agentNotes, {
+      status: "complete",
+      calls: 3,
+      reportedCalls: 3,
+      tokens: {
+        inputTokens: 41,
+        outputTokens: 11,
+      },
+    });
+    assert.deepEqual(published.usage.combined, published.usage.agentNotes);
+    const calls = await recordedCalls(codex.calls);
+    assert.equal(
+      calls.filter((call) => call.isNewReview).length,
+      3,
+    );
+    assert.ok(
+      calls.some(
+        (call) =>
+          !call.isNewReview &&
+          JSON.stringify(call.paths) === JSON.stringify(["added.txt"]),
+      ),
+    );
   } finally {
     await rm(directory, { recursive: true, force: true });
     await rm(repo, { recursive: true, force: true });
