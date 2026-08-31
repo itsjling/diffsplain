@@ -7,18 +7,35 @@ import { fileURLToPath } from "node:url";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const args = process.argv.slice(2);
-const cases = ["build", "summary", "present", "restart"];
+const cases = ["build", "summary", "present", "agent-start", "restart"];
 const fixtureNames = ["working", "heldout"];
 
 function option(name, fallback) {
   const index = args.indexOf(name);
-  if (index === -1) return fallback;
-  const value = args[index + 1];
-  if (!value || value.startsWith("--")) {
+  if (index < 0) return fallback;
+  const [value] = args.slice(index + 1);
+  if (typeof value !== "string" || value.startsWith("--")) {
     throw new Error(`${name} needs a value`);
   }
   return value;
 }
+
+const metricDefinitions = {
+  build: ["snapshot build command start", "snapshot build command completion"],
+  summary: ["summary command start", "summary command completion"],
+  present: [
+    "presenter process start",
+    "diff snapshot ready for local transport (not browser rendering)",
+  ],
+  "agent-start": [
+    "diff snapshot ready for local transport",
+    "first coding-agent request",
+  ],
+  restart: [
+    "repository edit after the first agent request",
+    "current restarted notes written to the local transport snapshot",
+  ],
+};
 
 function readJson(path) {
   return JSON.parse(readFileSync(resolve(root, path), "utf8"));
@@ -39,32 +56,10 @@ function stats(values) {
 
 function pipelineSamples(pipeline, name) {
   if (name === "present") return pipeline.present.snapshot.samplesMs;
+  if (name === "agent-start") {
+    return pipeline.present.snapshotToAsking.samplesMs;
+  }
   return pipeline[name].samplesMs;
-}
-
-function metricDefinition(name) {
-  if (name === "present") {
-    return {
-      start: "presenter process start",
-      stop: "diff snapshot ready for local transport (not browser rendering)",
-    };
-  }
-  if (name === "restart") {
-    return {
-      start: "repository edit after the first agent request",
-      stop: "current restarted notes written to the local transport snapshot",
-    };
-  }
-  if (name === "summary") {
-    return {
-      start: "summary command start",
-      stop: "summary command completion",
-    };
-  }
-  return {
-    start: "snapshot build command start",
-    stop: "snapshot build command completion",
-  };
 }
 
 function runPipeline(fixture, selectedCase, sampleRules) {
@@ -75,7 +70,7 @@ function runPipeline(fixture, selectedCase, sampleRules) {
     [
       resolve(root, "benchmarks/pipeline-speed.mjs"),
       "--case",
-      selectedCase,
+      selectedCase === "agent-start" ? "present" : selectedCase,
       "--runs",
       String(totalRuns),
       "--fixture",
@@ -95,6 +90,7 @@ function measureFixture({
 }) {
   return Object.fromEntries(
     selectedCases.map((name) => {
+      const [start, stop] = metricDefinitions[name];
       const allSamples = dryRun
         ? Array(
             sampleRules.warmupSamples + sampleRules.measuredSamples,
@@ -103,7 +99,8 @@ function measureFixture({
       const measured = allSamples.slice(sampleRules.warmupSamples);
       const result = {
         name,
-        ...metricDefinition(name),
+        start,
+        stop,
         ...stats(measured),
         thresholdMs: thresholds[name],
       };
@@ -241,7 +238,9 @@ function qualityFailures(quality) {
 
 const selectedCase = option("--case", "all");
 if (selectedCase !== "all" && !cases.includes(selectedCase)) {
-  throw new Error("--case must be all, build, summary, present, or restart");
+  throw new Error(
+    "--case must be all, build, summary, present, agent-start, or restart",
+  );
 }
 const dryRun = args.includes("--dry-run");
 const resultFile = option("--result-file");

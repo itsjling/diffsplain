@@ -99,6 +99,7 @@ test("starts the note agent after the watch snapshot and stops cleanly", async (
   const output = join(root, "diff-data.json");
   const events = join(root, "events.log");
   const response = join(root, "response.json");
+  const releaseAgent = join(root, "release-agent");
   const cacheBase = join(root, "cache");
   const configBase = join(root, "config");
   const summaries = summaryPath({
@@ -152,6 +153,9 @@ test("starts the note agent after the watch snapshot and stops cleanly", async (
         "else\n" +
         `  printf 'codex-before-feed\\n' >> ${JSON.stringify(events)}\n` +
         "fi\n" +
+        "if [ -n \"$PRESENTER_RELEASE_AGENT\" ]; then\n" +
+        "  while [ ! -f \"$PRESENTER_RELEASE_AGENT\" ]; do sleep 0.05; done\n" +
+        "fi\n" +
         `cat ${JSON.stringify(response)}\n`,
     );
     await writeFile(
@@ -186,6 +190,7 @@ test("starts the note agent after the watch snapshot and stops cleanly", async (
           PATH: `${bin}:${process.env.PATH}`,
           PRESENTER_EVENTS: events,
           PRESENTER_OUTPUT: output,
+          PRESENTER_RELEASE_AGENT: releaseAgent,
           PRESENTER_RESPONSE: response,
           XDG_CACHE_HOME: cacheBase,
           XDG_CONFIG_HOME: configBase,
@@ -193,6 +198,16 @@ test("starts the note agent after the watch snapshot and stops cleanly", async (
         stdio: "pipe",
       },
     );
+
+    const firstState = await waitFor(async () => {
+      const value = JSON.parse(await readFile(output, "utf8"));
+      return value.notes?.status === "generating" && !value.notes.complete
+        ? value
+        : undefined;
+    });
+    assert.equal(firstState.files[0].noteReady, false);
+    await waitForOutput(presenter, /^Preparing agent notes\.\.\.$/m);
+    await writeFile(releaseAgent, "ready\n");
 
     const note = await waitFor(async () => {
       const value = JSON.parse(await readFile(summaries, "utf8"));
@@ -526,6 +541,7 @@ const call = existsSync(${JSON.stringify(calls)})
 appendFileSync(${JSON.stringify(calls)}, String(call) + "\\n");
 if (call === 1 && input.files.length) {
   writeFileSync(${JSON.stringify(join(repo, "changed.txt"))}, "after provider\\n");
+  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 300);
 }
 const note = (path) => ({
   path,
@@ -577,6 +593,7 @@ process.stdout.write(JSON.stringify(input.files.length
           ...process.env,
           BROWSER: join(bin, "browser"),
           PATH: `${bin}:${process.env.PATH}`,
+          DIFFSPLAIN_WATCH_INTERVAL_MS: "25",
           XDG_CACHE_HOME: join(root, "cache"),
         },
         stdio: "pipe",
