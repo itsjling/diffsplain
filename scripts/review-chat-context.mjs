@@ -307,8 +307,10 @@ export function makeInput({ kind, context, messages, question, accessMode }) {
   };
 }
 
-function providerResult(provider, input) {
-  return typeof provider === 'function' ? provider(input) : provider.run(input);
+function providerResult(provider, input, context) {
+  return typeof provider === 'function'
+    ? provider(input, context)
+    : provider.run(input, context);
 }
 
 function isExecution(value) {
@@ -324,8 +326,8 @@ function executionPromise(value) {
   return isExecution(value) ? value.promise : value;
 }
 
-export function providerExecution(provider, input) {
-  const result = providerResult(provider, input);
+export function providerExecution(provider, input, context) {
+  const result = providerResult(provider, input, context);
   return {
     promise: Promise.resolve(executionPromise(result)),
     cancel: cancellationFor(result),

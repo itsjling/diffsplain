@@ -21,8 +21,16 @@ import {
   codingAgentAvailability,
   codingAgentBinary,
   parseAgentResponse,
+  parseAgentUsage,
   selectCodingAgent,
 } from './coding-agents.mjs';
+import {
+  emptyUsageAccumulator,
+  formatReviewUsage,
+  recordUsage,
+  reviewUsage,
+  usageSummary,
+} from './agent-usage.mjs';
 import {
   isBaseWorktreeTarget,
   reviewAccessMode,
@@ -381,6 +389,18 @@ const summariesPath = summaryPath({
 const ownershipPath = `${summariesPath}.lock`;
 let ownership;
 let ownershipHeartbeat;
+let agentUsage = emptyUsageAccumulator();
+
+function currentAgentUsage() {
+  return usageSummary(agentUsage);
+}
+
+function recordAgentUsage(usage) {
+  agentUsage = recordUsage(agentUsage, usage);
+  const emptyChatUsage = usageSummary(emptyUsageAccumulator());
+  console.log(formatReviewUsage(reviewUsage(currentAgentUsage(), emptyChatUsage)));
+}
+
 function acquireOwnership() {
   ownership = acquireLease(ownershipPath);
   ownershipHeartbeat = setInterval(() => {
@@ -1046,6 +1066,10 @@ function publishSnapshot(
       fast,
       accessMode: accessMode.mode,
     },
+    usage: reviewUsage(
+      currentAgentUsage(),
+      usageSummary(emptyUsageAccumulator()),
+    ),
   };
   delete content.version;
   delete content.generatedAt;
@@ -1070,6 +1094,7 @@ function summariesForSnapshot(summaries, snapshot) {
     meta: {
       ...summaries.meta,
       reviewFingerprint: snapshot.notes.reviewFingerprint,
+      usage: currentAgentUsage(),
     },
   };
 }
@@ -1271,9 +1296,12 @@ function runAgent(invocation, input, { timeoutMs } = {}) {
     const timeout = timeoutMs
       ? setTimeout(() => {
         child.kill('SIGTERM');
-        rejectPromise(
-          new Error(`${selectedAgent} timed out`),
+        const error = new Error(`${selectedAgent} timed out`);
+        error.providerUsage = parseAgentUsage(
+          selectedAgent,
+          Buffer.concat(stdout).toString('utf8'),
         );
+        rejectPromise(error);
       }, timeoutMs)
       : undefined;
     timeout?.unref();
@@ -1322,14 +1350,18 @@ function runAgent(invocation, input, { timeoutMs } = {}) {
           .filter((line) => line.trim() && line.length < 600)
           .slice(-8)
           .join('\n');
-        rejectPromise(
-          new Error(
-            `${selectedAgent} exited with status ${status ?? signal}${detail ? `\n${detail}` : ''}`,
-          ),
+        const error = new Error(
+          `${selectedAgent} exited with status ${status ?? signal}${detail ? `\n${detail}` : ''}`,
         );
+        error.providerUsage = parseAgentUsage(selectedAgent, stdoutText);
+        rejectPromise(error);
         return;
       }
-      resolvePromise({ stdout: stdoutText, stderr: stderrText });
+      resolvePromise({
+        stdout: stdoutText,
+        stderr: stderrText,
+        providerUsage: parseAgentUsage(selectedAgent, stdoutText),
+      });
     });
     if (invocation.input === 'stdin') child.stdin.end(input);
     else child.stdin.end();
@@ -1339,8 +1371,16 @@ function runAgent(invocation, input, { timeoutMs } = {}) {
 async function requestAgent(invocation, input, normalize, snapshot) {
   supportRecorder?.addBytes('agentInput', Buffer.byteLength(input));
   return recordAsyncStage('agent', async () => {
-    const result = await runAgent(invocation, input);
+    let result;
+    try {
+      result = await runAgent(invocation, input);
+    } catch (error) {
+      assertAgentReviewFresh(snapshot);
+      recordAgentUsage(error?.providerUsage);
+      throw error;
+    }
     assertAgentReviewFresh(snapshot);
+    recordAgentUsage(result.providerUsage);
     if (result.stderr.trim()) {
       console.error(
         `${selectedAgent} wrote diagnostic output:\n${result.stderr.trim()}`,
@@ -1956,6 +1996,7 @@ try {
     } catch (error) {
       if (!(error instanceof ReviewChangedError)) throw error;
       reviewChanged = true;
+      agentUsage = emptyUsageAccumulator();
       console.log('The review changed while notes were generated. Rebuilding the snapshot.');
     }
   } while (reviewChanged && !interrupted);

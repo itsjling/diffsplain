@@ -543,6 +543,27 @@ function parseClaudeResponse(stdout) {
   return envelope;
 }
 
+function jsonLines(stdout) {
+  const lines = stdout.trim().split('\n').filter(Boolean);
+  if (!lines.length) return undefined;
+  const events = lines.map(parseEvent);
+  return events.every(Boolean) ? events : undefined;
+}
+
+function parseCodexResponse(stdout) {
+  const events = jsonLines(stdout);
+  const message = events && [...events]
+    .reverse()
+    .find((event) =>
+      event.type === 'item.completed' &&
+      event.item?.type === 'agent_message' &&
+      typeof event.item.text === 'string',
+    );
+  return message
+    ? parseJsonText(message.item.text, 'Codex')
+    : parseJsonText(stdout, 'Codex');
+}
+
 function parseEvent(line) {
   try {
     return JSON.parse(line);
@@ -601,8 +622,94 @@ export function parseAgentResponse(agent, stdout) {
   if (agent === 'claude') return parseClaudeResponse(stdout);
   if (agent === 'opencode') return parseOpenCodeResponse(stdout);
   if (agent === 'cursor') return parseCursorResponse(stdout);
-  const label = agent === 'copilot' ? 'Copilot' : 'Codex';
-  return parseJsonText(stdout, label);
+  if (agent === 'codex') return parseCodexResponse(stdout);
+  return parseJsonText(stdout, 'Copilot');
+}
+
+function addUsageField(totals, [field, count]) {
+  if (!Number.isSafeInteger(count) || count < 0) return;
+  totals[field] = (totals[field] || 0) + count;
+}
+
+function addProviderUsage(totals, usage) {
+  Object.entries(usage).forEach((entry) => addUsageField(totals, entry));
+  return totals;
+}
+
+function sumProviderUsage(usages) {
+  const totals = usages.reduce(addProviderUsage, {});
+  return Object.keys(totals).length ? totals : undefined;
+}
+
+function providerUsage(inputTokens, outputTokens, cacheReadTokens, cacheWriteTokens) {
+  return { inputTokens, outputTokens, cacheReadTokens, cacheWriteTokens };
+}
+
+function codexEventUsage(event) {
+  if (event.type !== 'turn.completed' || !event.usage) return undefined;
+  const usage = event.usage;
+  return providerUsage(
+    usage.input_tokens,
+    usage.output_tokens,
+    usage.cached_input_tokens,
+    usage.cache_write_input_tokens,
+  );
+}
+
+function eventPartTokens(event, type) {
+  if (event.type !== type) return undefined;
+  return event.part?.tokens;
+}
+
+function openCodeEventUsage(event) {
+  const tokens = eventPartTokens(event, 'step_finish');
+  if (!tokens) return undefined;
+  const cache = tokens.cache || {};
+  return providerUsage(
+    tokens.input,
+    tokens.output,
+    cache.read,
+    cache.write,
+  );
+}
+
+function eventUsage(stdout, extractUsage) {
+  const events = jsonLines(stdout) || [];
+  return sumProviderUsage(events.map(extractUsage).filter(Boolean));
+}
+
+function codexUsage(stdout) {
+  return eventUsage(stdout, codexEventUsage);
+}
+
+function safeProviderEnvelope(stdout, label) {
+  try {
+    return parseJsonText(stdout, label);
+  } catch {
+    return undefined;
+  }
+}
+
+function claudeUsage(stdout) {
+  const usage = safeProviderEnvelope(stdout, 'Claude')?.usage;
+  if (!usage || typeof usage !== 'object') return undefined;
+  return sumProviderUsage([providerUsage(
+    usage.input_tokens,
+    usage.output_tokens,
+    usage.cache_read_input_tokens,
+    usage.cache_creation_input_tokens,
+  )]);
+}
+
+function openCodeUsage(stdout) {
+  return eventUsage(stdout, openCodeEventUsage);
+}
+
+export function parseAgentUsage(agent, stdout) {
+  if (agent === 'codex') return codexUsage(stdout);
+  if (agent === 'claude') return claudeUsage(stdout);
+  if (agent === 'opencode') return openCodeUsage(stdout);
+  return undefined;
 }
 
 function codexIsolationArgs(snapshotOnly) {
@@ -646,6 +753,7 @@ function codexCommand({
   const args = [
     'exec',
     '--ephemeral',
+    '--json',
     '--sandbox',
     'read-only',
     ...codexIsolationArgs(snapshotOnly),

@@ -34,6 +34,11 @@ import {
 } from './local-target.mjs';
 import { doctorReport } from './doctor.mjs';
 import { accessTokenDirectory } from './access-token.mjs';
+import {
+  emptyUsageAccumulator,
+  reviewUsage,
+  usageSummary,
+} from './agent-usage.mjs';
 import { cacheStatus, clearCache, formatCacheStatus, pruneCache } from './cache.mjs';
 import {
   agentFallbackRecordNeeded,
@@ -781,13 +786,16 @@ function markSnapshotReady() {
 }
 
 function snapshotForPresentation(snapshot) {
+  const zeroUsage = usageSummary(emptyUsageAccumulator());
   const hasCurrentNotes = snapshotStateFromSnapshot(snapshot)
     .hasCurrentAgentNotes;
-  if (hasCurrentNotes && snapshot.notes?.fast === cli.fast) {
-    return snapshot;
-  }
-  const content = {
+  const current = {
     ...snapshot,
+    usage: reviewUsage(zeroUsage, zeroUsage),
+  };
+  if (hasCurrentNotes && snapshot.notes?.fast === cli.fast) return current;
+  const content = {
+    ...current,
     notes: {
       ...snapshot.notes,
       fast: cli.fast,

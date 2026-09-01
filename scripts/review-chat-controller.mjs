@@ -130,9 +130,9 @@ function validatedAnswer(value, paths) {
   }
 }
 
-function executionResult(provider, input) {
+function executionResult(provider, input, context) {
   try {
-    return { execution: providerExecution(provider, input) };
+    return { execution: providerExecution(provider, input, context) };
   } catch (error) {
     return { error };
   }
@@ -424,7 +424,9 @@ export class ReviewChatController {
     thread.error = undefined;
     this.notify();
     this.supervise(thread, run);
-    const result = executionResult(this.provider, input);
+    const result = executionResult(this.provider, input, {
+      reviewFingerprint: run.fingerprint,
+    });
     if (result.error) {
       this.finishFailure(thread, run, result.error);
       return;

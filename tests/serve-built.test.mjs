@@ -19,6 +19,7 @@ function start(args, env = process.env) {
 function waitForReady(child) {
   return new Promise((resolve, reject) => {
     let output = '';
+    let errors = '';
     const timer = setTimeout(() => {
       reject(new Error(`Built server did not report readiness: ${output}`));
     }, 10_000);
@@ -37,10 +38,13 @@ function waitForReady(child) {
         }
       }
     });
+    child.stderr.on('data', (chunk) => {
+      errors += chunk;
+    });
     child.once('error', reject);
     child.once('exit', (code) => {
       clearTimeout(timer);
-      reject(new Error(`Built server exited with ${code}: ${output}`));
+      reject(new Error(`Built server exited with ${code}: ${output}${errors}`));
     });
   });
 }
@@ -101,6 +105,19 @@ async function waitForProcessExit(pid) {
     await pause(25);
   }
   throw new Error(`Provider process ${pid} did not exit`);
+}
+
+async function waitForFile(path, message) {
+  const deadline = Date.now() + 10_000;
+  while (Date.now() < deadline) {
+    try {
+      await readFile(path);
+      return;
+    } catch {
+      await pause(25);
+    }
+  }
+  throw new Error(message);
 }
 
 async function stopIfRunning(child) {
@@ -274,8 +291,10 @@ async function waitForChatEvent(ready, output) {
   return reader;
 }
 
-function providerSnapshot() {
-  return {
+function providerSnapshot({ withUsage = true } = {}) {
+  const value = {
+    version: 'provider-one',
+    generatedAt: new Date().toISOString(),
     files: [{
       path: 'changed.txt',
       status: 'modified',
@@ -286,16 +305,93 @@ function providerSnapshot() {
     }],
     notes: { reviewFingerprint: 'review-one' },
   };
+  if (withUsage) {
+    value.usage = {
+      agentNotes: {
+        status: 'complete',
+        calls: 1,
+        reportedCalls: 1,
+        tokens: { inputTokens: 50, outputTokens: 10 },
+      },
+      reviewChat: {
+        status: 'complete',
+        calls: 0,
+        reportedCalls: 0,
+        tokens: { inputTokens: 0, outputTokens: 0 },
+      },
+      combined: {
+        status: 'complete',
+        calls: 1,
+        reportedCalls: 1,
+        tokens: { inputTokens: 50, outputTokens: 10 },
+      },
+    };
+  }
+  return value;
 }
 
 function providerScript(calls, argumentsLog) {
   return [
-    '#!/bin/sh',
-    `printf 'run\\n' >> ${JSON.stringify(calls)}`,
-    `printf '%s\\n' "$@" >> ${JSON.stringify(argumentsLog)}`,
-    "printf '%s' '{\"markdown\":\"Complete answer.\",\"citations\":[]}'",
+    '#!/usr/bin/env node',
+    "const { appendFileSync } = require('node:fs');",
+    `appendFileSync(${JSON.stringify(calls)}, 'run\\n');`,
+    `appendFileSync(${JSON.stringify(argumentsLog)}, process.argv.slice(2).join('\\n') + '\\n');`,
+    `console.log(JSON.stringify({ type: 'item.completed', item: { type: 'agent_message', text: ${JSON.stringify(JSON.stringify({ markdown: 'Complete answer.', citations: [] }))} } }));`,
+    "console.log(JSON.stringify({ type: 'turn.completed', usage: { input_tokens: 7, output_tokens: 3, cached_input_tokens: 2 } }));",
     '',
   ].join('\n');
+}
+
+function gatedProviderScript(reached, release) {
+  return [
+    '#!/usr/bin/env node',
+    "const { existsSync, writeFileSync } = require('node:fs');",
+    `writeFileSync(${JSON.stringify(reached)}, 'reached\\n');`,
+    'const timer = setInterval(() => {',
+    `  if (!existsSync(${JSON.stringify(release)})) return;`,
+    '  clearInterval(timer);',
+    `  console.log(JSON.stringify({ type: 'item.completed', item: { type: 'agent_message', text: ${JSON.stringify(JSON.stringify({ markdown: 'Stale answer.', citations: [] }))} } }));`,
+    "  console.log(JSON.stringify({ type: 'turn.completed', usage: { input_tokens: 7, output_tokens: 3, cached_input_tokens: 2 } }));",
+    '}, 10);',
+    '',
+  ].join('\n');
+}
+
+async function snapshotReadBarrier(directory, output) {
+  const preloader = join(directory, 'pause-snapshot-read.cjs');
+  const reached = join(directory, 'snapshot-read-reached');
+  const release = join(directory, 'snapshot-read-release');
+  await writeFile(preloader, [
+    "const { existsSync, writeFileSync } = require('node:fs');",
+    "const promises = require('node:fs/promises');",
+    "const { syncBuiltinESMExports } = require('node:module');",
+    "const { resolve } = require('node:path');",
+    "const { fileURLToPath } = require('node:url');",
+    'const readFile = promises.readFile;',
+    'promises.readFile = async function (file, ...args) {',
+    '  const value = await readFile.call(this, file, ...args);',
+    '  const path = file instanceof URL ? fileURLToPath(file) : file;',
+    `  if (typeof path === 'string' && resolve(path) === ${JSON.stringify(output)} && !existsSync(${JSON.stringify(reached)})) {`,
+    `    writeFileSync(${JSON.stringify(reached)}, 'reached\\n');`,
+    `    while (!existsSync(${JSON.stringify(release)})) {`,
+    '      await new Promise((done) => setTimeout(done, 10));',
+    '    }',
+    '  }',
+    '  return value;',
+    '};',
+    'syncBuiltinESMExports();',
+    '',
+  ].join('\n'));
+  return {
+    env: {
+      ...process.env,
+      NODE_OPTIONS: [process.env.NODE_OPTIONS, `--require=${preloader}`]
+        .filter(Boolean)
+        .join(' '),
+    },
+    reached,
+    release,
+  };
 }
 
 async function writeProviderFixture(output, provider, calls, argumentsLog) {
@@ -361,6 +457,20 @@ async function exerciseSelectedProvider(ready, calls, argumentsLog) {
   const argumentsText = await readFile(argumentsLog, 'utf8');
   assert.match(argumentsText, /--model\ntest-model/);
   assert.match(argumentsText, /model_reasoning_effort="low"/);
+  const snapshot = await fetch(reviewUrl(ready, 'diff-data.json')).then(
+    (response) => response.json(),
+  );
+  assert.deepEqual(snapshot.usage.reviewChat, {
+    status: 'complete',
+    calls: 2,
+    reportedCalls: 2,
+    tokens: { inputTokens: 14, outputTokens: 6, cacheReadTokens: 4 },
+  });
+  assert.deepEqual(snapshot.usage.combined.tokens, {
+    inputTokens: 64,
+    outputTokens: 16,
+    cacheReadTokens: 4,
+  });
 }
 
 test('requires a per-run access value for data and event routes', async () => {
@@ -488,7 +598,177 @@ test('starts complete chat answers asynchronously with the selected provider', a
     await exerciseSelectedProvider(ready, calls, argumentsLog);
     const outputText = await lifecycle;
     assert.match(outputText, /Diffsplain chat #\d+: answer started/);
+    assert.match(outputText, /Review chat usage: input 7, output 3, cache read 2/);
+    assert.match(outputText, /Combined agent usage: input 57, output 13, cache read 2/);
     assert.doesNotMatch(outputText, /Why\?|And then\?|changed\.txt|Complete answer/);
+  } finally {
+    if (child && child.exitCode === null) await stop(child);
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test('adds live chat usage to snapshots without preseeded note usage', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'diffsplain-chat-usage-'));
+  const output = join(directory, 'diff-data.json');
+  const provider = join(directory, 'codex');
+  const calls = join(directory, 'calls.log');
+  const argumentsLog = join(directory, 'args.log');
+  let child;
+
+  try {
+    await writeFile(output, JSON.stringify(providerSnapshot({ withUsage: false })));
+    await writeFile(provider, providerScript(calls, argumentsLog));
+    await chmod(provider, 0o755);
+    child = start(selectedProviderArgs(output, provider));
+    const ready = await waitForReady(child);
+    const endpoint = reviewUrl(ready, 'api/chat');
+    await chatCommand(endpoint, { type: 'new', scope: 'review' });
+    await askProviderChat(endpoint, 'Why?');
+    await waitForChat(ready, (state) => state.threads[0]?.status === 'ready');
+
+    const snapshot = await fetch(reviewUrl(ready, 'diff-data.json')).then(
+      (response) => response.json(),
+    );
+    assert.deepEqual(snapshot.usage.agentNotes, {
+      status: 'complete',
+      calls: 0,
+      reportedCalls: 0,
+      tokens: { inputTokens: 0, outputTokens: 0 },
+    });
+    assert.deepEqual(snapshot.usage.reviewChat, {
+      status: 'complete',
+      calls: 1,
+      reportedCalls: 1,
+      tokens: { inputTokens: 7, outputTokens: 3, cacheReadTokens: 2 },
+    });
+    assert.deepEqual(snapshot.usage.combined.tokens, {
+      inputTokens: 7,
+      outputTokens: 3,
+      cacheReadTokens: 2,
+    });
+
+    const nextReview = providerSnapshot({ withUsage: false });
+    nextReview.version = 'provider-two';
+    nextReview.notes.reviewFingerprint = 'review-two';
+    await writeFile(output, JSON.stringify(nextReview));
+    const resetSnapshot = await fetch(reviewUrl(ready, 'diff-data.json')).then(
+      (response) => response.json(),
+    );
+    assert.deepEqual(resetSnapshot.usage.reviewChat, {
+      status: 'complete',
+      calls: 0,
+      reportedCalls: 0,
+      tokens: { inputTokens: 0, outputTokens: 0 },
+    });
+    assert.deepEqual(
+      resetSnapshot.usage.combined,
+      resetSnapshot.usage.agentNotes,
+    );
+  } finally {
+    if (child && child.exitCode === null) await stop(child);
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test('keeps current chat usage when a stale snapshot response finishes', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'diffsplain-chat-usage-race-'));
+  const output = join(directory, 'diff-data.json');
+  const provider = join(directory, 'codex');
+  const calls = join(directory, 'calls.log');
+  const argumentsLog = join(directory, 'args.log');
+  let child;
+
+  try {
+    await writeProviderFixture(output, provider, calls, argumentsLog);
+    const barrier = await snapshotReadBarrier(directory, output);
+    child = start(selectedProviderArgs(output, provider), barrier.env);
+    const ready = await waitForReady(child);
+    const endpoint = reviewUrl(ready, 'api/chat');
+
+    const staleResponse = fetch(reviewUrl(ready, 'diff-data.json')).then(
+      (response) => response.json(),
+    );
+    await waitForFile(
+      barrier.reached,
+      'The stale snapshot response did not reach its read barrier',
+    );
+
+    const nextReview = providerSnapshot({ withUsage: false });
+    nextReview.version = 'provider-two';
+    nextReview.notes.reviewFingerprint = 'review-two';
+    await writeFile(output, JSON.stringify(nextReview));
+    await waitForChat(ready, (state) => state.fingerprint === 'review-two');
+    await chatCommand(endpoint, { type: 'new', scope: 'review' });
+    await askProviderChat(endpoint, 'Why now?');
+    await waitForChat(ready, (state) => state.threads[0]?.status === 'ready');
+
+    await writeFile(barrier.release, 'release\n');
+    await staleResponse;
+    const current = await fetch(reviewUrl(ready, 'diff-data.json')).then(
+      (response) => response.json(),
+    );
+    assert.deepEqual(current.usage.reviewChat, {
+      status: 'complete',
+      calls: 1,
+      reportedCalls: 1,
+      tokens: { inputTokens: 7, outputTokens: 3, cacheReadTokens: 2 },
+    });
+  } finally {
+    if (child && child.exitCode === null) await stop(child);
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test('rejects chat usage after the published review changes before chat refresh', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'diffsplain-chat-usage-fence-'));
+  const output = join(directory, 'diff-data.json');
+  const chatSnapshot = join(directory, 'chat-snapshot.json');
+  const provider = join(directory, 'codex');
+  const reached = join(directory, 'provider-reached');
+  const release = join(directory, 'provider-release');
+  let child;
+  let outputText = '';
+
+  try {
+    const firstReview = providerSnapshot();
+    await writeFile(output, JSON.stringify(firstReview));
+    await writeFile(chatSnapshot, JSON.stringify(firstReview));
+    await writeFile(provider, gatedProviderScript(reached, release));
+    await chmod(provider, 0o755);
+    child = start([
+      ...selectedProviderArgs(output, provider),
+      '--chat-snapshot',
+      chatSnapshot,
+    ]);
+    child.stdout.on('data', (chunk) => {
+      outputText += chunk;
+    });
+    const ready = await waitForReady(child);
+    const endpoint = reviewUrl(ready, 'api/chat');
+    await chatCommand(endpoint, { type: 'new', scope: 'review' });
+    await askProviderChat(endpoint, 'Why?');
+    await waitForFile(reached, 'The provider did not reach its usage barrier');
+
+    const nextReview = providerSnapshot();
+    nextReview.version = 'provider-two';
+    nextReview.notes.reviewFingerprint = 'review-two';
+    nextReview.usage.agentNotes.tokens = { inputTokens: 500, outputTokens: 100 };
+    await writeFile(output, JSON.stringify(nextReview));
+    const lifecycle = waitForText(child.stdout, /answer completed/);
+    await writeFile(release, 'release\n');
+    await waitForChat(ready, (state) => state.threads[0]?.status === 'ready');
+    await lifecycle;
+
+    assert.doesNotMatch(outputText, /Review chat usage:/);
+    const current = await fetch(reviewUrl(ready, 'diff-data.json')).then(
+      (response) => response.json(),
+    );
+    assert.deepEqual(current.usage.reviewChat, {
+      status: 'complete',
+      calls: 0,
+      reportedCalls: 0,
+      tokens: { inputTokens: 0, outputTokens: 0 },
+    });
   } finally {
     if (child && child.exitCode === null) await stop(child);
     await rm(directory, { recursive: true, force: true });
@@ -499,14 +779,20 @@ test('reports provider failures to chat state and redacted stdout lifecycle logs
   const directory = await mkdtemp(join(tmpdir(), 'diffsplain-chat-error-'));
   const output = join(directory, 'diff-data.json');
   const provider = join(directory, 'codex');
+  const calls = join(directory, 'calls.txt');
   let child;
 
   try {
     await writeFile(output, JSON.stringify(providerSnapshot()));
     await writeFile(provider, [
-      '#!/bin/sh',
-      "printf '%s' 'raw-provider-diagnostic' >&2",
-      'exit 7',
+      '#!/usr/bin/env node',
+      "const { existsSync, readFileSync, writeFileSync } = require('node:fs');",
+      `const calls = existsSync(${JSON.stringify(calls)}) ? Number(readFileSync(${JSON.stringify(calls)}, 'utf8')) + 1 : 1;`,
+      `writeFileSync(${JSON.stringify(calls)}, String(calls));`,
+      "if (calls > 1) console.log(JSON.stringify({ type: 'item.completed', item: { type: 'agent_message', text: JSON.stringify({ markdown: 'Recovered answer.', citations: [] }) } }));",
+      "console.log(JSON.stringify({ type: 'turn.completed', usage: { input_tokens: 9, output_tokens: 4, cached_input_tokens: 3, cache_write_input_tokens: 1 } }));",
+      "if (calls === 1) console.error('raw-provider-diagnostic');",
+      'if (calls === 1) process.exitCode = 7;',
       '',
     ].join('\n'));
     await chmod(provider, 0o755);
@@ -527,6 +813,48 @@ test('reports provider failures to chat state and redacted stdout lifecycle logs
       outputText,
       /private-question|changed\.txt|raw-provider-diagnostic|responseSchema/,
     );
+
+    const afterFailure = await fetch(reviewUrl(ready, 'diff-data.json')).then(
+      (response) => response.json(),
+    );
+    assert.deepEqual(afterFailure.usage.reviewChat, {
+      status: 'complete',
+      calls: 1,
+      reportedCalls: 1,
+      tokens: {
+        inputTokens: 9,
+        outputTokens: 4,
+        cacheReadTokens: 3,
+        cacheWriteTokens: 1,
+      },
+    });
+
+    const completedLifecycle = waitForText(child.stdout, /answer completed/);
+    const retry = await chatCommand(endpoint, { type: 'retry', scope: 'review' });
+    assert.equal(retry.status, 202);
+    const recovered = await waitForChat(
+      ready,
+      (state) => state.threads[0]?.status === 'ready',
+    );
+    assert.equal(
+      recovered.threads[0].messages.at(-1).answer.markdown,
+      'Recovered answer.',
+    );
+    await completedLifecycle;
+    const afterRetry = await fetch(reviewUrl(ready, 'diff-data.json')).then(
+      (response) => response.json(),
+    );
+    assert.deepEqual(afterRetry.usage.reviewChat, {
+      status: 'complete',
+      calls: 2,
+      reportedCalls: 2,
+      tokens: {
+        inputTokens: 18,
+        outputTokens: 8,
+        cacheReadTokens: 6,
+        cacheWriteTokens: 2,
+      },
+    });
   } finally {
     if (child && child.exitCode === null) await stop(child);
     await rm(directory, { recursive: true, force: true });
