@@ -75,11 +75,10 @@ jobs:
         with:
           ref: ${{ github.sha }}
           fetch-depth: 0
-      - name: Set up Node and npm registry
+      - name: Set up Node
         uses: actions/setup-node@v6
         with:
           node-version: 24
-          registry-url: https://registry.npmjs.org
           package-manager-cache: false
       - name: Download the verified release
         uses: actions/download-artifact@v5
