@@ -221,21 +221,25 @@ function UsageRow({
 
 function UsagePanel({ usage }: { usage: ReviewUsage }) {
   return (
-    <section
-      aria-label="Agent usage"
-      aria-live="polite"
-      className="usage-panel"
-    >
-      <header>
-        <span>Agent usage</span>
-        <span>{usageState(usage.combined)}</span>
-      </header>
-      <dl>
-        <UsageRow label="Notes" summary={usage.agentNotes} />
-        <UsageRow label="Chat" summary={usage.reviewChat} />
-        <UsageRow label="Total" summary={usage.combined} />
-      </dl>
-    </section>
+    <details className="usage-disclosure">
+      <summary>
+        <span className="usage-summary-label">Agent usage</span>
+        <span className="usage-summary-state">
+          {usageState(usage.combined)}
+        </span>
+      </summary>
+      <section
+        aria-label="Agent usage"
+        aria-live="polite"
+        className="usage-panel"
+      >
+        <dl>
+          <UsageRow label="Notes" summary={usage.agentNotes} />
+          <UsageRow label="Chat" summary={usage.reviewChat} />
+          <UsageRow label="Total" summary={usage.combined} />
+        </dl>
+      </section>
+    </details>
   );
 }
 
@@ -957,7 +961,6 @@ export default function Home() {
                   Ask agent
                 </button>
               </div>
-              {snapshot.usage ? <UsagePanel usage={snapshot.usage} /> : null}
               <ReviewChatRunningNotice
                 chat={chat}
                 chatVisible={summaryMode === "chat"}
@@ -1101,6 +1104,7 @@ export default function Home() {
                   />
                 </div>
               )}
+              {snapshot.usage ? <UsagePanel usage={snapshot.usage} /> : null}
             </div>
 
             {summaryMode === "note" &&

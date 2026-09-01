@@ -1979,32 +1979,63 @@ kbd {
   }
 }
 
-.usage-panel {
-  border-bottom: 1px solid var(--line);
+.usage-disclosure {
   border-top: 1px solid var(--line);
-  margin-bottom: 22px;
-  padding: 13px 0 11px;
+  margin-top: 30px;
 }
 
-.usage-panel header {
+.usage-disclosure > summary {
   align-items: center;
   color: var(--muted);
+  cursor: pointer;
   display: flex;
   font: 650 9px/1.2 var(--font-geist-mono), monospace;
   justify-content: space-between;
   letter-spacing: 0.1em;
+  list-style: none;
+  min-height: 44px;
   text-transform: uppercase;
 }
 
-header > span:last-child {
+.usage-disclosure > summary::-webkit-details-marker {
+  display: none;
+}
+
+.usage-summary-label {
+  align-items: center;
+  display: flex;
+  gap: 8px;
+}
+
+.usage-summary-label::before {
+  content: "›";
+  font-size: 11.5px;
+  line-height: 1;
+  transform: translateY(-1px);
+}
+
+.usage-disclosure[open] .usage-summary-label::before {
+  transform: rotate(90deg) translateX(-1px);
+}
+
+.usage-summary-state {
   color: var(--ink);
   letter-spacing: 0.04em;
+}
+
+.usage-disclosure > summary:focus-visible {
+  outline: 2px solid var(--blue);
+  outline-offset: 3px;
+}
+
+.usage-panel {
+  padding-bottom: 13px;
 }
 
 .usage-panel dl {
   display: grid;
   gap: 7px;
-  margin: 11px 0 0;
+  margin: 0;
 }
 
 .usage-row {

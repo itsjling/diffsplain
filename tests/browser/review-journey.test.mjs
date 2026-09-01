@@ -581,7 +581,22 @@ test("shows complete, partial, unavailable, and live-updated usage at 320 pixels
       ));
       await page.goto(serverUrl);
 
+      const disclosure = page.locator(".usage-disclosure");
       const usage = page.getByRole("region", { name: "Agent usage" });
+      assert.equal(await disclosure.getAttribute("open"), null);
+      assert.equal(await usage.isVisible(), false);
+      assert.equal(
+        await page.locator("#agent-note-panel").evaluate((note) => {
+          const usageDisclosure = document.querySelector(".usage-disclosure");
+          return Boolean(
+            usageDisclosure &&
+              note.compareDocumentPosition(usageDisclosure) &
+                Node.DOCUMENT_POSITION_FOLLOWING,
+          );
+        }),
+        true,
+      );
+      await disclosure.locator("summary").click();
       await usage.getByText("Unavailable").waitFor();
       await usage.getByText("Partial", { exact: true }).first().waitFor();
       await usage.getByText("Input 12,400", { exact: true }).first().waitFor();
