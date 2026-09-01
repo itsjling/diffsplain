@@ -30,6 +30,8 @@ jobs:
               path === "AGENTS.md" ||
               path === "skills-lock.json" ||
               path === ".github/workflows/automation-trust.yml" ||
+              path === ".github/workflows/release.yml" ||
+              path === "scripts/release-workflow.mjs" ||
               path.startsWith(".codex/") ||
               path.startsWith(".agents/");
             const changed = [

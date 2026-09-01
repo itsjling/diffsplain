@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { access, readFile } from 'node:fs/promises';
+import { readFile } from 'node:fs/promises';
 import test from 'node:test';
 import {
   publishRelease,
@@ -226,18 +226,13 @@ test('stops when the requested or registry version is not publishable', async ()
   );
 });
 
-test('exposes only the two manual release commands', async () => {
+test('keeps the two local release commands unchanged', async () => {
   const pkg = JSON.parse(
     await readFile(new URL('../package.json', import.meta.url), 'utf8'),
   );
   assert.equal(pkg.scripts.release, undefined);
   assert.equal(pkg.scripts['release:verify'], 'node scripts/release.mjs verify');
   assert.equal(pkg.scripts['release:publish'], 'node scripts/release.mjs publish');
-  await assert.rejects(
-    access(new URL('../.github/workflows/release.yml', import.meta.url)),
-    { code: 'ENOENT' },
-  );
-
   const result = spawnSync(process.execPath, [releaseScript], {
     encoding: 'utf8',
   });
