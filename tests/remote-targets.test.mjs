@@ -62,6 +62,47 @@ process.exit(result.status ?? 1);
   };
 }
 
+async function pauseFirstFingerprint(fixture, output) {
+  const bin = join(fixture.root, "fingerprint-git-proxy");
+  const proxy = join(bin, "git");
+  const reached = join(fixture.root, "fingerprint-reached");
+  const release = join(fixture.root, "fingerprint-release");
+  await mkdir(bin);
+  await writeFile(
+    proxy,
+    `#!/usr/bin/env node
+const { existsSync, writeFileSync } = require("node:fs");
+const { spawnSync } = require("node:child_process");
+const args = process.argv.slice(2);
+if (
+  existsSync(${JSON.stringify(output)}) &&
+  !existsSync(${JSON.stringify(reached)}) &&
+  args.includes("rev-parse") &&
+  args.some((arg) => arg.startsWith("watch-base"))
+) {
+  writeFileSync(${JSON.stringify(reached)}, "reached");
+  while (!existsSync(${JSON.stringify(release)})) {
+    Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 10);
+  }
+}
+const result = spawnSync("git", args, {
+  env: { ...process.env, PATH: process.env.DIFFSPLAIN_REAL_PATH },
+  stdio: "inherit",
+});
+process.exit(result.status ?? 1);
+`,
+  );
+  await chmod(proxy, 0o755);
+  return {
+    env: {
+      DIFFSPLAIN_REAL_PATH: process.env.PATH,
+      PATH: `${bin}:${process.env.PATH}`,
+    },
+    reached,
+    release,
+  };
+}
+
 async function makeRemoteRepo() {
   const root = await mkdtemp(join(tmpdir(), "diffsplain-remote-"));
   await mkdir(join(root, "example"));
@@ -1075,13 +1116,18 @@ test("watches a moved base ref and same-size untracked rewrites", async () => {
     git(fixture.repo, "branch", "watch-base", fixture.baseOid);
     await writeFile(watchedPath, firstContent);
     await utimes(watchedPath, fixedTime, fixedTime);
-    watched = startWatcher(fixture.repo, [
-      "--base",
-      "watch-base",
-      "--watch",
-      "--output",
-      output,
-    ]);
+    const fingerprint = await pauseFirstFingerprint(fixture, output);
+    watched = startWatcher(
+      fixture.repo,
+      [
+        "--base",
+        "watch-base",
+        "--watch",
+        "--output",
+        output,
+      ],
+      { env: fingerprint.env },
+    );
     await waitForSnapshot(
       output,
       watched,
@@ -1094,7 +1140,9 @@ test("watches a moved base ref and same-size untracked rewrites", async () => {
           ?.patch.includes("first value"),
     );
 
+    await waitFor(() => existsSync(fingerprint.reached));
     git(fixture.repo, "branch", "-f", "watch-base", fixture.mainOid);
+    await writeFile(fingerprint.release, "release\n");
     const moved = await waitForSnapshot(
       output,
       watched,

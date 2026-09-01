@@ -1465,9 +1465,10 @@ const refresh = () => {
   }
 };
 
+const initialFingerprint = watching ? fingerprint() : undefined;
 const started = refresh();
 if (watching && started) {
-  let last;
+  let last = initialFingerprint;
   let remoteWait = 0;
   let watcher;
   const stopWatching = (error) => {
@@ -1478,10 +1479,6 @@ if (watching && started) {
   const poll = () => {
     try {
       const next = fingerprint();
-      if (last === undefined) {
-        last = next;
-        return true;
-      }
       remoteWait += watchInterval;
       const remoteDue = remoteMode && remoteWait >= remoteRefreshInterval;
       if (next !== last || remoteDue || watchContent) {
