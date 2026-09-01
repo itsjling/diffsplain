@@ -62,6 +62,81 @@ process.exit(result.status ?? 1);
   };
 }
 
+async function pauseFirstFingerprint(fixture, output) {
+  const bin = join(fixture.root, "fingerprint-git-proxy");
+  const proxy = join(bin, "git");
+  const reached = join(fixture.root, "fingerprint-reached");
+  const release = join(fixture.root, "fingerprint-release");
+  await mkdir(bin);
+  await writeFile(
+    proxy,
+    `#!/usr/bin/env node
+const { existsSync, writeFileSync } = require("node:fs");
+const { spawnSync } = require("node:child_process");
+const args = process.argv.slice(2);
+if (
+  existsSync(${JSON.stringify(output)}) &&
+  !existsSync(${JSON.stringify(reached)}) &&
+  args.includes("rev-parse") &&
+  args.some((arg) => arg.startsWith("watch-base"))
+) {
+  writeFileSync(${JSON.stringify(reached)}, "reached");
+  while (!existsSync(${JSON.stringify(release)})) {
+    Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 10);
+  }
+}
+const result = spawnSync("git", args, {
+  env: { ...process.env, PATH: process.env.DIFFSPLAIN_REAL_PATH },
+  stdio: "inherit",
+});
+process.exit(result.status ?? 1);
+`,
+  );
+  await chmod(proxy, 0o755);
+  return {
+    env: {
+      DIFFSPLAIN_REAL_PATH: process.env.PATH,
+      PATH: `${bin}:${process.env.PATH}`,
+    },
+    reached,
+    release,
+  };
+}
+
+async function deletePathDuringFingerprint(fixture, raced) {
+  const bin = join(fixture.root, "fingerprint-race-git-proxy");
+  const proxy = join(bin, "git");
+  const marker = join(fixture.root, "delete-on-ls-files");
+  await mkdir(bin);
+  await writeFile(
+    proxy,
+    `#!/usr/bin/env node
+const { existsSync, unlinkSync } = require("node:fs");
+const { spawnSync } = require("node:child_process");
+const args = process.argv.slice(2);
+const result = spawnSync(process.env.DIFFSPLAIN_REAL_GIT, args, { encoding: "utf8" });
+process.stdout.write(result.stdout || "");
+process.stderr.write(result.stderr || "");
+if (args.includes("ls-files") && existsSync(process.env.DIFFSPLAIN_RACE_MARKER)) {
+  unlinkSync(process.env.DIFFSPLAIN_RACE_PATH);
+}
+process.exit(result.status ?? 1);
+`,
+  );
+  await chmod(proxy, 0o755);
+  return {
+    env: {
+      DIFFSPLAIN_RACE_MARKER: marker,
+      DIFFSPLAIN_RACE_PATH: raced,
+      DIFFSPLAIN_REAL_GIT: process.env.PATH.split(":")
+        .map((path) => join(path, "git"))
+        .find(existsSync),
+      PATH: `${bin}:${process.env.PATH}`,
+    },
+    marker,
+  };
+}
+
 async function makeRemoteRepo() {
   const root = await mkdtemp(join(tmpdir(), "diffsplain-remote-"));
   await mkdir(join(root, "example"));
@@ -1075,13 +1150,18 @@ test("watches a moved base ref and same-size untracked rewrites", async () => {
     git(fixture.repo, "branch", "watch-base", fixture.baseOid);
     await writeFile(watchedPath, firstContent);
     await utimes(watchedPath, fixedTime, fixedTime);
-    watched = startWatcher(fixture.repo, [
-      "--base",
-      "watch-base",
-      "--watch",
-      "--output",
-      output,
-    ]);
+    const fingerprint = await pauseFirstFingerprint(fixture, output);
+    watched = startWatcher(
+      fixture.repo,
+      [
+        "--base",
+        "watch-base",
+        "--watch",
+        "--output",
+        output,
+      ],
+      { env: fingerprint.env },
+    );
     await waitForSnapshot(
       output,
       watched,
@@ -1094,7 +1174,9 @@ test("watches a moved base ref and same-size untracked rewrites", async () => {
           ?.patch.includes("first value"),
     );
 
+    await waitFor(() => existsSync(fingerprint.reached));
     git(fixture.repo, "branch", "-f", "watch-base", fixture.mainOid);
+    await writeFile(fingerprint.release, "release\n");
     const moved = await waitForSnapshot(
       output,
       watched,
@@ -1150,48 +1232,48 @@ test("watches untracked symlinks without reading their targets", async (t) => {
   }
 });
 
-test("exits cleanly when a fingerprint path disappears during polling", async () => {
+test("exits cleanly when a fingerprint path disappears during startup", async () => {
   const fixture = await makeRemoteRepo();
-  const localOutput = join(fixture.root, "fingerprint-race-watch.json");
-  const bin = join(fixture.root, "git-proxy");
-  const proxy = join(bin, "git");
-  const marker = join(fixture.root, "delete-on-ls-files");
+  const localOutput = join(fixture.root, "fingerprint-startup-race-watch.json");
   const raced = join(fixture.repo, "raced.txt");
   let watched;
 
   try {
     await writeFile(raced, "race\n");
-    await mkdir(bin);
-    await writeFile(
-      proxy,
-      `#!/usr/bin/env node
-const { existsSync, unlinkSync } = require("node:fs");
-const { spawnSync } = require("node:child_process");
-const args = process.argv.slice(2);
-const result = spawnSync(process.env.DIFFSPLAIN_REAL_GIT, args, { encoding: "utf8" });
-process.stdout.write(result.stdout || "");
-process.stderr.write(result.stderr || "");
-if (args.includes("ls-files") && existsSync(process.env.DIFFSPLAIN_RACE_MARKER)) {
-  unlinkSync(process.env.DIFFSPLAIN_RACE_PATH);
-}
-process.exit(result.status ?? 1);
-`,
-    );
-    await chmod(proxy, 0o755);
+    const race = await deletePathDuringFingerprint(fixture, raced);
+    await writeFile(race.marker, "delete the startup fingerprint path\n");
     watched = startWatcher(
       fixture.repo,
       ["--checkout", "--watch", "--output", localOutput],
-      {
-        env: {
-          DIFFSPLAIN_RACE_MARKER: marker,
-          DIFFSPLAIN_RACE_PATH: raced,
-          DIFFSPLAIN_REAL_GIT: process.env.PATH.split(":").map((path) => join(path, "git")).find(existsSync),
-          PATH: `${bin}:${process.env.PATH}`,
-        },
-      },
+      { env: race.env },
+    );
+    await waitFor(() => watched.child.exitCode !== null);
+    assert.equal(watched.child.exitCode, 1);
+    assert.match(watched.logs(), /ENOENT: no such file or directory, lstat/);
+    assert.equal((watched.logs().match(/ENOENT: no such file or directory, lstat/g) || []).length, 1);
+    assert.doesNotMatch(watched.logs(), /\n\s*at /);
+  } finally {
+    await stopIfRunning(watched);
+    await rm(fixture.root, { recursive: true, force: true });
+  }
+});
+
+test("exits cleanly when a fingerprint path disappears during polling", async () => {
+  const fixture = await makeRemoteRepo();
+  const localOutput = join(fixture.root, "fingerprint-race-watch.json");
+  const raced = join(fixture.repo, "raced.txt");
+  let watched;
+
+  try {
+    await writeFile(raced, "race\n");
+    const race = await deletePathDuringFingerprint(fixture, raced);
+    watched = startWatcher(
+      fixture.repo,
+      ["--checkout", "--watch", "--output", localOutput],
+      { env: race.env },
     );
     await waitForSnapshot(localOutput, watched, () => true);
-    await writeFile(marker, "delete the next fingerprint path\n");
+    await writeFile(race.marker, "delete the next fingerprint path\n");
     await waitFor(() => watched.child.exitCode !== null);
     assert.equal(watched.child.exitCode, 1);
     assert.match(watched.logs(), /ENOENT: no such file or directory, lstat/);
