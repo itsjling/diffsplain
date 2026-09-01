@@ -329,3 +329,56 @@ test('marks ordered agent exclusions without removing local review files', async
     await rm(root, { recursive: true, force: true });
   }
 });
+
+test('does not publish usage from stale agent summaries', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'diffsplain-stale-usage-'));
+  const repo = join(root, 'repo');
+  const summaries = join(root, 'stale-summaries.json');
+
+  try {
+    execFileSync('git', ['init', '-q', '-b', 'main', repo]);
+    git(repo, 'config', 'user.email', 'diffsplain@example.test');
+    git(repo, 'config', 'user.name', 'Diffsplain');
+    await writeFile(join(repo, 'changed.txt'), 'before\n');
+    git(repo, 'add', 'changed.txt');
+    git(repo, 'commit', '-qm', 'base');
+    const base = git(repo, 'rev-parse', 'HEAD');
+    await writeFile(join(repo, 'changed.txt'), 'after\n');
+    git(repo, 'add', 'changed.txt');
+    git(repo, 'commit', '-qm', 'change');
+
+    await writeFile(summaries, JSON.stringify({
+      files: {},
+      meta: {
+        agentReviewFingerprint: 'stale-review',
+        status: 'complete',
+        usage: {
+          status: 'complete',
+          calls: 1,
+          reportedCalls: 1,
+          tokens: { inputTokens: 40, outputTokens: 10 },
+        },
+      },
+    }));
+
+    const snapshot = await build(repo, root, 'stale-usage', [
+      '--base',
+      base,
+      '--head',
+      'HEAD',
+      '--summaries',
+      summaries,
+    ]);
+
+    assert.equal(snapshot.notes.fresh, false);
+    assert.deepEqual(snapshot.usage.agentNotes, {
+      status: 'complete',
+      calls: 0,
+      reportedCalls: 0,
+      tokens: { inputTokens: 0, outputTokens: 0 },
+    });
+    assert.deepEqual(snapshot.usage.combined, snapshot.usage.agentNotes);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});

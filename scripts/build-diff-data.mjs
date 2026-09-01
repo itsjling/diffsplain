@@ -1350,7 +1350,7 @@ function build() {
     },
     usage: reviewUsage(
       combineUsage(
-        summaryDoc.meta?.usage,
+        sourceSummaries.meta?.usage,
         usageSummary(emptyUsageAccumulator()),
       ),
       usageSummary(emptyUsageAccumulator()),
