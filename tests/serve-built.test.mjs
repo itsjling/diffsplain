@@ -19,6 +19,7 @@ function start(args, env = process.env) {
 function waitForReady(child) {
   return new Promise((resolve, reject) => {
     let output = '';
+    let errors = '';
     const timer = setTimeout(() => {
       reject(new Error(`Built server did not report readiness: ${output}`));
     }, 10_000);
@@ -37,10 +38,13 @@ function waitForReady(child) {
         }
       }
     });
+    child.stderr.on('data', (chunk) => {
+      errors += chunk;
+    });
     child.once('error', reject);
     child.once('exit', (code) => {
       clearTimeout(timer);
-      reject(new Error(`Built server exited with ${code}: ${output}`));
+      reject(new Error(`Built server exited with ${code}: ${output}${errors}`));
     });
   });
 }
@@ -101,6 +105,19 @@ async function waitForProcessExit(pid) {
     await pause(25);
   }
   throw new Error(`Provider process ${pid} did not exit`);
+}
+
+async function waitForFile(path, message) {
+  const deadline = Date.now() + 10_000;
+  while (Date.now() < deadline) {
+    try {
+      await readFile(path);
+      return;
+    } catch {
+      await pause(25);
+    }
+  }
+  throw new Error(message);
 }
 
 async function stopIfRunning(child) {
@@ -323,6 +340,43 @@ function providerScript(calls, argumentsLog) {
     "console.log(JSON.stringify({ type: 'turn.completed', usage: { input_tokens: 7, output_tokens: 3, cached_input_tokens: 2 } }));",
     '',
   ].join('\n');
+}
+
+async function snapshotReadBarrier(directory, output) {
+  const preloader = join(directory, 'pause-snapshot-read.cjs');
+  const reached = join(directory, 'snapshot-read-reached');
+  const release = join(directory, 'snapshot-read-release');
+  await writeFile(preloader, [
+    "const { existsSync, writeFileSync } = require('node:fs');",
+    "const promises = require('node:fs/promises');",
+    "const { syncBuiltinESMExports } = require('node:module');",
+    "const { resolve } = require('node:path');",
+    "const { fileURLToPath } = require('node:url');",
+    'const readFile = promises.readFile;',
+    'promises.readFile = async function (file, ...args) {',
+    '  const value = await readFile.call(this, file, ...args);',
+    '  const path = file instanceof URL ? fileURLToPath(file) : file;',
+    `  if (typeof path === 'string' && resolve(path) === ${JSON.stringify(output)} && !existsSync(${JSON.stringify(reached)})) {`,
+    `    writeFileSync(${JSON.stringify(reached)}, 'reached\\n');`,
+    `    while (!existsSync(${JSON.stringify(release)})) {`,
+    '      await new Promise((done) => setTimeout(done, 10));',
+    '    }',
+    '  }',
+    '  return value;',
+    '};',
+    'syncBuiltinESMExports();',
+    '',
+  ].join('\n'));
+  return {
+    env: {
+      ...process.env,
+      NODE_OPTIONS: [process.env.NODE_OPTIONS, `--require=${preloader}`]
+        .filter(Boolean)
+        .join(' '),
+    },
+    reached,
+    release,
+  };
 }
 
 async function writeProviderFixture(output, provider, calls, argumentsLog) {
@@ -595,6 +649,55 @@ test('adds live chat usage to snapshots without preseeded note usage', async () 
       resetSnapshot.usage.combined,
       resetSnapshot.usage.agentNotes,
     );
+  } finally {
+    if (child && child.exitCode === null) await stop(child);
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test('keeps current chat usage when a stale snapshot response finishes', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'diffsplain-chat-usage-race-'));
+  const output = join(directory, 'diff-data.json');
+  const provider = join(directory, 'codex');
+  const calls = join(directory, 'calls.log');
+  const argumentsLog = join(directory, 'args.log');
+  let child;
+
+  try {
+    await writeProviderFixture(output, provider, calls, argumentsLog);
+    const barrier = await snapshotReadBarrier(directory, output);
+    child = start(selectedProviderArgs(output, provider), barrier.env);
+    const ready = await waitForReady(child);
+    const endpoint = reviewUrl(ready, 'api/chat');
+
+    const staleResponse = fetch(reviewUrl(ready, 'diff-data.json')).then(
+      (response) => response.json(),
+    );
+    await waitForFile(
+      barrier.reached,
+      'The stale snapshot response did not reach its read barrier',
+    );
+
+    const nextReview = providerSnapshot({ withUsage: false });
+    nextReview.version = 'provider-two';
+    nextReview.notes.reviewFingerprint = 'review-two';
+    await writeFile(output, JSON.stringify(nextReview));
+    await waitForChat(ready, (state) => state.fingerprint === 'review-two');
+    await chatCommand(endpoint, { type: 'new', scope: 'review' });
+    await askProviderChat(endpoint, 'Why now?');
+    await waitForChat(ready, (state) => state.threads[0]?.status === 'ready');
+
+    await writeFile(barrier.release, 'release\n');
+    await staleResponse;
+    const current = await fetch(reviewUrl(ready, 'diff-data.json')).then(
+      (response) => response.json(),
+    );
+    assert.deepEqual(current.usage.reviewChat, {
+      status: 'complete',
+      calls: 1,
+      reportedCalls: 1,
+      tokens: { inputTokens: 7, outputTokens: 3, cacheReadTokens: 2 },
+    });
   } finally {
     if (child && child.exitCode === null) await stop(child);
     await rm(directory, { recursive: true, force: true });

@@ -457,11 +457,15 @@ function snapshotNoteUsage() {
 }
 
 function currentChatUsage(fingerprint) {
-  if (fingerprint !== chatUsageFingerprint) {
-    chatUsageFingerprint = fingerprint;
-    chatUsage = emptyUsageAccumulator();
-  }
-  return usageSummary(chatUsage);
+  return fingerprint === chatUsageFingerprint
+    ? usageSummary(chatUsage)
+    : usageSummary(emptyUsageAccumulator());
+}
+
+function resetChatUsage(fingerprint) {
+  if (fingerprint === chatUsageFingerprint) return;
+  chatUsageFingerprint = fingerprint;
+  chatUsage = emptyUsageAccumulator();
 }
 
 function recordChatUsage({ reviewFingerprint, usage }) {
@@ -471,7 +475,7 @@ function recordChatUsage({ reviewFingerprint, usage }) {
   ) {
     return;
   }
-  currentChatUsage(reviewFingerprint);
+  resetChatUsage(reviewFingerprint);
   chatUsage = recordUsage(chatUsage, usage);
   const totals = reviewUsage(
     snapshotNoteUsage() || usageSummary(emptyUsageAccumulator()),
@@ -694,7 +698,7 @@ watchFile(output, { interval: 100 }, (current, previous) => {
     return;
   }
   reviewChat.refresh();
-  currentChatUsage(reviewChat.getState().fingerprint);
+  resetChatUsage(reviewChat.getState().fingerprint);
   broadcastEvent('update');
 });
 
