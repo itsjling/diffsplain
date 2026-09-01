@@ -58,12 +58,21 @@ npx diffsplain \
   --agent codex \
   --model MODEL_NAME \
   --reasoning low \
+  --fast \
   --batch-size 2
 ```
 
 The default batch size is 12 files. Smaller batches add the first notes to
 the open page sooner. All supported agents accept `--model`; only Codex and
 OpenCode accept `--reasoning`.
+
+Fast mode is an opt-in provider setting for Codex CLI 0.108.0 or newer and
+Claude Code 2.1.36 or newer. Pass `--fast` to apply it to every agent note and
+Review chat call in the run. Diffsplain checks the selected executable before
+the first call and stops for an older or unsupported provider. It does not
+change the chosen model or write a global provider setting. Provider account,
+model, and entitlement failures are reported as provider errors. `--fast`
+cannot be combined with `--no-agent`.
 
 ## Ask the review agent
 
@@ -144,6 +153,10 @@ pnpm run summarize -- --repo /path/to/repo --pr 198 --force
 
 The presenter follows the same rule, so a cached review opens without a new
 agent pass. Use `npx diffsplain --force` when you want new notes.
+
+Fast mode is not part of note cache identity. A run can reuse matching notes
+created with Fast mode on or off; the current Review metadata still records
+the mode requested for this run.
 
 ## Note files
 

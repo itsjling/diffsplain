@@ -38,6 +38,7 @@ test('prints help with either help flag', () => {
     );
     assert.match(result.stdout, /--support-record/);
     assert.match(result.stdout, /--support-record-file FILE/);
+    assert.match(result.stdout, /--fast/);
     assert.match(result.stdout, /-v, --version/);
   }
 });

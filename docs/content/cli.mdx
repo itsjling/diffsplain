@@ -245,6 +245,7 @@ pnpm run doctor
 | `--exclude PATTERN` | Keep matching files out of automatic agent input. Repeat in gitignore order. |
 | `--model NAME` | Choose the model used for notes. |
 | `--reasoning LEVEL` | Set `minimal`, `low`, `medium`, `high`, or `xhigh`. |
+| `--fast` | Enable provider Fast mode for agent notes and Review chat. |
 | `--batch-size COUNT` | Set the most files per agent pass, from `1` to `50`. Large patches use smaller batches. |
 | `--jobs COUNT` | Set agent passes to run at once, from `1` to `8`. |
 | `--force` | Regenerate all agent notes instead of using cached notes. |
@@ -265,12 +266,19 @@ Remote repos need `--branch` or `--pr`. You cannot combine two target options.
 `--head` requires `--base`. Without `--head`, local `--base` compares that
 exact commit with the live working tree; a branch can also use `--base` as its
 remote base. `--worktree` cannot use another target. `--no-agent` cannot use
-`--summaries`. Paths passed to
+`--summaries` or `--fast`. Paths passed to
 `--repo`, `--summaries`, `--output`, `--cache-dir`, and `--codex-bin` resolve
 from the current directory. `CODEX_BIN`, `CLAUDE_BIN`, `COPILOT_BIN`,
 `CURSOR_BIN`, and `OPENCODE_BIN` can select provider binaries. Supported agents
 accept `--model`. Only Codex and OpenCode accept `--reasoning`; its levels are
 `minimal`, `low`, `medium`, `high`, and `xhigh`.
+
+`--fast` is opt-in and supports Codex CLI 0.108.0 or newer and Claude Code
+2.1.36 or newer. Diffsplain checks the selected executable before the first
+agent call and stops for an older or unsupported provider. It passes the
+provider's native Fast setting to every note and Review chat call without
+changing the selected model or a global provider setting. Account, model, and
+entitlement errors come from the provider.
 
 `--batch-size` defaults to `12` and accepts `1` through `50`. `--jobs` defaults
 to `3` and accepts `1` through `8`. `--port` accepts `0` through `65535`. When

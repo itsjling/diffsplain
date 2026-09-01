@@ -1344,6 +1344,7 @@ function build() {
       ...(typeof summaryDoc.meta?.reasoning === 'string'
         ? { reasoning: summaryDoc.meta.reasoning }
         : {}),
+      fast: summaryDoc.meta?.fast === true,
       ...(typeof summaryDoc.meta?.accessMode === 'string'
         ? { accessMode: summaryDoc.meta.accessMode }
         : {}),

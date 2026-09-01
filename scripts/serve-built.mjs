@@ -45,6 +45,7 @@ const chatAgent = option('--chat-agent');
 const chatBinary = option('--chat-binary', chatAgent);
 const chatModel = option('--chat-model');
 const chatReasoning = option('--chat-reasoning');
+const chatFast = rawArgs.includes('--chat-fast');
 const chatAccessMode = option('--chat-access-mode', 'snapshot-only');
 const chatAccessRoot = option('--chat-access-root');
 if (!/^\d+$/.test(portValue) || Number(portValue) > 65_535) {
@@ -494,6 +495,7 @@ const chatProvider = chatAgent
       binary: chatBinary,
       model: chatModel,
       reasoning: chatReasoning,
+      fast: chatFast,
       accessMode: chatProviderAccess,
       onUsage: recordChatUsage,
     })
