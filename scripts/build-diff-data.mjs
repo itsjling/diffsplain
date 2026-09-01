@@ -1465,23 +1465,29 @@ const refresh = () => {
   }
 };
 
-const started = refresh();
+let watcher;
+const stopWatching = (error) => {
+  console.error(error instanceof Error ? error.message : String(error));
+  process.exitCode = 1;
+  if (watcher) clearInterval(watcher);
+};
+let initialFingerprint;
+let startupFailed = false;
+if (watching) {
+  try {
+    initialFingerprint = fingerprint();
+  } catch (error) {
+    startupFailed = true;
+    stopWatching(error);
+  }
+}
+const started = !startupFailed && refresh();
 if (watching && started) {
-  let last;
+  let last = initialFingerprint;
   let remoteWait = 0;
-  let watcher;
-  const stopWatching = (error) => {
-    console.error(error instanceof Error ? error.message : String(error));
-    process.exitCode = 1;
-    if (watcher) clearInterval(watcher);
-  };
   const poll = () => {
     try {
       const next = fingerprint();
-      if (last === undefined) {
-        last = next;
-        return true;
-      }
       remoteWait += watchInterval;
       const remoteDue = remoteMode && remoteWait >= remoteRefreshInterval;
       if (next !== last || remoteDue || watchContent) {
