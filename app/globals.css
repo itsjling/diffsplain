@@ -1557,7 +1557,7 @@ kbd {
   border-radius: 7px;
   display: grid;
   gap: 11px;
-  grid-template-columns: 30px 8px minmax(0, 1fr) auto;
+  grid-template-columns: 30px 8px minmax(0, 1fr) auto auto;
   min-height: 48px;
   padding: 0 14px;
   text-align: left;
@@ -1977,4 +1977,30 @@ kbd {
     scroll-behavior: auto !important;
     transition-duration: 0.01ms !important;
   }
+}
+
+.picker-note-state {
+  align-items: center;
+  border: 1px solid currentColor;
+  border-radius: 999px;
+  color: var(--ink);
+  display: inline-flex;
+  font: 650 8px/1 var(--font-geist-mono), monospace;
+  gap: 4px;
+  letter-spacing: 0.04em;
+  padding: 4px 6px;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+.picker-note-state--ready {
+  color: var(--green);
+}
+
+.picker-note-state--failed {
+  color: var(--red);
+}
+
+.picker-note-state--excluded {
+  border-style: dashed;
 }

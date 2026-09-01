@@ -156,6 +156,59 @@ function longFileListFixture() {
   );
 }
 
+const PICKER_AGENT_NOTE_SCENARIOS = {
+  complete: {
+    complete: true,
+    completedFiles: 29,
+    secondFile: { noteReady: true },
+    status: "complete",
+  },
+  failed: {
+    complete: false,
+    completedFiles: 1,
+    secondFile: { noteReady: false },
+    status: "failed",
+  },
+  partialFailure: {
+    complete: false,
+    completedFiles: 1,
+    secondFile: {
+      noteFailure: "The fixture agent stopped.",
+      noteReady: false,
+    },
+    status: "generating",
+  },
+  retry: {
+    complete: false,
+    completedFiles: 1,
+    secondFile: { noteReady: false },
+    status: "generating",
+  },
+};
+
+function pickerAgentNoteFixture(version, scenarioName) {
+  const scenario = PICKER_AGENT_NOTE_SCENARIOS[scenarioName];
+  const value = longFileListFixture();
+  value.version = version;
+  value.notes = {
+    ...value.notes,
+    complete: scenario.complete,
+    status: scenario.status,
+    completedFiles: scenario.completedFiles,
+    totalFiles: 29,
+  };
+  for (const file of value.files) {
+    file.noteReady = scenario.complete;
+    delete file.noteFailure;
+    delete file.agentExcluded;
+  }
+  value.files[0].noteReady = true;
+  Object.assign(value.files[1], scenario.secondFile);
+  value.files[2].agentExcluded = true;
+  value.files[2].noteReady = false;
+  return value;
+}
+
 function filteredFileListFixture() {
   return snapshot(
     "filtered-file-list",
@@ -307,6 +360,32 @@ async function pickerPosition(page) {
       topGap: activeBounds.top - listBounds.top,
     };
   });
+}
+
+function pickerRow(page, path) {
+  return page.locator(".picker-row").filter({ hasText: path });
+}
+
+async function assertNoHorizontalOverflow(locator, label) {
+  const widths = await locator.evaluate((element) => ({
+    client: element.clientWidth,
+    scroll: element.scrollWidth,
+  }));
+  assert.ok(
+    widths.scroll <= widths.client,
+    `${label} width ${JSON.stringify(widths)}`,
+  );
+}
+
+async function assertPickerNoteState(page, path, state) {
+  const row = pickerRow(page, path);
+  await row
+    .getByRole("img", { name: `Agent note ${state}`, exact: true })
+    .waitFor();
+  const marker = row.locator(".picker-note-state");
+  assert.equal(await marker.count(), 1);
+  assert.equal(await marker.getAttribute("aria-label"), `Agent note ${state}`);
+  assert.match((await marker.textContent())?.trim() ?? "", new RegExp(`${state}$`));
 }
 
 async function assertTouchTarget(locator) {
@@ -1042,19 +1121,23 @@ test("keeps the supported narrow layouts within the viewport", async () => {
         viewport: { width, height: width === 320 ? 740 : 844 },
       },
       async (page) => {
-        await writeSnapshot(fixture(`narrow-${width}`));
-        await page.goto(serverUrl);
-        await page.getByRole("heading", { name: "Explain saved todos" }).waitFor();
-
-        const widths = await page.evaluate(() => ({
-          body: document.body.scrollWidth,
-          root: document.documentElement.scrollWidth,
-          viewport: document.documentElement.clientWidth,
-        }));
-        assert.ok(
-          widths.root <= widths.viewport && widths.body <= widths.viewport,
-          `page width ${JSON.stringify(widths)}`,
+        await writeSnapshot(
+          pickerAgentNoteFixture(`narrow-${width}`, "partialFailure"),
         );
+        await page.goto(serverUrl);
+        await page.getByRole("heading", { name: "Explain file 1" }).waitFor();
+        await page.locator(".file-picker-trigger").click();
+        await page
+          .getByRole("dialog", { name: "Choose a changed file" })
+          .waitFor();
+
+        await Promise.all([
+          assertNoHorizontalOverflow(page.locator("html"), "page"),
+          assertNoHorizontalOverflow(page.locator("body"), "body"),
+          assertNoHorizontalOverflow(page.locator(".picker-dialog"), "dialog"),
+          assertNoHorizontalOverflow(page.locator(".picker-list"), "list"),
+          assertNoHorizontalOverflow(page.locator(".picker-row").first(), "row"),
+        ]);
       },
     );
   }
@@ -1105,6 +1188,81 @@ test("centers an ordinary selected file when reopening the picker", async () => 
       await controls.trigger.click();
       await controls.dialog.waitFor();
       assert.ok((await pickerPosition(page)).centerGap <= 1);
+    },
+  );
+});
+
+test("updates every picker Agent note state without disturbing the open picker", async () => {
+  await runReviewJourney(
+    "live picker Agent note states",
+    { viewport: { width: 1280, height: 800 } },
+    async (page) => {
+      await writeSnapshot(
+        pickerAgentNoteFixture("picker-partial", "partialFailure"),
+      );
+      await page.goto(serverUrl);
+      await page.getByRole("heading", { name: "Explain file 1" }).waitFor();
+
+      const controls = pickerControls(page);
+      await controls.trigger.click();
+      await pickerRow(page, "src/file-16.ts").click();
+      await page.waitForFunction(
+        () =>
+          document.querySelector(".current-path")?.textContent ===
+          "src/file-16.ts",
+      );
+      await controls.trigger.click();
+      await controls.search.fill("file-");
+
+      await assertPickerNoteState(page, "src/file-01.ts", "ready");
+      await assertPickerNoteState(page, "src/file-02.ts", "failed");
+      await assertPickerNoteState(page, "src/file-03.ts", "excluded");
+      await assertPickerNoteState(page, "src/file-04.ts", "waiting");
+      assert.equal(
+        await page.locator(".picker-row").count(),
+        await page.locator(".picker-note-state").count(),
+      );
+
+      const before = await page.evaluate(() => ({
+        focused: document.activeElement?.getAttribute("aria-label"),
+        path: document.querySelector(".current-path")?.textContent,
+        query: document.querySelector(".picker-search input")?.value,
+        scrollTop: document.querySelector(".picker-list")?.scrollTop,
+      }));
+      assert.equal(before.focused, "Filter changed files");
+      assert.equal(before.path, "src/file-16.ts");
+      assert.equal(before.query, "file-");
+      assert.ok((before.scrollTop ?? 0) > 0);
+
+      await writeSnapshot(
+        pickerAgentNoteFixture("picker-failed", "failed"),
+      );
+      await assertPickerNoteState(page, "src/file-04.ts", "failed");
+
+      await writeSnapshot(pickerAgentNoteFixture("picker-retry", "retry"));
+      await assertPickerNoteState(page, "src/file-02.ts", "waiting");
+      await assertPickerNoteState(page, "src/file-04.ts", "waiting");
+
+      await writeSnapshot(
+        pickerAgentNoteFixture("picker-complete", "complete"),
+      );
+      await assertPickerNoteState(page, "src/file-01.ts", "ready");
+      await assertPickerNoteState(page, "src/file-02.ts", "ready");
+      await assertPickerNoteState(page, "src/file-03.ts", "excluded");
+      await assertPickerNoteState(page, "src/file-04.ts", "ready");
+
+      const after = await page.evaluate(() => ({
+        focused: document.activeElement?.getAttribute("aria-label"),
+        path: document.querySelector(".current-path")?.textContent,
+        query: document.querySelector(".picker-search input")?.value,
+        scrollTop: document.querySelector(".picker-list")?.scrollTop,
+      }));
+      assert.deepEqual(after, before);
+
+      const results = await new AxeBuilder({ page })
+        .include(".picker-note-state")
+        .analyze();
+      assert.deepEqual(results.violations, []);
     },
   );
 });
