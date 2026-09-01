@@ -449,11 +449,15 @@ let chatUsageFingerprint;
 let chatUsage = emptyUsageAccumulator();
 let reviewChat;
 
-function snapshotNoteUsage() {
+function snapshotUsageState() {
   try {
-    return JSON.parse(readFileSync(output, 'utf8')).usage?.agentNotes;
+    const snapshot = JSON.parse(readFileSync(output, 'utf8'));
+    return {
+      agentNotes: snapshot.usage?.agentNotes,
+      fingerprint: snapshot.notes?.reviewFingerprint,
+    };
   } catch {
-    return undefined;
+    return {};
   }
 }
 
@@ -470,8 +474,10 @@ function resetChatUsage(fingerprint) {
 }
 
 function recordChatUsage({ reviewFingerprint, usage }) {
+  const snapshot = snapshotUsageState();
   if (
     !reviewFingerprint ||
+    snapshot.fingerprint !== reviewFingerprint ||
     reviewChat?.getState().fingerprint !== reviewFingerprint
   ) {
     return;
@@ -479,7 +485,7 @@ function recordChatUsage({ reviewFingerprint, usage }) {
   resetChatUsage(reviewFingerprint);
   chatUsage = recordUsage(chatUsage, usage);
   const totals = reviewUsage(
-    snapshotNoteUsage() || usageSummary(emptyUsageAccumulator()),
+    snapshot.agentNotes || usageSummary(emptyUsageAccumulator()),
     usageSummary(chatUsage),
   );
   console.log(formatReviewUsage(totals));

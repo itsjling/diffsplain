@@ -342,6 +342,21 @@ function providerScript(calls, argumentsLog) {
   ].join('\n');
 }
 
+function gatedProviderScript(reached, release) {
+  return [
+    '#!/usr/bin/env node',
+    "const { existsSync, writeFileSync } = require('node:fs');",
+    `writeFileSync(${JSON.stringify(reached)}, 'reached\\n');`,
+    'const timer = setInterval(() => {',
+    `  if (!existsSync(${JSON.stringify(release)})) return;`,
+    '  clearInterval(timer);',
+    `  console.log(JSON.stringify({ type: 'item.completed', item: { type: 'agent_message', text: ${JSON.stringify(JSON.stringify({ markdown: 'Stale answer.', citations: [] }))} } }));`,
+    "  console.log(JSON.stringify({ type: 'turn.completed', usage: { input_tokens: 7, output_tokens: 3, cached_input_tokens: 2 } }));",
+    '}, 10);',
+    '',
+  ].join('\n');
+}
+
 async function snapshotReadBarrier(directory, output) {
   const preloader = join(directory, 'pause-snapshot-read.cjs');
   const reached = join(directory, 'snapshot-read-reached');
@@ -697,6 +712,61 @@ test('keeps current chat usage when a stale snapshot response finishes', async (
       calls: 1,
       reportedCalls: 1,
       tokens: { inputTokens: 7, outputTokens: 3, cacheReadTokens: 2 },
+    });
+  } finally {
+    if (child && child.exitCode === null) await stop(child);
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test('rejects chat usage after the published review changes before chat refresh', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'diffsplain-chat-usage-fence-'));
+  const output = join(directory, 'diff-data.json');
+  const chatSnapshot = join(directory, 'chat-snapshot.json');
+  const provider = join(directory, 'codex');
+  const reached = join(directory, 'provider-reached');
+  const release = join(directory, 'provider-release');
+  let child;
+  let outputText = '';
+
+  try {
+    const firstReview = providerSnapshot();
+    await writeFile(output, JSON.stringify(firstReview));
+    await writeFile(chatSnapshot, JSON.stringify(firstReview));
+    await writeFile(provider, gatedProviderScript(reached, release));
+    await chmod(provider, 0o755);
+    child = start([
+      ...selectedProviderArgs(output, provider),
+      '--chat-snapshot',
+      chatSnapshot,
+    ]);
+    child.stdout.on('data', (chunk) => {
+      outputText += chunk;
+    });
+    const ready = await waitForReady(child);
+    const endpoint = reviewUrl(ready, 'api/chat');
+    await chatCommand(endpoint, { type: 'new', scope: 'review' });
+    await askProviderChat(endpoint, 'Why?');
+    await waitForFile(reached, 'The provider did not reach its usage barrier');
+
+    const nextReview = providerSnapshot();
+    nextReview.version = 'provider-two';
+    nextReview.notes.reviewFingerprint = 'review-two';
+    nextReview.usage.agentNotes.tokens = { inputTokens: 500, outputTokens: 100 };
+    await writeFile(output, JSON.stringify(nextReview));
+    await writeFile(release, 'release\n');
+    await waitForChat(ready, (state) => state.threads[0]?.status === 'ready');
+    await pause(50);
+
+    assert.doesNotMatch(outputText, /Review chat usage:/);
+    const current = await fetch(reviewUrl(ready, 'diff-data.json')).then(
+      (response) => response.json(),
+    );
+    assert.deepEqual(current.usage.reviewChat, {
+      status: 'complete',
+      calls: 0,
+      reportedCalls: 0,
+      tokens: { inputTokens: 0, outputTokens: 0 },
     });
   } finally {
     if (child && child.exitCode === null) await stop(child);
