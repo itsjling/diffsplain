@@ -34,6 +34,8 @@ test('records vendored hook provenance and owns every trust boundary', async () 
     '/AGENTS.md',
     '/skills-lock.json',
     '/.github/workflows/automation-trust.yml',
+    '/.github/workflows/release.yml',
+    '/scripts/release-workflow.mjs',
   ]) {
     assert.match(
       codeowners,
@@ -55,6 +57,8 @@ test('uses a base-branch workflow as the automation review gate', async () => {
   assert.match(workflow, /github\.rest\.issues\.removeLabel/);
   assert.match(workflow, /pull-requests: write/);
   assert.match(workflow, /automation-reviewed/);
+  assert.match(workflow, /path === "\.github\/workflows\/release\.yml"/);
+  assert.match(workflow, /path === "scripts\/release-workflow\.mjs"/);
   assert.match(workflow, /core\.setFailed/);
   assert.doesNotMatch(workflow, /actions\/checkout|pull_request\.head|exec/);
 });

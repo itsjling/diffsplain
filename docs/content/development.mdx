@@ -284,12 +284,66 @@ pnpm run benchmark:canary -- --runs 1 --reasoning minimal
 
 ## Publish a release
 
-Publish releases by hand from a clean `main` checkout. First update the version
-and create its commit and tag. Pass `patch`, `minor`, an exact version, or any
-other value accepted by `pnpm version`:
+Use the GitHub Actions `Release` workflow for normal releases. Run it from
+`main` and enter one exact version such as `0.11.0` or `0.11.0-beta.1`. The input
+must be canonical SemVer: ranges, `patch` or `minor` aliases, surrounding
+whitespace, build metadata, and shell syntax are rejected.
+
+Before the first run, configure the npm package's trusted publisher with this
+exact tuple:
+
+- provider: GitHub Actions
+- organization or user: `itsjling`
+- repository: `diffsplain`
+- workflow filename: `release.yml`
+- environment: `npm-publish`
+- allowed action: `npm publish`
+
+Create the protected `npm-publish` environment in GitHub. Allow this workflow's
+`GITHUB_TOKEN` to update `main` and release tags under your branch and tag
+rules. Configure any required environment reviewers. These npm and GitHub
+settings are prerequisites; the repository does not prove that they exist.
+
+The workflow prepares and verifies the release without repository write access
+or an npm identity. It passes the tarball, verification receipt, release commit,
+and tag to a separate protected job. Only that final job receives GitHub write
+access and the npm OIDC identity. It independently checks the artifact, pushes
+the exact version commit and tag atomically, and publishes the tarball with
+package lifecycle scripts disabled. Stable versions use the `latest` npm tag
+and prereleases use `next`. Releases are serialized so two workflow runs cannot
+publish concurrently.
+
+### Recover a workflow release
+
+Rerun the failed publish job in the existing workflow run, or start a new run
+with the same exact version after a failure. The publish-job rerun retains the
+original verified artifact and dispatch commit, and is accepted when that
+commit is the parent of the pushed release. Rerunning every job from an older
+dispatch is rejected after `main` advances; start a new workflow run instead.
+The workflow accepts only these states:
+
+- **Create:** `main` still contains the previous package version, the requested
+  tag and npm version do not exist, and local `main` matches `origin/main`.
+- **Resume:** the requested package version and tag are already on the same
+  commit at `origin/main`, but npm does not contain the version.
+- **Complete:** Git is in the resume state and npm contains the version. The
+  workflow rebuilds the verified tarball and succeeds only when its SHA-512 SRI
+  matches npm's `dist.integrity`.
+
+A moved branch, conflicting tag, local-only version commit, or mismatched npm
+tarball is a mixed state and stops the workflow. Inspect and reconcile Git and
+npm before rerunning. If the atomic push failed and left only a local commit and
+tag in the runner, start a new run; if reproducing locally, delete or reconcile
+those local refs without overwriting remote history.
+
+### Publish locally as a fallback
+
+Use local publication only when the GitHub workflow cannot be used. Start from
+a clean `main` checkout, update the version, and create its commit and tag. Pass
+the exact intended version to `pnpm version`:
 
 ```sh
-corepack pnpm version patch
+corepack pnpm version 0.11.0
 ```
 
 Do not push yet. Verify the tagged commit and build the release tarball:
@@ -306,12 +360,12 @@ Sign in to npm when needed, then publish by naming the exact version again:
 
 ```sh
 COREPACK_ENABLE_PROJECT_SPEC=0 corepack npm@11.5.1 login --auth-type=web
-corepack pnpm run release:publish -- 1.0.0
+corepack pnpm run release:publish -- 0.11.0
 ```
 
 The publish command checks the clean tree, tag, commit, tarball hash, npm login,
-and registry before it publishes. Stable versions use the `latest` npm tag;
-prereleases use `next`. Local publication does not add npm provenance.
+and registry before it publishes. Local publication does not use the workflow's
+trusted-publisher identity or add npm provenance.
 
 After npm confirms the version, push the version commit and tag:
 

@@ -754,9 +754,10 @@ test('rejects chat usage after the published review changes before chat refresh'
     nextReview.notes.reviewFingerprint = 'review-two';
     nextReview.usage.agentNotes.tokens = { inputTokens: 500, outputTokens: 100 };
     await writeFile(output, JSON.stringify(nextReview));
+    const lifecycle = waitForText(child.stdout, /answer completed/);
     await writeFile(release, 'release\n');
     await waitForChat(ready, (state) => state.threads[0]?.status === 'ready');
-    await pause(50);
+    await lifecycle;
 
     assert.doesNotMatch(outputText, /Review chat usage:/);
     const current = await fetch(reviewUrl(ready, 'diff-data.json')).then(

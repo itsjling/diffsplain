@@ -4,3 +4,5 @@
 /AGENTS.md @itsjling
 /skills-lock.json @itsjling
 /.github/workflows/automation-trust.yml @itsjling
+/.github/workflows/release.yml @itsjling
+/scripts/release-workflow.mjs @itsjling
