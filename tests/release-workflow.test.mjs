@@ -577,7 +577,7 @@ test('workflow pins the trusted, serialized, split-job release contract', async 
   assert.match(workflow, /environment: npm-publish/);
   assert.match(workflow, /fetch-depth: 0/);
   assert.match(workflow, /node-version: 24/);
-  assert.match(workflow, /registry-url: https:\/\/registry\.npmjs\.org/);
+  assert.doesNotMatch(workflow, /registry-url:/);
   assert.match(workflow, /package-manager-cache: false/);
   assert.match(workflow, /pnpm\/action-setup@v4/);
   assert.match(workflow, /npm@11\.5\.1/);
