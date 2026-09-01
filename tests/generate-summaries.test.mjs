@@ -80,6 +80,10 @@ async function fakeCodex(root, response, { captureSchema = false } = {}) {
     bin,
     `#!/usr/bin/env node
 import { existsSync, writeFileSync, readFileSync } from "node:fs";
+if (process.argv[2] === "--version") {
+  process.stdout.write("codex-cli 0.151.0\\n");
+  process.exit(0);
+}
 writeFileSync(${JSON.stringify(argsFile)}, JSON.stringify(process.argv.slice(2)));
 ${captureSchema ? `const schema = process.argv[process.argv.indexOf("--output-schema") + 1];
 if (schema) {
@@ -122,6 +126,10 @@ import {
   existsSync,
   readFileSync,
 } from "node:fs";
+if (process.argv[2] === "--version") {
+  process.stdout.write("codex-cli 0.151.0\\n");
+  process.exit(0);
+}
 const input = JSON.parse(readFileSync(0, "utf8"));
 const call = existsSync(${JSON.stringify(calls)})
   ? readFileSync(${JSON.stringify(calls)}, "utf8").trim().split("\\n").length + 1
@@ -162,6 +170,30 @@ process.stdout.write(JSON.stringify(response));
     "recording-codex.mjs\ncodex-calls.jsonl\n",
   );
   return { bin, calls };
+}
+
+async function failingFastCodex(root, { version, message }) {
+  const bin = join(root, "failing-fast-codex.mjs");
+  const marker = join(root, "fast-provider-called");
+  await writeFile(
+    bin,
+    `#!/usr/bin/env node
+import { writeFileSync } from "node:fs";
+if (process.argv[2] === "--version") {
+  process.stdout.write(${JSON.stringify(`${version}\n`)});
+  process.exit(0);
+}
+writeFileSync(${JSON.stringify(marker)}, "called");
+process.stderr.write(${JSON.stringify(message)});
+process.exit(7);
+`,
+  );
+  await chmod(bin, 0o755);
+  await ignoreProviderArtifacts(root, [
+    "failing-fast-codex.mjs",
+    "fast-provider-called",
+  ]);
+  return { bin, marker };
 }
 
 async function recordingOpenCode(root) {
@@ -2946,6 +2978,126 @@ test("accepts the array form required by the Codex output schema", async () => {
       complete,
     );
     assert.match(writtenNotes.meta.reviewFingerprint, /^[a-f0-9]{64}$/);
+  } finally {
+    await rm(repo, { recursive: true, force: true });
+  }
+});
+
+test("uses Fast mode for notes and records it in Review metadata", async () => {
+  const repo = await makeRepo();
+  const summaries = join(repo, "notes.json");
+  const output = join(repo, "diff-data.json");
+
+  try {
+    const codex = await fakeCodex(repo, notes({
+      "added.txt": {
+        title: "Add text",
+        what: "Adds a file.",
+        why: "Exercises Fast mode.",
+        details: [],
+        risks: [],
+      },
+      "changed.txt": {
+        title: "Change text",
+        what: "Changes a file.",
+        why: "Exercises Fast mode.",
+        details: [],
+        risks: [],
+      },
+    }));
+    const result = run(repo, [
+      "--range", "HEAD~1..HEAD", "--codex-bin", codex.bin,
+      "--summaries", summaries, "--output", output, "--fast",
+    ]);
+
+    assert.equal(result.status, 0, result.stderr);
+    const args = JSON.parse(await readFile(codex.argsFile, "utf8"));
+    assert.ok(args.includes('service_tier="fast"'));
+    assert.ok(args.includes("features.fast_mode=true"));
+    assert.equal(JSON.parse(await readFile(summaries, "utf8")).meta.fast, true);
+    assert.equal(JSON.parse(await readFile(output, "utf8")).notes.fast, true);
+  } finally {
+    await rm(repo, { recursive: true, force: true });
+  }
+});
+
+test("reuses cached notes across Fast mode changes", async () => {
+  const repo = await makeRepo();
+  const summaries = join(repo, "notes.json");
+  const output = join(repo, "diff-data.json");
+
+  try {
+    const codex = await recordingCodex(repo);
+    const args = [
+      "--range", "HEAD~1..HEAD", "--codex-bin", codex.bin,
+      "--summaries", summaries, "--output", output,
+    ];
+    const standard = run(repo, args);
+    assert.equal(standard.status, 0, standard.stderr);
+    assert.equal((await recordedCalls(codex.calls)).length, 2);
+
+    const enabled = run(repo, [...args, "--fast"]);
+    assert.equal(enabled.status, 0, enabled.stderr);
+    assert.equal((await recordedCalls(codex.calls)).length, 2);
+    assert.equal(JSON.parse(await readFile(output, "utf8")).notes.fast, true);
+
+    const disabled = run(repo, args);
+    assert.equal(disabled.status, 0, disabled.stderr);
+    assert.equal((await recordedCalls(codex.calls)).length, 2);
+    assert.equal(JSON.parse(await readFile(output, "utf8")).notes.fast, false);
+  } finally {
+    await rm(repo, { recursive: true, force: true });
+  }
+});
+
+test("rejects unsupported and old providers before a Fast mode call", async () => {
+  const repo = await makeRepo();
+
+  try {
+    const oldCodex = await failingFastCodex(repo, {
+      version: "codex-cli 0.107.0",
+      message: "must not run",
+    });
+    const old = run(repo, [
+      "--range", "HEAD~1..HEAD", "--codex-bin", oldCodex.bin, "--fast",
+    ]);
+    assert.equal(old.status, 2, old.stderr);
+    assert.match(old.stderr, /Codex CLI 0\.108\.0 or newer.*0\.107\.0/i);
+    await assert.rejects(stat(oldCodex.marker), /ENOENT/);
+
+    const copilot = join(repo, "fake-copilot.mjs");
+    const marker = join(repo, "copilot-called");
+    await writeFile(
+      copilot,
+      `#!/usr/bin/env node\nrequire("node:fs").writeFileSync(${JSON.stringify(marker)}, "called");\n`,
+    );
+    await chmod(copilot, 0o755);
+    await ignoreProviderArtifacts(repo, ["fake-copilot.mjs", "copilot-called"]);
+    const unsupported = run(repo, [
+      "--range", "HEAD~1..HEAD", "--agent", "copilot", "--fast",
+    ], { env: { ...process.env, COPILOT_BIN: copilot } });
+    assert.equal(unsupported.status, 2, unsupported.stderr);
+    assert.match(unsupported.stderr, /--fast is supported only by codex and claude/i);
+    await assert.rejects(stat(marker), /ENOENT/);
+  } finally {
+    await rm(repo, { recursive: true, force: true });
+  }
+});
+
+test("preserves Fast mode provider errors", async () => {
+  const repo = await makeRepo();
+
+  try {
+    const codex = await failingFastCodex(repo, {
+      version: "codex-cli 0.151.0",
+      message: "Fast mode entitlement denied",
+    });
+    const result = run(repo, [
+      "--range", "HEAD~1..HEAD", "--codex-bin", codex.bin, "--fast",
+    ]);
+    assert.equal(result.status, 1, result.stderr);
+    assert.match(result.stderr, /Fast mode entitlement denied/);
+    assert.equal(await readFile(codex.marker, "utf8"), "called");
   } finally {
     await rm(repo, { recursive: true, force: true });
   }

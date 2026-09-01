@@ -15,6 +15,7 @@ import { fileURLToPath } from 'node:url';
 import {
   agentCommand,
   agentReadOnlyWarning,
+  assertFastCompatible,
   assertReasoningSupported,
   codingAgentFromSelectionError,
   codingAgentAvailability,
@@ -76,6 +77,7 @@ const valueFlags = new Set([
 const booleanFlags = new Set([
   '--checkout',
   '--force',
+  '--fast',
   '--support-record',
   '--worktree',
   '--no-checkout-access',
@@ -140,6 +142,7 @@ Options:
   --codex-bin FILE    Codex CLI path (default: codex)
   --model NAME        Model passed to the coding agent
   --reasoning LEVEL   Agent reasoning effort when supported
+  --fast              Enable provider Fast mode for every agent call
   --batch-size COUNT  Maximum files per agent pass (default: 12)
   --jobs COUNT        Agent passes to run at once (default: 3)
   --support-record    Print a safe record if this run fails
@@ -178,6 +181,7 @@ let selectedAgent;
 let agentBinary;
 const model = option('--model');
 const reasoning = option('--reasoning');
+const fast = rawArgs.includes('--fast');
 const batchSizeValue = option('--batch-size') || '12';
 const reasoningLevels = new Set([
   'minimal',
@@ -1039,6 +1043,7 @@ function publishSnapshot(
       ...(state.errors.length ? { errors: state.errors } : {}),
       ...(model ? { model } : {}),
       ...(reasoning ? { reasoning } : {}),
+      fast,
       accessMode: accessMode.mode,
     },
   };
@@ -1208,8 +1213,9 @@ async function selectAgentForNotes() {
         signal: selectionAbortController.signal,
       },
     );
-    assertReasoningSupported(selectedAgent, reasoning);
     agentBinary = codingAgentBinary(selectedAgent, { codexBin });
+    assertReasoningSupported(selectedAgent, reasoning);
+    assertFastCompatible(selectedAgent, agentBinary, fast);
     supportRecorder?.setProvider(
       selectedAgent,
       safeCommandVersion(selectedAgent, agentBinary),
@@ -1567,6 +1573,7 @@ try {
             generatedAt: new Date().toISOString(),
             ...(model ? { model } : {}),
             ...(reasoning ? { reasoning } : {}),
+            fast,
             accessMode: accessMode.mode,
           },
         };
@@ -1613,6 +1620,7 @@ try {
             generatedAt: new Date().toISOString(),
             ...(model ? { model } : {}),
             ...(reasoning ? { reasoning } : {}),
+            fast,
             accessMode: accessMode.mode,
           },
         };
@@ -1694,6 +1702,7 @@ try {
                   : 'complete',
               ...(model ? { model } : {}),
               ...(reasoning ? { reasoning } : {}),
+              fast,
               accessMode: accessMode.mode,
             },
           },
@@ -1749,6 +1758,7 @@ try {
             binary: agentBinary,
             model,
             reasoning,
+            fast,
             prompt: promptFor(batchPaths, { accessMode, includeChange: false }),
             schema: outputSchema(batchPaths, { includeChange: false }),
             schemaPath,
@@ -1875,6 +1885,7 @@ try {
               binary: agentBinary,
               model,
               reasoning,
+              fast,
               prompt: promptFor([], { accessMode }),
               schema,
               schemaPath,

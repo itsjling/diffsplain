@@ -42,6 +42,7 @@ export const cliOptions = defineCliOptions({
   '--no-agent': { kind: 'no-agent' },
   '--no-checkout-access': { kind: 'flag' },
   '--force': { kind: 'flag' },
+  '--fast': { kind: 'flag' },
   '--worktree': { kind: 'flag' },
   '--no-browser': { kind: 'flag' },
   '--support-record': { kind: 'flag' },
@@ -102,6 +103,7 @@ Options:
   --exclude PATTERN   Omit matching files from automatic agent context
   --model NAME        Model for agent notes
   --reasoning LEVEL   Agent reasoning effort when supported
+  --fast              Enable provider Fast mode for agent notes and chat
   --batch-size COUNT  Maximum files per agent pass (default: ${batchSizeOption.default})
   --jobs COUNT        Agent passes to run at once (default: ${jobsOption.default})
   --force             Regenerate all agent notes
@@ -311,6 +313,9 @@ export function parseCliArgs(
     fail('Pass the repo once, either as REPO or with --repo');
   }
   if (noAgent && agentSet) fail('--agent and --no-agent cannot be used together');
+  if (noAgent && options.has('--fast')) {
+    fail('--fast and --no-agent cannot be used together');
+  }
   if (noAgent && options.has('--summaries')) {
     fail('--no-agent cannot be used with --summaries');
   }
@@ -417,6 +422,7 @@ export function parseCliArgs(
     agentArgs.push(`--exclude=${pattern}`);
   }
   if (options.has('--force')) agentArgs.push('--force');
+  if (options.has('--fast')) agentArgs.push('--fast');
   for (const name of [
     '--codex-bin',
     '--model',
@@ -526,5 +532,6 @@ export function parseCliArgs(
     host,
     browserEnabled: !options.has('--no-browser'),
     forceSummaryRegeneration: options.has('--force'),
+    fast: options.has('--fast'),
   };
 }

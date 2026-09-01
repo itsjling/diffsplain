@@ -20,6 +20,7 @@ import { helpText, parseCliArgs } from './cli-args.mjs';
 import { applyAgentConfigOperation } from './agent-config.mjs';
 import {
   agentReadOnlyWarning,
+  assertFastCompatible,
   assertReasoningSupported,
   codingAgentFromSelectionError,
   codingAgentAvailability,
@@ -256,10 +257,11 @@ if (agentEnabled) {
           }),
       },
     );
-    assertReasoningSupported(selectedAgent, cli.reasoning);
     selectedAgentBinary = codingAgentBinary(selectedAgent, {
       codexBin: cli.codexBin,
     });
+    assertReasoningSupported(selectedAgent, cli.reasoning);
+    assertFastCompatible(selectedAgent, selectedAgentBinary, cli.fast);
     recordSelectedProvider(selectedAgent, selectedAgentBinary);
     supportRecorder?.addStage(
       'agent',
@@ -454,6 +456,7 @@ function chatAgentArguments() {
     ...chatAccessArguments(),
     ...optionalSiteArgument('--chat-model', cli.model),
     ...optionalSiteArgument('--chat-reasoning', cli.reasoning),
+    ...(cli.fast ? ['--chat-fast'] : []),
   ];
 }
 
@@ -778,15 +781,19 @@ function markSnapshotReady() {
 }
 
 function snapshotForPresentation(snapshot) {
-  if (snapshotStateFromSnapshot(snapshot).hasCurrentAgentNotes) {
+  const hasCurrentNotes = snapshotStateFromSnapshot(snapshot)
+    .hasCurrentAgentNotes;
+  if (hasCurrentNotes && snapshot.notes?.fast === cli.fast) {
     return snapshot;
   }
   const content = {
     ...snapshot,
     notes: {
       ...snapshot.notes,
-      complete: false,
-      status: 'generating',
+      fast: cli.fast,
+      ...(hasCurrentNotes
+        ? {}
+        : { complete: false, status: 'generating' }),
     },
   };
   delete content.version;

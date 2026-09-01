@@ -69,6 +69,7 @@ Arguments:
 | `--exclude PATTERN` | Keep matching files out of automatic agent input. Repeat rules in gitignore order; the diff still shows them. |
 | `--model NAME` | Choose the model used for notes. |
 | `--reasoning LEVEL` | Set `minimal`, `low`, `medium`, `high`, or `xhigh`. |
+| `--fast` | Enable provider Fast mode for agent notes and Review chat. |
 | `--batch-size COUNT` | Set the most files per agent pass. The default is `12`; large patches use smaller batches. |
 | `--jobs COUNT` | Set agent passes to run at once. The default is `3`. |
 | `--force` | Regenerate all agent notes instead of using cached notes. |

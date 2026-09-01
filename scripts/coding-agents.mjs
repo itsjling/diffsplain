@@ -11,17 +11,36 @@ import {
 import { readConfiguredAgent } from './agent-config.mjs';
 
 export const codingAgentCapabilities = {
-  codex: { binary: 'codex', model: true, reasoning: true },
-  claude: { binary: 'claude', model: true, reasoning: false },
-  copilot: { binary: 'copilot', model: true, reasoning: false },
-  cursor: { binary: 'cursor-agent', model: true, reasoning: false },
-  opencode: { binary: 'opencode', model: true, reasoning: true },
+  codex: {
+    binary: 'codex',
+    model: true,
+    reasoning: true,
+    fast: { label: 'Codex CLI', minimumVersion: '0.108.0' },
+  },
+  claude: {
+    binary: 'claude',
+    model: true,
+    reasoning: false,
+    fast: { label: 'Claude Code', minimumVersion: '2.1.36' },
+  },
+  copilot: { binary: 'copilot', model: true, reasoning: false, fast: false },
+  cursor: {
+    binary: 'cursor-agent',
+    model: true,
+    reasoning: false,
+    fast: false,
+  },
+  opencode: { binary: 'opencode', model: true, reasoning: true, fast: false },
 };
 
 export const codingAgents = Object.keys(codingAgentCapabilities);
 
 export function agentSupportsReasoning(agent) {
   return codingAgentCapabilities[agent]?.reasoning === true;
+}
+
+export function agentSupportsFast(agent) {
+  return Boolean(codingAgentCapabilities[agent]?.fast);
 }
 
 export function assertReasoningSupported(agent, reasoning) {
@@ -87,6 +106,67 @@ function versionAtLeast(current, minimum) {
     if (part !== minimum[index]) return part > minimum[index];
   }
   return true;
+}
+
+function semanticVersion(value) {
+  const match = value?.match(/(?:^|\D)(\d+)\.(\d+)\.(\d+)(-[0-9A-Za-z.-]+)?/);
+  if (!match) return undefined;
+  return {
+    parts: match.slice(1, 4).map(Number),
+    prerelease: Boolean(match[4]),
+  };
+}
+
+export function inspectFastCompatibility(
+  agent,
+  command,
+  {
+    env = process.env,
+    timeout = 5_000,
+    run = spawnSync,
+  } = {},
+) {
+  const capability = codingAgentCapabilities[agent]?.fast;
+  if (!capability) {
+    return {
+      compatible: false,
+      reason: `--fast is supported only by codex and claude; ${agent} does not support it.`,
+    };
+  }
+  const result = run(command, ['--version'], {
+    encoding: 'utf8',
+    env,
+    timeout,
+    windowsHide: true,
+  });
+  const version = firstLine(`${result.stdout || ''}\n${result.stderr || ''}`);
+  const current = semanticVersion(version);
+  const minimum = semanticVersion(capability.minimumVersion);
+  const compatible = current && minimum &&
+    (versionAtLeast(current.parts, minimum.parts) &&
+      !(current.prerelease &&
+        current.parts.every((part, index) => part === minimum.parts[index])));
+  if (result.error || result.status !== 0 || !version || !current) {
+    return {
+      compatible: false,
+      version,
+      reason: `${capability.label} ${capability.minimumVersion} or newer is required for --fast, but its version could not be checked. Upgrade ${capability.label}.`,
+    };
+  }
+  if (!compatible) {
+    return {
+      compatible: false,
+      version,
+      reason: `${capability.label} ${capability.minimumVersion} or newer is required for --fast; found ${version}. Upgrade ${capability.label}.`,
+    };
+  }
+  return { compatible: true, version };
+}
+
+export function assertFastCompatible(agent, command, fast, options) {
+  if (!fast) return;
+  const inspection = inspectFastCompatibility(agent, command, options);
+  if (!inspection.compatible) throw new Error(inspection.reason);
 }
 
 function cursorCompatibilityError(detail) {
@@ -554,6 +634,7 @@ function codexRepoArgs(snapshotOnly) {
 
 function codexCommand({
   binary,
+  fast,
   model,
   reasoning,
   prompt,
@@ -577,6 +658,14 @@ function codexCommand({
     schemaPath,
     ...codexConfigArgs(snapshotOnly),
   ];
+  if (fast) {
+    args.push(
+      '--config',
+      'service_tier="fast"',
+      '--config',
+      'features.fast_mode=true',
+    );
+  }
   if (model) args.push('--model', model);
   if (reasoning) {
     args.push(
@@ -596,6 +685,7 @@ function codexCommand({
 
 function claudeCommand({
   binary,
+  fast,
   model,
   prompt,
   schema,
@@ -612,6 +702,7 @@ function claudeCommand({
     ...(snapshotOnly ? ['--tools', ''] : ['--permission-mode', 'plan']),
     '--no-session-persistence',
   ];
+  if (fast) args.push('--settings', JSON.stringify({ fastMode: true }));
   if (model) args.push('--model', model);
   args.push(prompt);
   return {
@@ -764,6 +855,7 @@ export function agentCommand({
   binary = agent,
   model,
   reasoning,
+  fast = false,
   prompt,
   schema,
   schemaPath,
@@ -775,6 +867,7 @@ export function agentCommand({
   const checkoutAccess = accessMode?.mode === 'checkout-read-only';
   const options = {
     binary,
+    fast,
     inputPath,
     model,
     prompt,

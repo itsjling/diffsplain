@@ -461,6 +461,43 @@ test('timeout reaps a built-in provider child that ignores SIGTERM', async () =>
   }
 });
 
+test('uses Fast mode for Review chat provider calls', async () => {
+  const fixture = await createFixture();
+  const binary = join(fixture.directory, 'codex');
+  const argsPath = join(fixture.directory, 'provider-args.json');
+  await writeFile(binary, [
+    '#!/usr/bin/env node',
+    'const fs = require("node:fs");',
+    `fs.writeFileSync(${JSON.stringify(argsPath)}, JSON.stringify(process.argv.slice(2)));`,
+    'process.stdin.resume();',
+    'process.stdin.on("end", () => process.stdout.write(JSON.stringify({ markdown: "Fast answer.", citations: [] })));',
+    '',
+  ].join('\n'));
+  await chmod(binary, 0o755);
+  const provider = createCodingAgentChatProvider({
+    agent: 'codex',
+    binary,
+    fast: true,
+  });
+  const chat = createReviewChat({ snapshotPath: fixture.snapshotPath, provider });
+
+  try {
+    chat.command({ type: 'new', scope: 'review' });
+    chat.command({ type: 'ask', scope: 'review', question: 'Answer quickly.' });
+    const ready = await waitFor(
+      () => thread(chat.getState(), 'review'),
+      (value) => value.status === 'ready' && value.messages.length === 2,
+    );
+    assert.equal(ready.messages.at(-1).answer.markdown, 'Fast answer.');
+    const args = JSON.parse(await readFile(argsPath, 'utf8'));
+    assert.ok(args.includes('service_tier="fast"'));
+    assert.ok(args.includes('features.fast_mode=true'));
+  } finally {
+    chat.close();
+    await rm(fixture.directory, { recursive: true, force: true });
+  }
+});
+
 test('sends prior thread history to each fresh provider question', async () => {
   const fixture = await createFixture();
   const provider = controlledProvider();
