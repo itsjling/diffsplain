@@ -1504,6 +1504,12 @@ if (args[0] === "--version") {
     subtype: "success",
     is_error: false,
     result: JSON.stringify(response),
+    usage: {
+      inputTokens: 11,
+      outputTokens: 3,
+      cacheReadTokens: 5,
+      cacheWriteTokens: 1,
+    },
   }) + "\\n");
 }
 `,
@@ -1550,6 +1556,17 @@ if (args[0] === "--version") {
       }
     }
     assert.equal(JSON.parse(await readFile(summaries, "utf8")).meta.agent, "cursor");
+    assert.deepEqual(JSON.parse(await readFile(output, "utf8")).usage.agentNotes, {
+      status: "complete",
+      calls: 2,
+      reportedCalls: 2,
+      tokens: {
+        inputTokens: 22,
+        outputTokens: 6,
+        cacheReadTokens: 10,
+        cacheWriteTokens: 2,
+      },
+    });
   } finally {
     await rm(repo, { recursive: true, force: true });
   }

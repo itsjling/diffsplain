@@ -840,6 +840,28 @@ test('reads documented provider usage without guessing missing fields', () => {
     cacheReadTokens: 17,
     cacheWriteTokens: 2,
   });
+
+  const cursor = [
+    { type: 'system', subtype: 'init' },
+    {
+      type: 'result',
+      subtype: 'success',
+      is_error: false,
+      result: JSON.stringify(response),
+      usage: {
+        inputTokens: 20311,
+        outputTokens: 30,
+        cacheReadTokens: 1664,
+        cacheWriteTokens: 0,
+      },
+    },
+  ].map(JSON.stringify).join('\n');
+  assert.deepEqual(parseAgentUsage('cursor', cursor), {
+    inputTokens: 20311,
+    outputTokens: 30,
+    cacheReadTokens: 1664,
+    cacheWriteTokens: 0,
+  });
   assert.equal(parseAgentUsage('cursor', '{}'), undefined);
   assert.equal(parseAgentUsage('copilot', '{}'), undefined);
 });
