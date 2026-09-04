@@ -8,31 +8,42 @@ import {
   wrapDemoIndex,
 } from "./demo-controller.js";
 
-const copyButton = document.querySelector(".copy-button");
+const copyButtons = [...document.querySelectorAll(".copy-button")];
 const copyStatus = document.querySelector(".copy-status");
 let statusTimer;
 
-copyButton?.addEventListener("click", async () => {
-  const value = copyButton.dataset.copy;
-  if (!value) return;
-
-  try {
-    await navigator.clipboard.writeText(value);
-    copyButton.textContent = "Copied";
-    copyStatus.textContent = "Command copied";
-  } catch {
-    copyButton.textContent = "Copy";
-    copyStatus.textContent = "Copy failed. Select the command and copy it.";
+const resetCopyButtons = () => {
+  for (const button of copyButtons) {
+    button.textContent = button.dataset.copyLabel;
   }
+};
 
-  copyStatus.classList.add("is-visible");
-  clearTimeout(statusTimer);
-  statusTimer = setTimeout(() => {
-    copyStatus.classList.remove("is-visible");
-    copyButton.textContent = "Copy";
-    copyStatus.textContent = "";
-  }, 2200);
-});
+for (const copyButton of copyButtons) {
+  copyButton.dataset.copyLabel = copyButton.textContent.trim();
+  copyButton.addEventListener("click", async () => {
+    const value = copyButton.dataset.copy;
+    if (!value) return;
+
+    clearTimeout(statusTimer);
+    resetCopyButtons();
+
+    try {
+      await navigator.clipboard.writeText(value);
+      copyButton.textContent = "Copied";
+      copyStatus.textContent = "Command copied. Paste it in your terminal.";
+    } catch {
+      copyStatus.textContent =
+        "Copy failed. Select the command and copy it manually.";
+    }
+
+    copyStatus.classList.add("is-visible");
+    statusTimer = setTimeout(() => {
+      copyStatus.classList.remove("is-visible");
+      resetCopyButtons();
+      copyStatus.textContent = "";
+    }, 2200);
+  });
+}
 
 const demo = document.querySelector("[data-demo]");
 
@@ -61,10 +72,17 @@ if (demo) {
     pickerSearch: demo.querySelector("[data-demo-picker-search]"),
     pickerMatchCount: demo.querySelector("[data-demo-picker-match-count]"),
     pickerList: demo.querySelector("[data-demo-picker-list]"),
+    invitation: document.querySelector("[data-demo-invitation]"),
+    mobileToggle: demo.querySelector("[data-demo-mobile-toggle]"),
+    mobileToggleLabel: demo.querySelector(
+      "[data-demo-mobile-toggle-label]",
+    ),
+    mobileToggleIcon: demo.querySelector("[data-demo-mobile-toggle-icon]"),
     live: demo.querySelector("[data-demo-live]"),
   };
 
   let currentIndex = 0;
+  let pickerReturnFocus = elements.pickerTrigger;
   let touchStartX = null;
 
   const makeElement = (tag, className, text) => {
@@ -276,7 +294,8 @@ if (demo) {
     elements.live.textContent = `Showing ${file.path}, file ${currentIndex + 1} of ${todoDemoFiles.length}`;
   };
 
-  const openPicker = () => {
+  const openPicker = (returnFocus = elements.pickerTrigger) => {
+    pickerReturnFocus = returnFocus;
     elements.pickerBackdrop.hidden = false;
     elements.pickerTrigger.setAttribute("aria-expanded", "true");
     elements.pickerSearch.value = "";
@@ -298,7 +317,7 @@ if (demo) {
     if (elements.pickerBackdrop.hidden) return;
     elements.pickerBackdrop.hidden = true;
     elements.pickerTrigger.setAttribute("aria-expanded", "false");
-    elements.pickerTrigger.focus();
+    pickerReturnFocus.focus();
   };
 
   elements.prev.addEventListener("click", () =>
@@ -307,13 +326,29 @@ if (demo) {
   elements.next.addEventListener("click", () =>
     showFile(currentIndex + 1, "next"),
   );
-  elements.pickerTrigger.addEventListener("click", openPicker);
+  elements.pickerTrigger.addEventListener("click", () =>
+    openPicker(elements.pickerTrigger),
+  );
+  elements.invitation.addEventListener("click", () =>
+    openPicker(elements.invitation),
+  );
   elements.pickerClose.addEventListener("click", closePicker);
   elements.pickerSearch.addEventListener("input", (event) =>
     renderPicker(event.target.value),
   );
   elements.pickerBackdrop.addEventListener("click", (event) => {
     if (event.target === elements.pickerBackdrop) closePicker();
+  });
+  elements.mobileToggle.addEventListener("click", () => {
+    const expanded = demo.classList.toggle("is-mobile-expanded");
+    elements.mobileToggle.setAttribute("aria-expanded", String(expanded));
+    elements.mobileToggleLabel.textContent = expanded
+      ? "Show concise demo"
+      : "Explore full demo";
+    elements.mobileToggleIcon.textContent = expanded ? "↑" : "↓";
+    elements.live.textContent = expanded
+      ? "Full interactive demo expanded"
+      : "Concise demo shown";
   });
 
   document.addEventListener("keydown", (event) => {
@@ -325,7 +360,7 @@ if (demo) {
 
     if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "k") {
       event.preventDefault();
-      if (!pickerIsOpen) openPicker();
+      if (!pickerIsOpen) openPicker(elements.pickerTrigger);
       return;
     }
 

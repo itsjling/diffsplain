@@ -107,7 +107,7 @@ FORM: Quiet corner, grounded structure 5, staged as a product announcement; seed
       </a>
 
       <nav class="masthead__nav" aria-label="Main navigation">
-        <span>Open source</span>
+        <span>Local · read-only</span>
         <a
           href="https://github.com/itsjling/diffsplain"
           target="_blank"
@@ -130,32 +130,58 @@ FORM: Quiet corner, grounded structure 5, staged as a product announcement; seed
             The diff and its explanation, side by side.
           </p>
 
-          <div class="hero__command" aria-label="Quick start command">
+          <p class="hero__command-label">Run in a Git checkout</p>
+          <div
+            class="hero__command"
+            role="group"
+            aria-label="Quick start command"
+          >
             <span aria-hidden="true">$</span>
-            <code>npx diffsplain@latest react/react --pr 37127</code>
+            <code>npx diffsplain --pr 198</code>
+            <button
+              class="copy-button copy-button--hero"
+              type="button"
+              data-copy="npx diffsplain --pr 198"
+              data-hero-copy
+            >
+              Copy command
+            </button>
           </div>
 
+          <ul class="hero__trust" aria-label="How Diffsplain runs">
+            <li>Local review page</li>
+            <li>Leaves your checkout alone</li>
+            <li>Uses your signed-in CLIs</li>
+          </ul>
+
           <div class="hero__actions">
+            <a class="text-link text-link--primary" href="#run">
+              See requirements <span aria-hidden="true">↓</span>
+            </a>
             <a
-              class="text-link text-link--primary"
+              class="text-link"
               href="https://github.com/itsjling/diffsplain"
               target="_blank"
               rel="noreferrer"
             >
-              View on GitHub <span aria-hidden="true">→</span>
-            </a>
-            <a class="text-link" href="#run">
-              Run it locally <span aria-hidden="true">↓</span>
+              View source <span aria-hidden="true">↗</span>
             </a>
           </div>
         </div>
 
-        <section
-          class="product-demo"
-          aria-label="Interactive ten-file todo pull request demo"
-          data-demo
-          tabindex="0"
-        >
+        <div class="hero__demo-stage">
+          <button class="demo-invitation" type="button" data-demo-invitation>
+            <span>Interactive demo</span>
+            Choose a file to see its diff and reason
+            <span aria-hidden="true">↓</span>
+          </button>
+
+          <section
+            class="product-demo"
+            aria-label="Interactive ten-file todo pull request demo"
+            data-demo
+            tabindex="0"
+          >
           <div class="demo-reader-toolbar">
             <button
               class="demo-nav-button"
@@ -193,7 +219,7 @@ FORM: Quiet corner, grounded structure 5, staged as a product announcement; seed
             </button>
           </div>
 
-          <div class="demo-page" data-demo-page>
+          <div class="demo-page" id="demo-page" data-demo-page>
             <section class="demo-diff-pane" aria-label="Unified diff">
               <header class="demo-pane-heading">
                 <div>
@@ -255,12 +281,23 @@ FORM: Quiet corner, grounded structure 5, staged as a product announcement; seed
               <footer class="demo-signoff">
                 <span class="demo-agent-glyph" aria-hidden="true">✦</span>
                 <span>
-                  Written by GPT 5.6 Sol (Codex)
+                  Written by a coding agent
                   <small>Illustrative todo app PR · 10 files</small>
                 </span>
               </footer>
             </aside>
           </div>
+
+          <button
+            class="demo-mobile-toggle"
+            type="button"
+            aria-controls="demo-page"
+            aria-expanded="false"
+            data-demo-mobile-toggle
+          >
+            <span data-demo-mobile-toggle-label>Explore full demo</span>
+            <span aria-hidden="true" data-demo-mobile-toggle-icon>↓</span>
+          </button>
 
           <div
             class="demo-picker-backdrop"
@@ -306,8 +343,9 @@ FORM: Quiet corner, grounded structure 5, staged as a product announcement; seed
             </div>
           </div>
 
-          <span class="sr-only" data-demo-live aria-live="polite"></span>
-        </section>
+            <span class="sr-only" data-demo-live aria-live="polite"></span>
+          </section>
+        </div>
       </section>
 
       <section class="story" aria-labelledby="story-title">
@@ -349,22 +387,26 @@ FORM: Quiet corner, grounded structure 5, staged as a product announcement; seed
           <p class="section-label">Run locally</p>
           <h2 id="run-title">Start with the pull request.</h2>
           <p>
-            Diffsplain uses your current GitHub and coding agent CLI logins. It
-            opens a local review page and leaves your checkout alone.
+            Diffsplain reads the selected Git data and opens a local review
+            page. It does not switch branches or change your target checkout.
           </p>
         </div>
 
         <div class="run__commands">
           <div class="command-line">
-            <code>npx diffsplain@latest react/react --pr 37127</code>
+            <code>npx diffsplain --pr 198</code>
             <button
               class="copy-button"
               type="button"
-              data-copy="npx diffsplain@latest react/react --pr 37127"
+              data-copy="npx diffsplain --pr 198"
             >
-              Copy
+              Copy command
             </button>
           </div>
+          <p>
+            Requires Node.js 22.13+ and your signed-in GitHub and coding-agent
+            CLIs. Diffsplain keeps its review data outside the target checkout.
+          </p>
           <a
             class="text-link"
             href="https://github.com/itsjling/diffsplain#run-it"
@@ -399,11 +441,9 @@ FORM: Quiet corner, grounded structure 5, staged as a product announcement; seed
         <h2 id="closing-title">Review what changed.<br />Keep why in view.</h2>
         <a
           class="text-link text-link--primary"
-          href="https://github.com/itsjling/diffsplain"
-          target="_blank"
-          rel="noreferrer"
+          href="#top"
         >
-          Open the repository <span aria-hidden="true">↗</span>
+          Back to quick start <span aria-hidden="true">↑</span>
         </a>
       </section>
     </main>

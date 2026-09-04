@@ -142,8 +142,21 @@ test("selects a demo file and shows its matching diff and note", async () => {
       await page.getByRole("table", { name: "Current file diff" }).waitFor();
       await page.getByRole("complementary", { name: "Agent note" }).waitFor();
 
-      await page.getByRole("button", { name: /Choose file/ }).click();
+      const invitation = page.getByRole("button", {
+        name: /Interactive demo.*Choose a file/,
+      });
+      await invitation.click();
       const dialog = page.getByRole("dialog", { name: "Jump to a file" });
+      await dialog.waitFor();
+      await page
+        .getByRole("button", { name: "Close file picker" })
+        .click();
+      assert.equal(
+        await invitation.evaluate((element) => element === document.activeElement),
+        true,
+      );
+
+      await page.getByRole("button", { name: /Choose file/ }).click();
       await dialog.waitFor();
       const search = page.getByRole("searchbox", {
         name: "Search changed files",
@@ -279,15 +292,18 @@ test("reports copy success and failure without stale status", async () => {
       });
       await page.goto(server.url);
 
-      const copy = page.locator(".copy-button");
+      const copy = page.locator("[data-hero-copy]");
       const status = page.getByRole("status");
       await copy.click();
       await page.getByRole("button", { name: "Copied", exact: true }).waitFor();
       assert.equal(await copy.textContent(), "Copied");
-      assert.equal(await status.textContent(), "Command copied");
+      assert.equal(
+        await status.textContent(),
+        "Command copied. Paste it in your terminal.",
+      );
       assert.equal(
         await page.evaluate(() => window.__copiedCommand),
-        "npx diffsplain@latest react/react --pr 37127",
+        "npx diffsplain --pr 198",
       );
 
       await page.evaluate(() => {
@@ -295,14 +311,14 @@ test("reports copy success and failure without stale status", async () => {
       });
       await copy.click();
       await page
-        .getByText("Copy failed. Select the command and copy it.", {
+        .getByText("Copy failed. Select the command and copy it manually.", {
           exact: true,
         })
         .waitFor();
-      assert.equal(await copy.textContent(), "Copy");
+      assert.equal(await copy.textContent(), "Copy command");
       assert.equal(
         await status.textContent(),
-        "Copy failed. Select the command and copy it.",
+        "Copy failed. Select the command and copy it manually.",
       );
 
       await page.waitForTimeout(2_300);
@@ -311,6 +327,39 @@ test("reports copy success and failure without stale status", async () => {
         await status.evaluate((element) => element.matches(".is-visible")),
         false,
       );
+    },
+  );
+});
+
+test("starts with a concise mobile proof and expands the full demo", async () => {
+  await runLandingJourney(
+    "landing mobile proof disclosure",
+    {
+      hasTouch: true,
+      isMobile: true,
+      viewport: { width: 390, height: 844 },
+    },
+    async (page) => {
+      await page.goto(server.url);
+      const demo = page.locator("[data-demo]");
+      const toggle = page.locator("[data-demo-mobile-toggle]");
+      const noteSection = page.locator(".demo-note-section").first();
+      const diffFooter = page.locator(".demo-diff-footer");
+
+      assert.equal(await toggle.getAttribute("aria-expanded"), "false");
+      assert.equal(await noteSection.isVisible(), false);
+      assert.equal(await diffFooter.isVisible(), false);
+      assert.ok((await demo.boundingBox()).height < 600);
+
+      await toggle.click();
+      assert.equal(await toggle.getAttribute("aria-expanded"), "true");
+      assert.match(await toggle.textContent(), /Show concise demo/);
+      assert.equal(await noteSection.isVisible(), true);
+      assert.equal(await diffFooter.isVisible(), true);
+
+      await toggle.click();
+      assert.equal(await toggle.getAttribute("aria-expanded"), "false");
+      assert.equal(await noteSection.isVisible(), false);
     },
   );
 });
@@ -464,6 +513,7 @@ test("keeps click focus and arrow-key scrolling inside scroll regions", async ()
     },
     async (page) => {
       await page.goto(server.url);
+      await page.locator("[data-demo-mobile-toggle]").click();
       const diff = page.getByRole("region", {
         name: "Scrollable unified diff",
       });

@@ -115,6 +115,15 @@ test("makes the landing-page demo interactive", async () => {
   assert.match(html, /data-demo-picker-trigger/);
   assert.match(html, /data-demo-prev/);
   assert.match(html, /data-demo-next/);
+  assert.match(html, /data-demo-invitation/);
+  assert.match(html, /data-demo-mobile-toggle/);
+  assert.match(html, /data-hero-copy/);
+  assert.equal(
+    [...html.matchAll(/npx diffsplain --pr 198/g)].length,
+    4,
+  );
+  assert.doesNotMatch(html, /react\/react --pr 37127/);
+  assert.match(html, /Leaves your checkout alone/);
   assert.match(script, /import \{ todoDemoFiles \} from "\.\/todo-demo\.js"/);
   assert.match(script, /ArrowLeft/);
   assert.match(script, /ArrowRight/);
