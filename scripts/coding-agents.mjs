@@ -705,10 +705,28 @@ function openCodeUsage(stdout) {
   return eventUsage(stdout, openCodeEventUsage);
 }
 
+function cursorEventUsage(event) {
+  if (event.type !== 'result' || !event.usage || typeof event.usage !== 'object') {
+    return undefined;
+  }
+  const usage = event.usage;
+  return providerUsage(
+    usage.inputTokens,
+    usage.outputTokens,
+    usage.cacheReadTokens,
+    usage.cacheWriteTokens,
+  );
+}
+
+function cursorUsage(stdout) {
+  return eventUsage(stdout, cursorEventUsage);
+}
+
 export function parseAgentUsage(agent, stdout) {
   if (agent === 'codex') return codexUsage(stdout);
   if (agent === 'claude') return claudeUsage(stdout);
   if (agent === 'opencode') return openCodeUsage(stdout);
+  if (agent === 'cursor') return cursorUsage(stdout);
   return undefined;
 }
 
