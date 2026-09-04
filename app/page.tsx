@@ -183,7 +183,8 @@ const TOKEN_LABELS: Array<[keyof TokenUsage, string]> = [
   ["cacheWriteTokens", "Cache write"],
 ];
 
-function usageState(summary: UsageSummary) {
+function usageState(summary: UsageSummary, notesGenerating: boolean) {
+  if (notesGenerating) return "Writing";
   if (summary.status === "unavailable") return "Unavailable";
   return summary.status === "partial" ? "Partial" : "Complete";
 }
@@ -229,13 +230,19 @@ function UsageRow({
   );
 }
 
-function UsagePanel({ usage }: { usage: ReviewUsage }) {
+function UsagePanel({
+  notesGenerating,
+  usage,
+}: {
+  notesGenerating: boolean;
+  usage: ReviewUsage;
+}) {
   return (
     <details className="usage-disclosure">
       <summary>
         <span className="usage-summary-label">Agent usage</span>
         <span className="usage-summary-state">
-          {usageState(usage.combined)}
+          {usageState(usage.combined, notesGenerating)}
         </span>
       </summary>
       <section
@@ -1159,7 +1166,12 @@ export default function Home() {
                   />
                 </div>
               )}
-              {snapshot.usage ? <UsagePanel usage={snapshot.usage} /> : null}
+              {snapshot.usage ? (
+                <UsagePanel
+                  notesGenerating={notesGenerating}
+                  usage={snapshot.usage}
+                />
+              ) : null}
             </div>
 
             {summaryMode === "note" &&

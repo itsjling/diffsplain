@@ -680,6 +680,44 @@ test("shows complete, partial, unavailable, and live-updated usage at 320 pixels
     "agent usage states",
     { viewport: { width: 320, height: 780 } },
     async (page) => {
+      const zeroUsage = {
+        status: "complete",
+        calls: 0,
+        reportedCalls: 0,
+        tokens: { inputTokens: 0, outputTokens: 0 },
+      };
+      const writing = usageFixture(
+        "usage-writing",
+        zeroUsage,
+        zeroUsage,
+      );
+      Object.assign(writing.notes, {
+        complete: false,
+        completedFiles: 0,
+        status: "generating",
+      });
+      writing.usage.agentNotes = zeroUsage;
+      await writeSnapshot(writing);
+      await page.goto(serverUrl);
+
+      const disclosure = page.locator(".usage-disclosure");
+      const summaryState = disclosure.locator(".usage-summary-state");
+      const usage = page.getByRole("region", { name: "Agent usage" });
+      await summaryState.getByText("Writing", { exact: true }).waitFor();
+      assert.equal(await disclosure.getAttribute("open"), null);
+      assert.equal(await usage.isVisible(), false);
+      assert.equal(
+        await page.locator("#agent-note-panel").evaluate((note) => {
+          const usageDisclosure = document.querySelector(".usage-disclosure");
+          return Boolean(
+            usageDisclosure &&
+              note.compareDocumentPosition(usageDisclosure) &
+                Node.DOCUMENT_POSITION_FOLLOWING,
+          );
+        }),
+        true,
+      );
+
       await writeSnapshot(usageFixture(
         "usage-partial",
         { status: "unavailable", calls: 1, reportedCalls: 0 },
@@ -694,23 +732,7 @@ test("shows complete, partial, unavailable, and live-updated usage at 320 pixels
           },
         },
       ));
-      await page.goto(serverUrl);
-
-      const disclosure = page.locator(".usage-disclosure");
-      const usage = page.getByRole("region", { name: "Agent usage" });
-      assert.equal(await disclosure.getAttribute("open"), null);
-      assert.equal(await usage.isVisible(), false);
-      assert.equal(
-        await page.locator("#agent-note-panel").evaluate((note) => {
-          const usageDisclosure = document.querySelector(".usage-disclosure");
-          return Boolean(
-            usageDisclosure &&
-              note.compareDocumentPosition(usageDisclosure) &
-                Node.DOCUMENT_POSITION_FOLLOWING,
-          );
-        }),
-        true,
-      );
+      await summaryState.getByText("Partial", { exact: true }).waitFor();
       await disclosure.locator("summary").click();
       await usage.getByText("Unavailable").waitFor();
       await usage.getByText("Partial", { exact: true }).first().waitFor();
@@ -735,6 +757,7 @@ test("shows complete, partial, unavailable, and live-updated usage at 320 pixels
           },
         },
       ));
+      await summaryState.getByText("Complete", { exact: true }).waitFor();
       await usage.getByText("Input 13,000", { exact: true }).waitFor();
       await usage.getByText("Unavailable").waitFor({ state: "hidden" });
       assert.equal(
