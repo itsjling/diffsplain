@@ -1258,13 +1258,13 @@ export default function Home() {
                     </span>
                     <span className={`status-pin status-pin--${file.status}`} />
                     <span className="picker-path">{file.path}</span>
-                    {noteState ? (
-                      <PickerAgentNoteState state={noteState} />
-                    ) : null}
                     <span className="picker-change-count">
                       <i>+{file.additions}</i>
                       <b>−{file.deletions}</b>
                     </span>
+                    {noteState ? (
+                      <PickerAgentNoteState state={noteState} />
+                    ) : null}
                   </button>
                 );
               })}
