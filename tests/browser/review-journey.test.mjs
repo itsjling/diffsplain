@@ -407,6 +407,31 @@ async function assertPickerNoteState(page, path, state) {
   assert.match((await marker.textContent())?.trim() ?? "", new RegExp(`${state}$`));
 }
 
+async function assertPickerMetadataLayout(page) {
+  const metadata = await page.locator(".picker-row").evaluateAll((rows) =>
+    rows.map((row) => {
+      const changeCount = row.querySelector(".picker-change-count");
+      const noteState = row.querySelector(".picker-note-state");
+      if (!(changeCount instanceof HTMLElement)) {
+        throw new Error("Picker row is missing its change count");
+      }
+      if (!(noteState instanceof HTMLElement)) {
+        throw new Error("Picker row is missing its Agent note state");
+      }
+      const changeBounds = changeCount.getBoundingClientRect();
+      const noteBounds = noteState.getBoundingClientRect();
+      return {
+        changeRight: changeBounds.right,
+        noteLeft: noteBounds.left,
+        noteRight: noteBounds.right,
+      };
+    }),
+  );
+  assert.ok(metadata.every(({ changeRight, noteLeft }) => changeRight < noteLeft));
+  const noteRightEdges = metadata.map(({ noteRight }) => noteRight);
+  assert.ok(Math.max(...noteRightEdges) - Math.min(...noteRightEdges) <= 1);
+}
+
 async function assertTouchTarget(locator) {
   const box = await locator.boundingBox();
   assert.ok(box);
@@ -1354,6 +1379,25 @@ test("updates every picker Agent note state without disturbing the open picker",
         .include(".picker-note-state")
         .analyze();
       assert.deepEqual(results.violations, []);
+    },
+  );
+});
+
+test("aligns picker note states to the right of change counts", async () => {
+  await runReviewJourney(
+    "picker metadata layout",
+    { viewport: { width: 1280, height: 800 } },
+    async (page) => {
+      const value = longFileListFixture();
+      value.files[0].additions = 1;
+      value.files[1].additions = 17;
+      value.files[2].additions = 481;
+      await writeSnapshot(value);
+      await page.goto(serverUrl);
+      await page.getByRole("heading", { name: "Explain file 1" }).waitFor();
+
+      await pickerControls(page).trigger.click();
+      await assertPickerMetadataLayout(page);
     },
   );
 });
