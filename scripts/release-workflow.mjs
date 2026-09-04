@@ -617,7 +617,7 @@ function registryHasVersion(deps, version) {
 }
 
 async function verifyPublishedVersion(deps, version, attempt = 0) {
-  const delays = [0, 1_000, 2_000, 4_000];
+  const delays = [0, 1_000, 2_000, 4_000, 8_000, 16_000, 30_000];
   if (attempt >= delays.length) {
     throw new Error(`npm did not return ${packageName}@${version} after publishing.`);
   }

@@ -458,6 +458,41 @@ test('retries a transient post-publish registry lookup failure', async () => {
   ]);
 });
 
+test('allows time for a published version to propagate across the npm registry', async () => {
+  const calls = [];
+  let attempts = 0;
+  const result = await finalizeReleaseWorkflow(
+    '1.3.0',
+    finalizationDeps(calls, {
+      registryVersion: () => {
+        calls.push('verify');
+        attempts += 1;
+        return attempts === 5 ? '1.3.0' : null;
+      },
+      wait: async (milliseconds) => calls.push(['wait', milliseconds]),
+    }),
+  );
+
+  assert.equal(result.mode, 'create');
+  assert.deepEqual(calls, [
+    ['pinned', baseCommit],
+    'fetch',
+    ['import', 'v1.3.0'],
+    'registry',
+    ['push', releaseCommit, 'v1.3.0'],
+    ['publish', '1.3.0'],
+    'verify',
+    ['wait', 1_000],
+    'verify',
+    ['wait', 2_000],
+    'verify',
+    ['wait', 4_000],
+    'verify',
+    ['wait', 8_000],
+    'verify',
+  ]);
+});
+
 test('accepts an already-published release only when tarball integrity matches', async () => {
   const result = await finalizeReleaseWorkflow(
     '1.3.0',
