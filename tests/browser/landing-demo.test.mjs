@@ -143,7 +143,7 @@ test("selects a demo file and shows its matching diff and note", async () => {
       await page.getByRole("complementary", { name: "Agent note" }).waitFor();
 
       const invitation = page.getByRole("button", {
-        name: /Interactive demo.*Choose a file/,
+        name: /Explore the demo/,
       });
       await invitation.click();
       const dialog = page.getByRole("dialog", { name: "Jump to a file" });
@@ -552,6 +552,26 @@ test("keeps click focus and arrow-key scrolling inside scroll regions", async ()
         await page.locator("[data-demo-path]").textContent(),
         path,
       );
+    },
+  );
+});
+
+
+test("keeps the quick start clear of the demo across desktop widths", async () => {
+  await runLandingJourney(
+    "landing layout separation",
+    { viewport: { width: 1280, height: 900 } },
+    async (page) => {
+      await page.goto(server.url);
+      for (const width of [1280, 1440, 1920]) {
+        await page.setViewportSize({ width, height: 900 });
+        const gap = await page.evaluate(() => {
+          const command = document.querySelector(".hero__command").getBoundingClientRect();
+          const demo = document.querySelector(".hero__demo-stage").getBoundingClientRect();
+          return demo.left - command.right;
+        });
+        assert.ok(gap >= 32, `Expected a clear gutter at ${width}px; got ${gap}px`);
+      }
     },
   );
 });

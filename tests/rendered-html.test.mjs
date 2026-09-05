@@ -123,7 +123,7 @@ test("makes the landing-page demo interactive", async () => {
     4,
   );
   assert.doesNotMatch(html, /react\/react --pr 37127/);
-  assert.match(html, /Leaves your checkout alone/);
+  assert.match(html, /does not switch branches or change your target checkout/);
   assert.match(script, /import \{ todoDemoFiles \} from "\.\/todo-demo\.js"/);
   assert.match(script, /ArrowLeft/);
   assert.match(script, /ArrowRight/);

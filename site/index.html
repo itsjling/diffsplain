@@ -120,17 +120,15 @@ FORM: Quiet corner, grounded structure 5, staged as a product announcement; seed
 
     <main id="main">
       <section class="hero" id="top" aria-labelledby="hero-title">
+        <h1 id="hero-title">
+          Understand the code<br />
+          you didn't write.
+        </h1>
         <div class="hero__copy">
-          <h1 id="hero-title">
-            Understand the code<br />
-            you didn't write.
-          </h1>
           <p>
-            One file at a time.<br />
-            The diff and its explanation, side by side.
+            Each file’s diff and explanation, side by side.
           </p>
 
-          <p class="hero__command-label">Run in a Git checkout</p>
           <div
             class="hero__command"
             role="group"
@@ -148,31 +146,17 @@ FORM: Quiet corner, grounded structure 5, staged as a product announcement; seed
             </button>
           </div>
 
-          <ul class="hero__trust" aria-label="How Diffsplain runs">
-            <li>Local review page</li>
-            <li>Leaves your checkout alone</li>
-            <li>Uses your signed-in CLIs</li>
-          </ul>
-
+          <p class="hero__setup">Run in your repo. Replace <code>198</code> with your PR number.</p>
           <div class="hero__actions">
             <a class="text-link text-link--primary" href="#run">
-              See requirements <span aria-hidden="true">↓</span>
-            </a>
-            <a
-              class="text-link"
-              href="https://github.com/itsjling/diffsplain"
-              target="_blank"
-              rel="noreferrer"
-            >
-              View source <span aria-hidden="true">↗</span>
+              Requirements <span aria-hidden="true">↓</span>
             </a>
           </div>
         </div>
 
         <div class="hero__demo-stage">
           <button class="demo-invitation" type="button" data-demo-invitation>
-            <span>Interactive demo</span>
-            Choose a file to see its diff and reason
+            Explore the demo
             <span aria-hidden="true">↓</span>
           </button>
 
@@ -224,7 +208,7 @@ FORM: Quiet corner, grounded structure 5, staged as a product announcement; seed
               <header class="demo-pane-heading">
                 <div>
                   <p class="demo-eyebrow">Unified diff</p>
-                  <h1 data-demo-heading-path></h1>
+                  <h2 data-demo-heading-path></h2>
                 </div>
               </header>
               <div
