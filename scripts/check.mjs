@@ -68,6 +68,7 @@ const releaseTarball =
     : resolve(root, process.argv[releaseTarballIndex + 1]);
 const requiredPackageFiles = [
   'README.md',
+  'LICENSE',
   'package.json',
   'dist/index.html',
   'scripts/access-token.mjs',
@@ -98,7 +99,7 @@ const requiredPackageFiles = [
 const allowedPackageFile = /^(README(?:\.md)?|LICENSE(?:\.md)?|NOTICE(?:\.md)?|package\.json|dist\/.+|scripts\/(?:access-token|agent-config|agent-exclusions|agent-note-output|agent-review|agent-usage|build-diff-data|cache|cli-args|coding-agents|dev|doctor|generate-summaries|local-target|mock-agent|present|presenter-runtime|review-chat(?:-context|-controller|-provider)?|serve-built|summary-path|support-record)\.mjs)$/;
 const privatePackageFile = /(^|\/)(?:\.env|\.npmrc|\.git|\.github|\.agents|\.codex)(?:\/|$)|\.(?:pem|key)$/i;
 
-export function validatePackageManifest(pack) {
+export function validatePackageManifest(pack, packageJson = {}) {
   const files = pack.files ?? [];
   const paths = new Set(files.map((file) => file.path));
   const missing = requiredPackageFiles.filter((path) => !paths.has(path));
@@ -118,6 +119,15 @@ export function validatePackageManifest(pack) {
     },
     { present: oversizedPackage, text: 'package exceeds 12 MB' },
     { present: oversizedFile, text: 'file exceeds 1 MB' },
+    {
+      present: packageJson.license === undefined,
+      text: 'missing package license',
+    },
+    {
+      present:
+        packageJson.license !== undefined && packageJson.license !== 'MIT',
+      text: `license ${packageJson.license} does not match MIT`,
+    },
   ]
     .filter((problem) => problem.present)
     .map((problem) => problem.text);
@@ -220,7 +230,6 @@ async function smokeTestPackage() {
     const tarball = isAbsolute(pack.filename)
       ? pack.filename
       : join(packageRoot, pack.filename);
-    validatePackageManifest(pack);
     await mkdir(consumerRoot);
     await writeFile(
       join(consumerRoot, 'package.json'),
@@ -234,6 +243,7 @@ async function smokeTestPackage() {
     const packageJson = JSON.parse(
       await readFile(join(consumerRoot, 'node_modules/diffsplain/package.json')),
     );
+    validatePackageManifest(pack, packageJson);
     const executable = resolve(
       consumerRoot,
       'node_modules/diffsplain',
