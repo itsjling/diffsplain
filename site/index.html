@@ -332,44 +332,9 @@ FORM: Quiet corner, grounded structure 5, staged as a product announcement; seed
         </div>
       </section>
 
-      <section class="story" aria-labelledby="story-title">
-        <div class="section-heading">
-          <p>How it works</p>
-          <h2 id="story-title">From pull request to reason.</h2>
-        </div>
-
-        <div class="story__steps">
-          <article>
-            <p class="story__number">01</p>
-            <h3>Point it at a PR.</h3>
-            <p>
-              Use a PR number, a GitHub URL, or an <code>owner/repo</code>
-              name.
-            </p>
-          </article>
-          <article>
-            <p class="story__number">02</p>
-            <h3>Read one file.</h3>
-            <p>
-              Move through the full change without losing the file in front of
-              you.
-            </p>
-          </article>
-          <article>
-            <p class="story__number">03</p>
-            <h3>Keep the reason close.</h3>
-            <p>
-              A coding agent writes a short note about what changed, why, and
-              what to check.
-            </p>
-          </article>
-        </div>
-      </section>
-
       <section class="run" id="run" aria-labelledby="run-title">
         <div class="run__intro">
-          <p class="section-label">Run locally</p>
-          <h2 id="run-title">Start with the pull request.</h2>
+          <h2 id="run-title">Run locally</h2>
           <p>
             Diffsplain reads the selected Git data and opens a local review
             page. It does not switch branches or change your target checkout.
@@ -389,7 +354,7 @@ FORM: Quiet corner, grounded structure 5, staged as a product announcement; seed
           </div>
           <p>
             Requires Node.js 22.13+ and your signed-in GitHub and coding-agent
-            CLIs. Diffsplain keeps its review data outside the target checkout.
+            CLIs.
           </p>
           <a
             class="text-link"
@@ -402,39 +367,14 @@ FORM: Quiet corner, grounded structure 5, staged as a product announcement; seed
         </div>
       </section>
 
-      <section class="principles" aria-labelledby="principles-title">
-        <h2 id="principles-title">Built to stay out of the way.</h2>
-        <dl>
-          <div>
-            <dt>Local</dt>
-            <dd>The review page runs on your machine.</dd>
-          </div>
-          <div>
-            <dt>Read-only</dt>
-            <dd>Remote data stays in a separate bare cache.</dd>
-          </div>
-          <div>
-            <dt>Open source</dt>
-            <dd>The source, tests, and docs live on GitHub.</dd>
-          </div>
-        </dl>
-      </section>
-
-      <section class="closing" aria-labelledby="closing-title">
-        <p>Diffsplain</p>
-        <h2 id="closing-title">Review what changed.<br />Keep why in view.</h2>
-        <a
-          class="text-link text-link--primary"
-          href="#top"
-        >
-          Back to quick start <span aria-hidden="true">↑</span>
-        </a>
-      </section>
     </main>
 
     <footer class="footer">
       <p>Open-source pull request review.</p>
-      <a href="#top">Back to top <span aria-hidden="true">↑</span></a>
+      <nav aria-label="Footer">
+        <a href="https://github.com/itsjling/diffsplain">GitHub</a>
+        <a href="https://itsjling.github.io/diffsplain/docs/">Docs</a>
+      </nav>
     </footer>
 
     <div class="copy-status" role="status" aria-live="polite"></div>
