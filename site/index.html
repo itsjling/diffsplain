@@ -129,24 +129,34 @@ FORM: Quiet corner, grounded structure 5, staged as a product announcement; seed
             Each file’s diff and explanation, side by side.
           </p>
 
+          <label class="command-choice">
+            Try a PR
+            <select data-command-choice>
+              <option value="npx diffsplain --pr &lt;integer&gt;">Your repo</option>
+              <option value="npx diffsplain react/react --pr 37524" data-url="https://github.com/react/react/pull/37524" data-note="3 files · merged Sep 4, 2026">React — 3 files</option>
+              <option value="npx diffsplain microsoft/vscode --pr 334672" data-url="https://github.com/microsoft/vscode/pull/334672" data-note="2 files · merged Sep 5, 2026">VS Code — 2 files</option>
+              <option value="npx diffsplain vitejs/vite --pr 23387" data-url="https://github.com/vitejs/vite/pull/23387" data-note="5 files · merged Sep 4, 2026">Vite — 5 files</option>
+            </select>
+          </label>
+
           <div
             class="hero__command"
             role="group"
             aria-label="Quick start command"
           >
             <span aria-hidden="true">$</span>
-            <code>npx diffsplain --pr 198</code>
+            <code data-hero-command>npx diffsplain --pr &lt;integer&gt;</code>
             <button
               class="copy-button copy-button--hero"
               type="button"
-              data-copy="npx diffsplain --pr 198"
+              data-copy="npx diffsplain --pr &lt;integer&gt;"
               data-hero-copy
             >
               Copy command
             </button>
           </div>
 
-          <p class="hero__setup">Run in your repo. Replace <code>198</code> with your PR number.</p>
+          <p class="hero__setup"><span data-command-note>Run in your repo. Replace &lt;integer&gt; with a PR number before running.</span> <a data-command-source hidden>View PR ↗</a></p>
           <div class="hero__actions">
             <a class="text-link text-link--primary" href="#run">
               Requirements <span aria-hidden="true">↓</span>
@@ -155,10 +165,13 @@ FORM: Quiet corner, grounded structure 5, staged as a product announcement; seed
         </div>
 
         <div class="hero__demo-stage">
+          <div class="demo-intro">
+          <span class="demo-example-label">Illustrative PR</span>
           <button class="demo-invitation" type="button" data-demo-invitation>
             Explore the demo
             <span aria-hidden="true">↓</span>
           </button>
+          </div>
 
           <section
             class="product-demo"
@@ -342,23 +355,34 @@ FORM: Quiet corner, grounded structure 5, staged as a product announcement; seed
         </div>
 
         <div class="run__commands">
-          <div class="command-line">
-            <code>npx diffsplain --pr 198</code>
-            <button
-              class="copy-button"
-              type="button"
-              data-copy="npx diffsplain --pr 198"
-            >
-              Copy command
-            </button>
+          <div class="command-example">
+            <h3>Review a remote PR</h3>
+            <div class="command-line">
+              <code>npx diffsplain --repo owner/repo --pr &lt;integer&gt;</code>
+              <button class="copy-button" type="button" data-copy="npx diffsplain --repo owner/repo --pr &lt;integer&gt;" aria-label="Copy command: review a remote pr">Copy command</button>
+            </div>
+          </div>
+          <div class="command-example">
+            <h3>Choose an agent and model</h3>
+            <div class="command-line">
+              <code>npx diffsplain --agent claude --model &lt;model&gt;</code>
+              <button class="copy-button" type="button" data-copy="npx diffsplain --agent claude --model &lt;model&gt;" aria-label="Copy command: choose an agent and model">Copy command</button>
+            </div>
+          </div>
+          <div class="command-example">
+            <h3>Review uncommitted changes</h3>
+            <div class="command-line">
+              <code>npx diffsplain --worktree</code>
+              <button class="copy-button" type="button" data-copy="npx diffsplain --worktree" aria-label="Copy command: review uncommitted changes">Copy command</button>
+            </div>
           </div>
           <p>
             Requires Node.js 22.13+ and your signed-in GitHub and coding-agent
-            CLIs.
+            CLIs. Replace placeholders before running.
           </p>
           <a
             class="text-link"
-            href="https://github.com/itsjling/diffsplain#run-it"
+            href="https://itsjling.github.io/diffsplain/docs/cli/"
             target="_blank"
             rel="noreferrer"
           >

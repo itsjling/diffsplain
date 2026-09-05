@@ -70,7 +70,8 @@ a {
 }
 
 a:focus-visible,
-button:focus-visible {
+button:focus-visible,
+select:focus-visible {
   outline: 2px solid var(--blue);
   outline-offset: 4px;
 }
@@ -232,6 +233,20 @@ code {
 .hero__demo-stage {
   min-width: 0;
   position: relative;
+}
+
+.demo-intro {
+  align-items: center;
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+  min-height: 44px;
+}
+
+.demo-example-label {
+  color: var(--muted);
+  font-size: 13px;
+  white-space: nowrap;
 }
 
 .demo-invitation {
@@ -896,7 +911,7 @@ code {
 }
 
 .hero__command {
-  margin-top: 32px;
+  margin-top: 12px;
   align-items: center;
   background: var(--ink);
   border-radius: 5px;
@@ -916,7 +931,8 @@ code {
 
 .hero__command code {
   min-width: 0;
-  white-space: nowrap;
+  white-space: normal;
+  overflow-wrap: anywhere;
 }
 
 .hero__copy > .hero__setup {
@@ -924,7 +940,8 @@ code {
   font-size: 13px;
   line-height: 1.6;
   margin-top: 16px;
-  max-width: 42ch;
+  max-width: 65ch;
+  pointer-events: auto;
 }
 
 .run {
@@ -1133,11 +1150,16 @@ code {
     width: calc(100% + (2 * var(--page-pad)));
   }
 
+  .demo-intro {
+    padding: 0 var(--page-pad);
+  }
+
   .demo-invitation {
-    justify-content: flex-start;
-    margin-left: 0;
-    padding: 0 var(--page-pad) 14px;
-    width: 100%;
+    padding-bottom: 0;
+  }
+
+  .product-demo:not(.is-mobile-expanded) .demo-diff-row--preview-skip {
+    display: none;
   }
 
   .product-demo {
@@ -1333,4 +1355,37 @@ code {
     scroll-behavior: auto !important;
     transition-duration: 0.01ms !important;
   }
+}
+
+.command-choice {
+  align-items: center;
+  display: flex;
+  gap: 16px;
+  margin-top: 28px;
+  font-size: 14px;
+  pointer-events: auto;
+}
+
+.command-choice select {
+  background: var(--paper);
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  color: var(--ink);
+  font: inherit;
+  min-height: 44px;
+  padding: 8px 32px 8px 12px;
+}
+
+.command-example + .command-example {
+  margin-top: 28px;
+}
+
+.command-example h3 {
+  font-size: 15px;
+  font-weight: 540;
+  margin: 0 0 12px;
+}
+
+.command-line code {
+  min-width: 0;
 }

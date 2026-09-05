@@ -118,11 +118,9 @@ test("makes the landing-page demo interactive", async () => {
   assert.match(html, /data-demo-invitation/);
   assert.match(html, /data-demo-mobile-toggle/);
   assert.match(html, /data-hero-copy/);
-  assert.equal(
-    [...html.matchAll(/npx diffsplain --pr 198/g)].length,
-    4,
-  );
-  assert.doesNotMatch(html, /react\/react --pr 37127/);
+  assert.match(html, /npx diffsplain --pr &lt;integer&gt;/);
+  assert.doesNotMatch(html, /--pr 198|#run-it/);
+  assert.match(html, /https:\/\/itsjling.github.io\/diffsplain\/docs\/cli\//);
   assert.match(html, /does not switch branches or change your target checkout/);
   assert.match(script, /import \{ todoDemoFiles \} from "\.\/todo-demo\.js"/);
   assert.match(script, /ArrowLeft/);

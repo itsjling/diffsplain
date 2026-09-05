@@ -299,11 +299,11 @@ test("reports copy success and failure without stale status", async () => {
       assert.equal(await copy.textContent(), "Copied");
       assert.equal(
         await status.textContent(),
-        "Command copied. Paste it in your terminal.",
+        "Command copied. Replace placeholders before running.",
       );
       assert.equal(
         await page.evaluate(() => window.__copiedCommand),
-        "npx diffsplain --pr 198",
+        "npx diffsplain --pr <integer>",
       );
 
       await page.evaluate(() => {
@@ -350,14 +350,23 @@ test("starts with a concise mobile proof and expands the full demo", async () =>
       assert.equal(await noteSection.isVisible(), false);
       assert.equal(await diffFooter.isVisible(), false);
       assert.ok((await demo.boundingBox()).height < 600);
+      assert.equal(await page.getByText("Illustrative PR", { exact: true }).isVisible(), true);
+      const firstChange = demo.locator(".demo-diff-row--add, .demo-diff-row--delete").first();
+      const changeBox = await firstChange.boundingBox();
+      const viewportBox = await demo.locator(".demo-diff-scroll").boundingBox();
+      assert.ok(changeBox.y >= viewportBox.y && changeBox.y + changeBox.height <= viewportBox.y + viewportBox.height);
+      assert.equal(await demo.locator(".demo-diff-row--meta").first().isVisible(), false);
 
       await toggle.click();
       assert.equal(await toggle.getAttribute("aria-expanded"), "true");
       assert.match(await toggle.textContent(), /Show concise demo/);
       assert.equal(await noteSection.isVisible(), true);
       assert.equal(await diffFooter.isVisible(), true);
+      assert.equal(await demo.locator(".demo-diff-row--meta").first().isVisible(), true);
+      await demo.locator(".demo-diff-scroll").evaluate((element) => { element.scrollTop = 200; });
 
       await toggle.click();
+      assert.equal(await demo.locator(".demo-diff-scroll").evaluate((element) => element.scrollTop), 0);
       assert.equal(await toggle.getAttribute("aria-expanded"), "false");
       assert.equal(await noteSection.isVisible(), false);
     },
@@ -575,4 +584,38 @@ test("shows a full-width demo below the quick start", async () => {
       }
     },
   );
+});
+
+
+test("copies each OSS example and each alternative command", async () => {
+  await runLandingJourney("landing command choices", { viewport: { width: 390, height: 844 } }, async (page) => {
+    await page.addInitScript(() => {
+      Object.defineProperty(navigator, "clipboard", {
+        configurable: true,
+        value: { writeText: async (value) => { window.__copiedCommand = value; } },
+      });
+    });
+    await page.goto(server.url);
+    const choices = page.getByLabel("Try a PR");
+    for (const [repo, pr] of [["react/react", 37524], ["microsoft/vscode", 334672], ["vitejs/vite", 23387]]) {
+      const command = `npx diffsplain ${repo} --pr ${pr}`;
+      await choices.selectOption(command);
+      assert.equal(await page.locator("[data-hero-command]").textContent(), command);
+      assert.equal(await page.locator("[data-command-source]").getAttribute("href"), `https://github.com/${repo}/pull/${pr}`);
+      await page.locator("[data-hero-copy]").click();
+      assert.equal(await page.evaluate(() => window.__copiedCommand), command);
+    }
+    await choices.selectOption("npx diffsplain --pr <integer>");
+    assert.equal(await page.locator("[data-command-source]").isVisible(), false);
+    assert.match(await page.locator("[data-command-note]").textContent(), /Replace <integer>/);
+    const examples = page.locator(".command-example");
+    assert.equal(await examples.count(), 3);
+    for (let i = 0; i < 3; i += 1) {
+      const example = examples.nth(i);
+      const command = await example.locator("code").textContent();
+      await example.getByRole("button").click();
+      assert.equal(await page.evaluate(() => window.__copiedCommand), command);
+    }
+    assert.equal(await page.locator(".run__commands > a").getAttribute("href"), "https://itsjling.github.io/diffsplain/docs/cli/");
+  });
 });

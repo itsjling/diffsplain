@@ -30,7 +30,9 @@ for (const copyButton of copyButtons) {
     try {
       await navigator.clipboard.writeText(value);
       copyButton.textContent = "Copied";
-      copyStatus.textContent = "Command copied. Paste it in your terminal.";
+      copyStatus.textContent = value.includes("<")
+        ? "Command copied. Replace placeholders before running."
+        : "Command copied. Paste it in your terminal.";
     } catch {
       copyStatus.textContent =
         "Copy failed. Select the command and copy it manually.";
@@ -44,6 +46,25 @@ for (const copyButton of copyButtons) {
     }, 2200);
   });
 }
+
+const commandChoice = document.querySelector("[data-command-choice]");
+commandChoice.addEventListener("change", () => {
+  const option = commandChoice.selectedOptions[0];
+  const command = commandChoice.value;
+  document.querySelector("[data-hero-command]").textContent = command;
+  document.querySelector("[data-hero-copy]").dataset.copy = command;
+  document.querySelector("[data-command-note]").textContent = option.dataset.note
+    ? `${option.dataset.note}. Run from any directory.`
+    : "Run in your repo. Replace <integer> with a PR number before running.";
+  const source = document.querySelector("[data-command-source]");
+  source.hidden = !option.dataset.url;
+  if (option.dataset.url) source.href = option.dataset.url;
+  else source.removeAttribute("href");
+  clearTimeout(statusTimer);
+  resetCopyButtons();
+  copyStatus.classList.remove("is-visible");
+  copyStatus.textContent = "";
+});
 
 const demo = document.querySelector("[data-demo]");
 
@@ -157,11 +178,13 @@ if (demo) {
     const fragment = document.createDocumentFragment();
     const rows = parsePatch(file.patch);
 
-    for (const row of rows) {
+    const firstChange = rows.findIndex((row) => row.type === "add" || row.type === "delete");
+    for (const [index, row] of rows.entries()) {
       const rowElement = makeElement(
         "div",
         `demo-diff-row demo-diff-row--${row.type}`,
       );
+      rowElement.classList.toggle("demo-diff-row--preview-skip", index < firstChange);
       rowElement.setAttribute("role", "row");
 
       const oldNumber = makeElement(
@@ -341,6 +364,7 @@ if (demo) {
   });
   elements.mobileToggle.addEventListener("click", () => {
     const expanded = demo.classList.toggle("is-mobile-expanded");
+    elements.diff.parentElement.scrollTo({ top: 0, left: 0 });
     elements.mobileToggle.setAttribute("aria-expanded", String(expanded));
     elements.mobileToggleLabel.textContent = expanded
       ? "Show concise demo"
