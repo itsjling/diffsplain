@@ -107,7 +107,9 @@ function validateMitLicenseText(licenseText) {
     throw new Error('Package manifest check failed: missing license text');
   }
   if (
-    createHash('sha256').update(licenseText).digest('hex') !== mitLicenseSha256
+    createHash('sha256')
+      .update(licenseText.replaceAll('\r\n', '\n'))
+      .digest('hex') !== mitLicenseSha256
   ) {
     throw new Error('Package manifest check failed: license text does not match MIT');
   }

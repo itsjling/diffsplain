@@ -50,6 +50,9 @@ function validate(
 
 test('accepts the required package manifest', () => {
   assert.doesNotThrow(() => validate());
+  assert.doesNotThrow(() =>
+    validate(manifest(), { license: 'MIT' }, mitLicense.replaceAll('\n', '\r\n')),
+  );
 });
 
 test('rejects missing, private, unexpected, and oversized package files', () => {
