@@ -130,6 +130,16 @@ FORM: Quiet corner, grounded structure 5, staged as a product announcement; seed
             Each file’s diff and explanation, side by side.
           </p>
 
+          <div class="command-choices" role="group" aria-label="Command examples">
+            <button type="button" data-command-choice="npx diffsplain" aria-pressed="true">Your repo</button>
+            <span class="command-choices__label">Or an open-source repo:</span>
+            <span class="command-choices__repos">
+            <button type="button" data-command-choice="npx diffsplain facebook/react --pr 36094" aria-pressed="false">React</button>
+            <button type="button" data-command-choice="npx diffsplain microsoft/vscode --pr 334672" aria-pressed="false">VS Code</button>
+            <button type="button" data-command-choice="npx diffsplain vitejs/vite --pr 23387" aria-pressed="false">Vite</button>
+            </span>
+          </div>
+
           <div
             class="hero__command"
             role="group"
@@ -145,16 +155,6 @@ FORM: Quiet corner, grounded structure 5, staged as a product announcement; seed
             >
               Copy command
             </button>
-          </div>
-
-          <div class="command-choices" role="group" aria-label="Command examples">
-            <button type="button" data-command-choice="npx diffsplain" aria-pressed="true">Your repo</button>
-            <span class="command-choices__label">Or an open-source repo:</span>
-            <span class="command-choices__repos">
-            <button type="button" data-command-choice="npx diffsplain facebook/react --pr 36094" aria-pressed="false">React</button>
-            <button type="button" data-command-choice="npx diffsplain microsoft/vscode --pr 334672" aria-pressed="false">VS Code</button>
-            <button type="button" data-command-choice="npx diffsplain vitejs/vite --pr 23387" aria-pressed="false">Vite</button>
-            </span>
           </div>
 
         </div>
