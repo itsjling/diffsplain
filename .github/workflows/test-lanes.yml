@@ -56,7 +56,11 @@ jobs:
         uses: actions/upload-artifact@v6
         with:
           name: core-coverage
-          path: coverage
+          path: |
+            coverage/lcov-report/
+            coverage/lcov.info
+            coverage/coverage-summary.json
+          retention-days: 7
           if-no-files-found: error
 
   browser:
