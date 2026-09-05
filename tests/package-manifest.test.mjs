@@ -1,9 +1,13 @@
 import assert from 'node:assert/strict';
+import { readFile } from 'node:fs/promises';
 import test from 'node:test';
 import { validatePackageManifest } from '../scripts/check.mjs';
 
+const mitLicense = await readFile(new URL('../LICENSE', import.meta.url), 'utf8');
+
 const requiredFiles = [
   'README.md',
+  'LICENSE',
   'package.json',
   'dist/index.html',
   'scripts/access-token.mjs',
@@ -36,29 +40,63 @@ function manifest(files = requiredFiles.map((path) => ({ path, size: 1 }))) {
   return { files, unpackedSize: 1 };
 }
 
+function validate(
+  pack = manifest(),
+  packageJson = { license: 'MIT' },
+  licenseText = mitLicense,
+) {
+  return validatePackageManifest(pack, packageJson, licenseText);
+}
+
 test('accepts the required package manifest', () => {
-  assert.doesNotThrow(() => validatePackageManifest(manifest()));
+  assert.doesNotThrow(() => validate());
+  assert.doesNotThrow(() =>
+    validate(manifest(), { license: 'MIT' }, mitLicense.replaceAll('\n', '\r\n')),
+  );
 });
 
 test('rejects missing, private, unexpected, and oversized package files', () => {
   assert.throws(
-    () => validatePackageManifest(manifest(requiredFiles.slice(1).map((path) => ({ path, size: 1 })))),
+    () => validate(manifest(requiredFiles.slice(1).map((path) => ({ path, size: 1 })))),
     /missing README\.md/,
   );
   assert.throws(
-    () => validatePackageManifest(manifest([...requiredFiles.map((path) => ({ path, size: 1 })), { path: '.env', size: 1 }])),
+    () => validate(manifest([...requiredFiles.map((path) => ({ path, size: 1 })), { path: '.env', size: 1 }])),
     /private .env/,
   );
   assert.throws(
-    () => validatePackageManifest(manifest([...requiredFiles.map((path) => ({ path, size: 1 })), { path: 'notes.txt', size: 1 }])),
+    () => validate(manifest([...requiredFiles.map((path) => ({ path, size: 1 })), { path: 'notes.txt', size: 1 }])),
     /unexpected notes\.txt/,
   );
   assert.throws(
-    () => validatePackageManifest(manifest([...requiredFiles.map((path) => ({ path, size: 1 })), { path: 'dist/large.js', size: 1_000_001 }])),
+    () => validate(manifest([...requiredFiles.map((path) => ({ path, size: 1 })), { path: 'dist/large.js', size: 1_000_001 }])),
     /file exceeds 1 MB/,
   );
   assert.throws(
-    () => validatePackageManifest({ ...manifest(), unpackedSize: 12_000_001 }),
+    () => validate({ ...manifest(), unpackedSize: 12_000_001 }),
     /package exceeds 12 MB/,
+  );
+});
+
+test('rejects missing license text or metadata that is not MIT', () => {
+  assert.throws(
+    () => validate(manifest(requiredFiles.filter((path) => path !== 'LICENSE').map((path) => ({ path, size: 1 })))),
+    /missing LICENSE/,
+  );
+  assert.throws(
+    () => validate(manifest(), {}),
+    /missing package license/,
+  );
+  assert.throws(
+    () => validate(manifest(), { license: 'Apache-2.0' }),
+    /license Apache-2\.0 does not match MIT/,
+  );
+  assert.throws(
+    () => validate(manifest(), { license: 'MIT' }, ''),
+    /missing license text/,
+  );
+  assert.throws(
+    () => validate(manifest(), { license: 'MIT' }, `${mitLicense}extra terms\n`),
+    /license text does not match MIT/,
   );
 });

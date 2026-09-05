@@ -2,6 +2,7 @@
   "name": "diffsplain",
   "version": "0.13.0",
   "description": "Review Git diffs one file at a time with coding agent notes beside each patch.",
+  "license": "MIT",
   "keywords": [
     "codex",
     "claude",
