@@ -89,7 +89,6 @@ const booleanFlags = new Set([
   '--support-record',
   '--worktree',
   '--no-checkout-access',
-  '--access-warning-emitted',
   '--provider-read-only-warning-emitted',
 ]);
 
@@ -347,15 +346,6 @@ try {
   console.error(error instanceof Error ? error.message : String(error));
   emitFailedSupportRecord(2);
   process.exit(2);
-}
-if (
-  accessMode.mode === 'snapshot-only' &&
-  accessMode.reason === 'target-mismatch' &&
-  !rawArgs.includes('--access-warning-emitted')
-) {
-  console.log(
-    'Warning: This target does not map to the live checkout. Agent notes will use the supplied snapshot only.',
-  );
 }
 const readOnlyWarning = agentReadOnlyWarning(selectedAgent, accessMode);
 if (

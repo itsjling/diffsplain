@@ -134,8 +134,7 @@ your user permissions, and approval stays with you.
 Pull requests, remote branches, and exact local ranges use `snapshot-only`
 access because their target may not match the live checkout. The agent gets the
 temporary review input and must use only that input; it must not run commands
-or read other files. Diffsplain prints one warning when a selected agent uses
-this mode because of a target mismatch.
+or read other files.
 
 Pass `--no-checkout-access` to use `snapshot-only` access for any target. This
 option affects agent notes only. It does not change the diff or the page.

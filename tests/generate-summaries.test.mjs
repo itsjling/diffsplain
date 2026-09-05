@@ -1866,13 +1866,11 @@ test("keeps disabled checkout access in the temporary snapshot context", async (
   }
 });
 
-test("warns once and keeps a mismatched range in the snapshot context", async () => {
+test("keeps a mismatched range in the snapshot context without warning", async () => {
   const repo = await makeRepo();
   const directory = await mkdtemp(join(tmpdir(), "diffsplain-agent-access-"));
   const summaries = join(repo, "notes.json");
   const output = join(repo, "diff-data.json");
-  const warning = "Warning: This target does not map to the live checkout. Agent notes will use the supplied snapshot only.";
-
   try {
     const codex = await accessRecordingCodex(directory, repo);
     const result = run(
@@ -1893,7 +1891,7 @@ test("warns once and keeps a mismatched range in the snapshot context", async ()
     );
 
     assert.equal(result.status, 0, result.stderr);
-    assert.equal(result.stdout.split(warning).length - 1, 1);
+    assert.doesNotMatch(result.stdout, /does not map to the live checkout/);
     const calls = await recordedCalls(codex.calls);
     assert.ok(calls.length >= 2);
     for (const call of calls) {
