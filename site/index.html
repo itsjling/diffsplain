@@ -107,7 +107,7 @@ FORM: Quiet corner, grounded structure 5, staged as a product announcement; seed
       </a>
 
       <nav class="masthead__nav" aria-label="Main navigation">
-        <span>Open source</span>
+        <span>Local · read-only</span>
         <a
           href="https://github.com/itsjling/diffsplain"
           target="_blank"
@@ -120,42 +120,58 @@ FORM: Quiet corner, grounded structure 5, staged as a product announcement; seed
 
     <main id="main">
       <section class="hero" id="top" aria-labelledby="hero-title">
+        <h1 id="hero-title">
+          Understand the code<br />
+          you didn't write.
+        </h1>
         <div class="hero__copy">
-          <h1 id="hero-title">
-            Understand the code<br />
-            you didn't write.
-          </h1>
           <p>
-            One file at a time.<br />
-            The diff and its explanation, side by side.
+            Each file’s diff and explanation, side by side.
           </p>
 
-          <div class="hero__command" aria-label="Quick start command">
+          <div
+            class="hero__command"
+            role="group"
+            aria-label="Quick start command"
+          >
             <span aria-hidden="true">$</span>
-            <code>npx diffsplain@latest react/react --pr 37127</code>
+            <code data-hero-command>npx diffsplain</code>
+            <button
+              class="copy-button copy-button--hero"
+              type="button"
+              data-copy="npx diffsplain"
+              data-hero-copy
+            >
+              Copy command
+            </button>
           </div>
 
-          <div class="hero__actions">
-            <a
-              class="text-link text-link--primary"
-              href="https://github.com/itsjling/diffsplain"
-              target="_blank"
-              rel="noreferrer"
-            >
-              View on GitHub <span aria-hidden="true">→</span>
-            </a>
-            <a class="text-link" href="#run">
-              Run it locally <span aria-hidden="true">↓</span>
-            </a>
+          <div class="command-choices" role="group" aria-label="Command examples">
+            <button type="button" data-command-choice="npx diffsplain" aria-pressed="true">Your repo</button>
+            <span class="command-choices__label">Or an open-source repo:</span>
+            <span class="command-choices__repos">
+            <button type="button" data-command-choice="npx diffsplain react/react --pr 36094" aria-pressed="false">React</button>
+            <button type="button" data-command-choice="npx diffsplain microsoft/vscode --pr 334672" aria-pressed="false">VS Code</button>
+            <button type="button" data-command-choice="npx diffsplain vitejs/vite --pr 23387" aria-pressed="false">Vite</button>
+            </span>
           </div>
+
         </div>
 
-        <section
-          class="product-demo"
-          aria-label="Interactive ten-file todo pull request demo"
-          data-demo
-          tabindex="0"
-        >
+        <div class="hero__demo-stage">
+          <div class="demo-intro">
+          <button class="demo-invitation" type="button" data-demo-invitation>
+            Explore the demo
+            <span aria-hidden="true">↓</span>
+          </button>
+          </div>
+
+          <section
+            class="product-demo"
+            aria-label="Interactive ten-file todo pull request demo"
+            data-demo
+            tabindex="0"
+          >
           <div class="demo-reader-toolbar">
             <button
               class="demo-nav-button"
@@ -193,12 +209,12 @@ FORM: Quiet corner, grounded structure 5, staged as a product announcement; seed
             </button>
           </div>
 
-          <div class="demo-page" data-demo-page>
+          <div class="demo-page" id="demo-page" data-demo-page>
             <section class="demo-diff-pane" aria-label="Unified diff">
               <header class="demo-pane-heading">
                 <div>
                   <p class="demo-eyebrow">Unified diff</p>
-                  <h1 data-demo-heading-path></h1>
+                  <h2 data-demo-heading-path></h2>
                 </div>
               </header>
               <div
@@ -255,12 +271,23 @@ FORM: Quiet corner, grounded structure 5, staged as a product announcement; seed
               <footer class="demo-signoff">
                 <span class="demo-agent-glyph" aria-hidden="true">✦</span>
                 <span>
-                  Written by GPT 5.6 Sol (Codex)
+                  Written by a coding agent
                   <small>Illustrative todo app PR · 10 files</small>
                 </span>
               </footer>
             </aside>
           </div>
+
+          <button
+            class="demo-mobile-toggle"
+            type="button"
+            aria-controls="demo-page"
+            aria-expanded="false"
+            data-demo-mobile-toggle
+          >
+            <span data-demo-mobile-toggle-label>Explore full demo</span>
+            <span aria-hidden="true" data-demo-mobile-toggle-icon>↓</span>
+          </button>
 
           <div
             class="demo-picker-backdrop"
@@ -306,111 +333,61 @@ FORM: Quiet corner, grounded structure 5, staged as a product announcement; seed
             </div>
           </div>
 
-          <span class="sr-only" data-demo-live aria-live="polite"></span>
-        </section>
-      </section>
-
-      <section class="story" aria-labelledby="story-title">
-        <div class="section-heading">
-          <p>How it works</p>
-          <h2 id="story-title">From pull request to reason.</h2>
-        </div>
-
-        <div class="story__steps">
-          <article>
-            <p class="story__number">01</p>
-            <h3>Point it at a PR.</h3>
-            <p>
-              Use a PR number, a GitHub URL, or an <code>owner/repo</code>
-              name.
-            </p>
-          </article>
-          <article>
-            <p class="story__number">02</p>
-            <h3>Read one file.</h3>
-            <p>
-              Move through the full change without losing the file in front of
-              you.
-            </p>
-          </article>
-          <article>
-            <p class="story__number">03</p>
-            <h3>Keep the reason close.</h3>
-            <p>
-              A coding agent writes a short note about what changed, why, and
-              what to check.
-            </p>
-          </article>
+            <span class="sr-only" data-demo-live aria-live="polite"></span>
+          </section>
         </div>
       </section>
 
       <section class="run" id="run" aria-labelledby="run-title">
         <div class="run__intro">
-          <p class="section-label">Run locally</p>
-          <h2 id="run-title">Start with the pull request.</h2>
+          <h2 id="run-title">Run locally</h2>
           <p>
-            Diffsplain uses your current GitHub and coding agent CLI logins. It
-            opens a local review page and leaves your checkout alone.
+            Bring the same file-by-file view to your next PR or local changes.
+            Your checkout stays as it is.
           </p>
-        </div>
-
-        <div class="run__commands">
-          <div class="command-line">
-            <code>npx diffsplain@latest react/react --pr 37127</code>
-            <button
-              class="copy-button"
-              type="button"
-              data-copy="npx diffsplain@latest react/react --pr 37127"
-            >
-              Copy
-            </button>
-          </div>
           <a
             class="text-link"
-            href="https://github.com/itsjling/diffsplain#run-it"
+            href="https://itsjling.github.io/diffsplain/docs/cli/"
             target="_blank"
             rel="noreferrer"
           >
-            Read the full guide <span aria-hidden="true">↗</span>
+            See all command options <span aria-hidden="true">↗</span>
           </a>
+        </div>
+
+        <div class="run__commands">
+          <div class="command-example">
+            <h3>Review a GitHub PR</h3>
+            <div class="command-line">
+              <code>npx diffsplain --repo owner/repo --pr &lt;integer&gt;</code>
+              <button class="copy-button" type="button" data-copy="npx diffsplain --repo owner/repo --pr &lt;integer&gt;" aria-label="Copy command: review a GitHub PR">Copy command</button>
+            </div>
+          </div>
+          <div class="command-example">
+            <h3>Choose your agent and model</h3>
+            <div class="command-line">
+              <code>npx diffsplain --agent claude --model &lt;model&gt;</code>
+              <button class="copy-button" type="button" data-copy="npx diffsplain --agent claude --model &lt;model&gt;" aria-label="Copy command: choose your agent and model">Copy command</button>
+            </div>
+          </div>
+          <div class="command-example">
+            <h3>Compare a branch with the default branch</h3>
+            <div class="command-line">
+              <code>npx diffsplain --branch &lt;branch&gt;</code>
+              <button class="copy-button" type="button" data-copy="npx diffsplain --branch &lt;branch&gt;" aria-label="Copy command: compare a branch with the default branch">Copy command</button>
+            </div>
+          </div>
         </div>
       </section>
 
-      <section class="principles" aria-labelledby="principles-title">
-        <h2 id="principles-title">Built to stay out of the way.</h2>
-        <dl>
-          <div>
-            <dt>Local</dt>
-            <dd>The review page runs on your machine.</dd>
-          </div>
-          <div>
-            <dt>Read-only</dt>
-            <dd>Remote data stays in a separate bare cache.</dd>
-          </div>
-          <div>
-            <dt>Open source</dt>
-            <dd>The source, tests, and docs live on GitHub.</dd>
-          </div>
-        </dl>
-      </section>
-
-      <section class="closing" aria-labelledby="closing-title">
-        <p>Diffsplain</p>
-        <h2 id="closing-title">Review what changed.<br />Keep why in view.</h2>
-        <a
-          class="text-link text-link--primary"
-          href="https://github.com/itsjling/diffsplain"
-          target="_blank"
-          rel="noreferrer"
-        >
-          Open the repository <span aria-hidden="true">↗</span>
-        </a>
-      </section>
     </main>
 
     <footer class="footer">
       <p>Open-source pull request review.</p>
-      <a href="#top">Back to top <span aria-hidden="true">↑</span></a>
+      <nav aria-label="Footer">
+        <a href="https://github.com/itsjling/diffsplain">GitHub</a>
+        <a href="https://itsjling.github.io/diffsplain/docs/">Docs</a>
+      </nav>
     </footer>
 
     <div class="copy-status" role="status" aria-live="polite"></div>

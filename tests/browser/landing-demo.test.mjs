@@ -142,8 +142,19 @@ test("selects a demo file and shows its matching diff and note", async () => {
       await page.getByRole("table", { name: "Current file diff" }).waitFor();
       await page.getByRole("complementary", { name: "Agent note" }).waitFor();
 
-      await page.getByRole("button", { name: /Choose file/ }).click();
+      const invitation = page.getByRole("button", {
+        name: /Explore the demo/,
+      });
+      await invitation.click();
       const dialog = page.getByRole("dialog", { name: "Jump to a file" });
+      assert.equal(await dialog.isVisible(), false);
+      await page.waitForFunction(() => {
+        const bounds = document.querySelector("[data-demo]").getBoundingClientRect();
+        return bounds.top >= 0 && bounds.bottom <= innerHeight;
+      });
+      assert.equal(await demo.evaluate((element) => element === document.activeElement), true);
+
+      await page.getByRole("button", { name: /Choose file/ }).click();
       await dialog.waitFor();
       const search = page.getByRole("searchbox", {
         name: "Search changed files",
@@ -279,15 +290,18 @@ test("reports copy success and failure without stale status", async () => {
       });
       await page.goto(server.url);
 
-      const copy = page.locator(".copy-button");
+      const copy = page.locator("[data-hero-copy]");
       const status = page.getByRole("status");
       await copy.click();
       await page.getByRole("button", { name: "Copied", exact: true }).waitFor();
       assert.equal(await copy.textContent(), "Copied");
-      assert.equal(await status.textContent(), "Command copied");
+      assert.equal(
+        await status.textContent(),
+        "Command copied. Paste it in your terminal.",
+      );
       assert.equal(
         await page.evaluate(() => window.__copiedCommand),
-        "npx diffsplain@latest react/react --pr 37127",
+        "npx diffsplain",
       );
 
       await page.evaluate(() => {
@@ -295,14 +309,14 @@ test("reports copy success and failure without stale status", async () => {
       });
       await copy.click();
       await page
-        .getByText("Copy failed. Select the command and copy it.", {
+        .getByText("Copy failed. Select the command and copy it manually.", {
           exact: true,
         })
         .waitFor();
-      assert.equal(await copy.textContent(), "Copy");
+      assert.equal(await copy.textContent(), "Copy command");
       assert.equal(
         await status.textContent(),
-        "Copy failed. Select the command and copy it.",
+        "Copy failed. Select the command and copy it manually.",
       );
 
       await page.waitForTimeout(2_300);
@@ -311,6 +325,48 @@ test("reports copy success and failure without stale status", async () => {
         await status.evaluate((element) => element.matches(".is-visible")),
         false,
       );
+    },
+  );
+});
+
+test("starts with a concise mobile proof and expands the full demo", async () => {
+  await runLandingJourney(
+    "landing mobile proof disclosure",
+    {
+      hasTouch: true,
+      isMobile: true,
+      viewport: { width: 390, height: 844 },
+    },
+    async (page) => {
+      await page.goto(server.url);
+      const demo = page.locator("[data-demo]");
+      const toggle = page.locator("[data-demo-mobile-toggle]");
+      const noteSection = page.locator(".demo-note-section").first();
+      const diffFooter = page.locator(".demo-diff-footer");
+
+      assert.equal(await toggle.getAttribute("aria-expanded"), "false");
+      assert.equal(await noteSection.isVisible(), false);
+      assert.equal(await diffFooter.isVisible(), false);
+      assert.ok((await demo.boundingBox()).height < 600);
+      assert.equal(await page.getByText("Illustrative PR", { exact: true }).count(), 0);
+      const firstChange = demo.locator(".demo-diff-row--add, .demo-diff-row--delete").first();
+      const changeBox = await firstChange.boundingBox();
+      const viewportBox = await demo.locator(".demo-diff-scroll").boundingBox();
+      assert.ok(changeBox.y >= viewportBox.y && changeBox.y + changeBox.height <= viewportBox.y + viewportBox.height);
+      assert.equal(await demo.locator(".demo-diff-row--meta").first().isVisible(), false);
+
+      await toggle.click();
+      assert.equal(await toggle.getAttribute("aria-expanded"), "true");
+      assert.match(await toggle.textContent(), /Show concise demo/);
+      assert.equal(await noteSection.isVisible(), true);
+      assert.equal(await diffFooter.isVisible(), true);
+      assert.equal(await demo.locator(".demo-diff-row--meta").first().isVisible(), true);
+      await demo.locator(".demo-diff-scroll").evaluate((element) => { element.scrollTop = 200; });
+
+      await toggle.click();
+      assert.equal(await demo.locator(".demo-diff-scroll").evaluate((element) => element.scrollTop), 0);
+      assert.equal(await toggle.getAttribute("aria-expanded"), "false");
+      assert.equal(await noteSection.isVisible(), false);
     },
   );
 });
@@ -464,6 +520,7 @@ test("keeps click focus and arrow-key scrolling inside scroll regions", async ()
     },
     async (page) => {
       await page.goto(server.url);
+      await page.locator("[data-demo-mobile-toggle]").click();
       const diff = page.getByRole("region", {
         name: "Scrollable unified diff",
       });
@@ -502,6 +559,91 @@ test("keeps click focus and arrow-key scrolling inside scroll regions", async ()
         await page.locator("[data-demo-path]").textContent(),
         path,
       );
+    },
+  );
+});
+
+
+test("shows a full-width demo below the quick start", async () => {
+  await runLandingJourney(
+    "landing single-column layout",
+    { viewport: { width: 1280, height: 900 } },
+    async (page) => {
+      await page.goto(server.url);
+      for (const width of [768, 1280, 1440, 1920]) {
+        await page.setViewportSize({ width, height: 900 });
+        const layout = await page.evaluate(() => {
+          const copy = document.querySelector(".hero__copy").getBoundingClientRect();
+          const demo = document.querySelector(".hero__demo-stage").getBoundingClientRect();
+          return { gap: demo.top - copy.bottom, widthDifference: demo.width - copy.width };
+        });
+        assert.ok(layout.gap >= 32, `Expected vertical separation at ${width}px`);
+        assert.ok(Math.abs(layout.widthDifference) < 1, `Expected full-width demo at ${width}px`);
+      }
+    },
+  );
+});
+
+
+test("copies each OSS example and each alternative command", async () => {
+  await runLandingJourney("landing command choices", { viewport: { width: 390, height: 844 } }, async (page) => {
+    await page.addInitScript(() => {
+      Object.defineProperty(navigator, "clipboard", {
+        configurable: true,
+        value: { writeText: async (value) => { window.__copiedCommand = value; } },
+      });
+    });
+    await page.goto(server.url);
+    const choices = page.getByRole("group", { name: "Command examples" });
+    for (const [repo, pr] of [["react/react", 36094], ["microsoft/vscode", 334672], ["vitejs/vite", 23387]]) {
+      const command = `npx diffsplain ${repo} --pr ${pr}`;
+      const choice = choices.locator(`[data-command-choice="${command}"]`);
+      await choice.click();
+      assert.equal(await choice.getAttribute("aria-pressed"), "true");
+      assert.equal(await choices.locator('[aria-pressed="true"]').count(), 1);
+      assert.equal(await page.locator("[data-hero-command]").textContent(), command);
+      await page.locator("[data-hero-copy]").click();
+      assert.equal(await page.evaluate(() => window.__copiedCommand), command);
+    }
+    await choices.getByRole("button", { name: "Your repo" }).click();
+    const examples = page.locator(".command-example");
+    assert.equal(await examples.count(), 3);
+    for (let i = 0; i < 3; i += 1) {
+      const example = examples.nth(i);
+      const command = await example.locator("code").textContent();
+      await example.getByRole("button").click();
+      assert.equal(await page.evaluate(() => window.__copiedCommand), command);
+    }
+    assert.equal(await page.locator(".run__intro > a").getAttribute("href"), "https://itsjling.github.io/diffsplain/docs/cli/");
+  });
+});
+
+
+test("lets wheel scrolling leave either demo pane at its edge", async () => {
+  await runLandingJourney(
+    "landing scroll chaining",
+    { viewport: { width: 1280, height: 800 } },
+    async (page) => {
+      await page.emulateMedia({ reducedMotion: "reduce" });
+      for (const selector of [".demo-diff-scroll", ".demo-summary-scroll"]) {
+        for (const direction of [1, -1]) {
+          await page.goto(server.url);
+          await page.evaluate(({ selector, direction }) => {
+            const demo = document.querySelector("[data-demo]");
+            window.scrollTo({ top: scrollY + demo.getBoundingClientRect().top - 40, behavior: "instant" });
+            const pane = document.querySelector(selector);
+            pane.scrollTop = direction > 0 ? pane.scrollHeight : 0;
+          }, { selector, direction });
+          const pane = page.locator(selector);
+          await pane.hover();
+          const before = await page.evaluate(() => scrollY);
+          await page.mouse.wheel(0, direction * 300);
+          // A fractional scroll boundary can consume the first wheel event.
+          await page.waitForTimeout(150);
+          await page.mouse.wheel(0, direction * 300);
+          await page.waitForFunction(({ before, direction }) => (scrollY - before) * direction > 30, { before, direction });
+        }
+      }
     },
   );
 });
