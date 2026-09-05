@@ -150,23 +150,16 @@ FORM: Quiet corner, grounded structure 5, staged as a product announcement; seed
             <button type="button" data-command-choice="npx diffsplain" aria-pressed="true">Your repo</button>
             <span class="command-choices__label">Or an open-source repo:</span>
             <span class="command-choices__repos">
-            <button type="button" data-command-choice="npx diffsplain react/react --pr 36094" data-url="https://github.com/react/react/pull/36094" aria-pressed="false">React</button>
-            <button type="button" data-command-choice="npx diffsplain microsoft/vscode --pr 334672" data-url="https://github.com/microsoft/vscode/pull/334672" aria-pressed="false">VS Code</button>
-            <button type="button" data-command-choice="npx diffsplain vitejs/vite --pr 23387" data-url="https://github.com/vitejs/vite/pull/23387" aria-pressed="false">Vite</button>
+            <button type="button" data-command-choice="npx diffsplain react/react --pr 36094" aria-pressed="false">React</button>
+            <button type="button" data-command-choice="npx diffsplain microsoft/vscode --pr 334672" aria-pressed="false">VS Code</button>
+            <button type="button" data-command-choice="npx diffsplain vitejs/vite --pr 23387" aria-pressed="false">Vite</button>
             </span>
           </div>
 
-          <p class="hero__setup"><span data-command-note>Run in your repo to compare with its default branch.</span> <a data-command-source hidden>View PR ↗</a></p>
-          <div class="hero__actions">
-            <a class="text-link text-link--primary" href="#run">
-              Requirements <span aria-hidden="true">↓</span>
-            </a>
-          </div>
         </div>
 
         <div class="hero__demo-stage">
           <div class="demo-intro">
-          <span class="demo-example-label">Illustrative PR</span>
           <button class="demo-invitation" type="button" data-demo-invitation>
             Explore the demo
             <span aria-hidden="true">↓</span>
@@ -349,36 +342,8 @@ FORM: Quiet corner, grounded structure 5, staged as a product announcement; seed
         <div class="run__intro">
           <h2 id="run-title">Run locally</h2>
           <p>
-            Diffsplain reads the selected Git data and opens a local review
-            page. It does not switch branches or change your target checkout.
-          </p>
-        </div>
-
-        <div class="run__commands">
-          <div class="command-example">
-            <h3>Review a remote PR</h3>
-            <div class="command-line">
-              <code>npx diffsplain --repo owner/repo --pr &lt;integer&gt;</code>
-              <button class="copy-button" type="button" data-copy="npx diffsplain --repo owner/repo --pr &lt;integer&gt;" aria-label="Copy command: review a remote pr">Copy command</button>
-            </div>
-          </div>
-          <div class="command-example">
-            <h3>Choose an agent and model</h3>
-            <div class="command-line">
-              <code>npx diffsplain --agent claude --model &lt;model&gt;</code>
-              <button class="copy-button" type="button" data-copy="npx diffsplain --agent claude --model &lt;model&gt;" aria-label="Copy command: choose an agent and model">Copy command</button>
-            </div>
-          </div>
-          <div class="command-example">
-            <h3>Review uncommitted changes</h3>
-            <div class="command-line">
-              <code>npx diffsplain --worktree</code>
-              <button class="copy-button" type="button" data-copy="npx diffsplain --worktree" aria-label="Copy command: review uncommitted changes">Copy command</button>
-            </div>
-          </div>
-          <p>
-            Requires Node.js 22.13+ and your signed-in GitHub and coding-agent
-            CLIs. Replace placeholders before running.
+            Bring the same file-by-file view to your next PR or local changes.
+            Your checkout stays as it is.
           </p>
           <a
             class="text-link"
@@ -386,8 +351,32 @@ FORM: Quiet corner, grounded structure 5, staged as a product announcement; seed
             target="_blank"
             rel="noreferrer"
           >
-            Read the full guide <span aria-hidden="true">↗</span>
+            See all command options <span aria-hidden="true">↗</span>
           </a>
+        </div>
+
+        <div class="run__commands">
+          <div class="command-example">
+            <h3>Review a GitHub PR</h3>
+            <div class="command-line">
+              <code>npx diffsplain --repo owner/repo --pr &lt;integer&gt;</code>
+              <button class="copy-button" type="button" data-copy="npx diffsplain --repo owner/repo --pr &lt;integer&gt;" aria-label="Copy command: review a GitHub PR">Copy command</button>
+            </div>
+          </div>
+          <div class="command-example">
+            <h3>Choose your agent and model</h3>
+            <div class="command-line">
+              <code>npx diffsplain --agent claude --model &lt;model&gt;</code>
+              <button class="copy-button" type="button" data-copy="npx diffsplain --agent claude --model &lt;model&gt;" aria-label="Copy command: choose your agent and model">Copy command</button>
+            </div>
+          </div>
+          <div class="command-example">
+            <h3>Compare a branch with the default branch</h3>
+            <div class="command-line">
+              <code>npx diffsplain --branch &lt;branch&gt;</code>
+              <button class="copy-button" type="button" data-copy="npx diffsplain --branch &lt;branch&gt;" aria-label="Copy command: compare a branch with the default branch">Copy command</button>
+            </div>
+          </div>
         </div>
       </section>
 

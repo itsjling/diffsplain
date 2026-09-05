@@ -56,13 +56,6 @@ for (const choice of commandChoices) {
     }
     document.querySelector("[data-hero-command]").textContent = command;
     document.querySelector("[data-hero-copy]").dataset.copy = command;
-    document.querySelector("[data-command-note]").textContent = choice.dataset.url
-      ? "Run from any directory."
-      : "Run in your repo to compare with its default branch.";
-    const source = document.querySelector("[data-command-source]");
-    source.hidden = !choice.dataset.url;
-    if (choice.dataset.url) source.href = choice.dataset.url;
-    else source.removeAttribute("href");
     clearTimeout(statusTimer);
     resetCopyButtons();
     copyStatus.classList.remove("is-visible");
@@ -356,9 +349,15 @@ if (demo) {
   elements.pickerTrigger.addEventListener("click", () =>
     openPicker(elements.pickerTrigger),
   );
-  elements.invitation.addEventListener("click", () =>
-    openPicker(elements.invitation),
-  );
+  elements.invitation.addEventListener("click", () => {
+    demo.focus({ preventScroll: true });
+    demo.scrollIntoView({
+      behavior: window.matchMedia("(prefers-reduced-motion: reduce)").matches
+        ? "instant"
+        : "smooth",
+      block: "center",
+    });
+  });
   elements.pickerClose.addEventListener("click", closePicker);
   elements.pickerSearch.addEventListener("input", (event) =>
     renderPicker(event.target.value),

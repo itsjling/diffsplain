@@ -147,14 +147,12 @@ test("selects a demo file and shows its matching diff and note", async () => {
       });
       await invitation.click();
       const dialog = page.getByRole("dialog", { name: "Jump to a file" });
-      await dialog.waitFor();
-      await page
-        .getByRole("button", { name: "Close file picker" })
-        .click();
-      assert.equal(
-        await invitation.evaluate((element) => element === document.activeElement),
-        true,
-      );
+      assert.equal(await dialog.isVisible(), false);
+      await page.waitForFunction(() => {
+        const bounds = document.querySelector("[data-demo]").getBoundingClientRect();
+        return bounds.top >= 0 && bounds.bottom <= innerHeight;
+      });
+      assert.equal(await demo.evaluate((element) => element === document.activeElement), true);
 
       await page.getByRole("button", { name: /Choose file/ }).click();
       await dialog.waitFor();
@@ -350,7 +348,7 @@ test("starts with a concise mobile proof and expands the full demo", async () =>
       assert.equal(await noteSection.isVisible(), false);
       assert.equal(await diffFooter.isVisible(), false);
       assert.ok((await demo.boundingBox()).height < 600);
-      assert.equal(await page.getByText("Illustrative PR", { exact: true }).isVisible(), true);
+      assert.equal(await page.getByText("Illustrative PR", { exact: true }).count(), 0);
       const firstChange = demo.locator(".demo-diff-row--add, .demo-diff-row--delete").first();
       const changeBox = await firstChange.boundingBox();
       const viewportBox = await demo.locator(".demo-diff-scroll").boundingBox();
@@ -604,13 +602,10 @@ test("copies each OSS example and each alternative command", async () => {
       assert.equal(await choice.getAttribute("aria-pressed"), "true");
       assert.equal(await choices.locator('[aria-pressed="true"]').count(), 1);
       assert.equal(await page.locator("[data-hero-command]").textContent(), command);
-      assert.equal(await page.locator("[data-command-source]").getAttribute("href"), `https://github.com/${repo}/pull/${pr}`);
       await page.locator("[data-hero-copy]").click();
       assert.equal(await page.evaluate(() => window.__copiedCommand), command);
     }
     await choices.getByRole("button", { name: "Your repo" }).click();
-    assert.equal(await page.locator("[data-command-source]").isVisible(), false);
-    assert.match(await page.locator("[data-command-note]").textContent(), /compare with its default branch/);
     const examples = page.locator(".command-example");
     assert.equal(await examples.count(), 3);
     for (let i = 0; i < 3; i += 1) {
@@ -619,6 +614,36 @@ test("copies each OSS example and each alternative command", async () => {
       await example.getByRole("button").click();
       assert.equal(await page.evaluate(() => window.__copiedCommand), command);
     }
-    assert.equal(await page.locator(".run__commands > a").getAttribute("href"), "https://itsjling.github.io/diffsplain/docs/cli/");
+    assert.equal(await page.locator(".run__intro > a").getAttribute("href"), "https://itsjling.github.io/diffsplain/docs/cli/");
   });
+});
+
+
+test("lets wheel scrolling leave either demo pane at its edge", async () => {
+  await runLandingJourney(
+    "landing scroll chaining",
+    { viewport: { width: 1280, height: 800 } },
+    async (page) => {
+      await page.emulateMedia({ reducedMotion: "reduce" });
+      for (const selector of [".demo-diff-scroll", ".demo-summary-scroll"]) {
+        for (const direction of [1, -1]) {
+          await page.goto(server.url);
+          await page.evaluate(({ selector, direction }) => {
+            const demo = document.querySelector("[data-demo]");
+            window.scrollTo({ top: scrollY + demo.getBoundingClientRect().top - 40, behavior: "instant" });
+            const pane = document.querySelector(selector);
+            pane.scrollTop = direction > 0 ? pane.scrollHeight : 0;
+          }, { selector, direction });
+          const pane = page.locator(selector);
+          await pane.hover();
+          const before = await page.evaluate(() => scrollY);
+          await page.mouse.wheel(0, direction * 300);
+          // A fractional scroll boundary can consume the first wheel event.
+          await page.waitForTimeout(150);
+          await page.mouse.wheel(0, direction * 300);
+          await page.waitForFunction(({ before, direction }) => (scrollY - before) * direction > 30, { before, direction });
+        }
+      }
+    },
+  );
 });

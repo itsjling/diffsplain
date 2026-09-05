@@ -121,7 +121,7 @@ test("makes the landing-page demo interactive", async () => {
   assert.match(html, /<code data-hero-command>npx diffsplain<\/code>/);
   assert.doesNotMatch(html, /--pr 198|#run-it/);
   assert.match(html, /https:\/\/itsjling.github.io\/diffsplain\/docs\/cli\//);
-  assert.match(html, /does not switch branches or change your target checkout/);
+  assert.match(html, /Your checkout stays as it is/);
   assert.match(script, /import \{ todoDemoFiles \} from "\.\/todo-demo\.js"/);
   assert.match(script, /ArrowLeft/);
   assert.match(script, /ArrowRight/);
@@ -130,10 +130,7 @@ test("makes the landing-page demo interactive", async () => {
     styles,
     /\.hero__copy\s*\{[^}]*pointer-events:\s*none/s,
   );
-  assert.match(
-    styles,
-    /\.hero__actions\s*\{[^}]*pointer-events:\s*auto/s,
-  );
+  assert.doesNotMatch(html, /data-command-note|class="hero__actions"/);
 });
 
 test("adds PostHog analytics to the public site and docs", async () => {

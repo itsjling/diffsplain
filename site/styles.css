@@ -161,7 +161,7 @@ code {
   grid-template-columns: minmax(0, 1fr);
   gap: 48px;
   overflow: hidden;
-  padding: clamp(136px, 17vh, 176px) var(--page-pad) 0;
+  padding: clamp(136px, 17vh, 176px) var(--page-pad) 64px;
   position: relative;
 }
 
@@ -188,12 +188,6 @@ code {
   font-weight: 390;
   line-height: 1.45;
   margin: 0;
-}
-
-.hero__actions {
-  display: flex;
-  margin-top: 20px;
-  pointer-events: auto;
 }
 
 .text-link {
@@ -235,32 +229,25 @@ code {
 }
 
 .demo-intro {
-  align-items: center;
   display: flex;
-  justify-content: space-between;
-  gap: 16px;
-  min-height: 44px;
-}
-
-.demo-example-label {
-  color: var(--muted);
-  font-size: 13px;
-  white-space: nowrap;
+  margin-bottom: 12px;
 }
 
 .demo-invitation {
   align-items: center;
   background: transparent;
   border: 0;
-  color: var(--muted-strong);
+  color: var(--blue-dark);
   cursor: pointer;
-  display: flex;
-  font-size: 13px;
-  gap: 9px;
-  justify-content: flex-end;
-  margin-left: auto;
-  min-height: 42px;
-  padding: 0 0 14px;
+  display: inline-flex;
+  font-size: 16px;
+  gap: 12px;
+  min-height: 44px;
+  padding: 0;
+  text-align: left;
+  text-decoration: underline;
+  text-decoration-color: rgb(38 74 90 / 42%);
+  text-underline-offset: 6px;
 }
 
 .demo-invitation span:last-child {
@@ -275,9 +262,10 @@ code {
   animation: reader-settle 720ms cubic-bezier(0.22, 1, 0.36, 1) both;
   background: var(--paper);
   border: 1px solid rgb(32 35 31 / 14%);
-  border-radius: 15px 15px 0 0;
+  border-radius: 15px 15px 18px 18px;
   box-shadow: var(--shadow);
-  height: clamp(580px, 68vh, 740px);
+  height: 85vh;
+  height: 85dvh;
   overflow: hidden;
   position: relative;
   width: 100%;
@@ -290,11 +278,11 @@ code {
 
 @keyframes reader-settle {
   from {
-    clip-path: inset(7% 0 0);
+    opacity: 0;
     transform: translateY(22px);
   }
   to {
-    clip-path: inset(0);
+    opacity: 1;
     transform: translateY(0);
   }
 }
@@ -490,7 +478,6 @@ code {
 .demo-diff-scroll {
   min-height: 0;
   overflow: auto;
-  overscroll-behavior: contain;
   scrollbar-color: #c9c1b3 transparent;
   scrollbar-width: thin;
 }
@@ -934,36 +921,64 @@ code {
   overflow-wrap: anywhere;
 }
 
-.hero__copy > .hero__setup {
-  color: var(--muted-strong);
-  font-size: 13px;
-  line-height: 1.6;
-  margin-top: 16px;
-  max-width: 65ch;
-  pointer-events: auto;
-}
-
 .run {
+  background: var(--ink);
+  color: var(--paper);
   display: grid;
-  gap: 28px;
-  grid-template-columns: minmax(0, 760px);
-  padding: 80px var(--page-pad);
+  gap: 80px;
+  grid-template-columns: minmax(0, 0.7fr) minmax(0, 1.3fr);
+  padding: 96px var(--page-pad);
 }
 
 .run h2 {
-  font-size: clamp(30px, 3vw, 40px);
+  font-size: clamp(48px, 5.4vw, 78px);
   font-weight: 540;
-  letter-spacing: -0.03em;
-  line-height: 1.1;
-  margin: 0 0 20px;
+  letter-spacing: -0.04em;
+  line-height: 0.98;
+  margin: 0 0 32px;
+  max-width: 7ch;
 }
 
 .run__intro > p {
-  color: var(--muted);
-  font-size: 15px;
+  color: var(--paper-deep);
+  font-size: 16px;
   line-height: 1.65;
   margin: 0;
-  max-width: 65ch;
+  max-width: 34ch;
+}
+
+.run .command-example {
+  border-top: 1px solid var(--line-dark);
+  padding-top: 24px;
+}
+
+.run .command-line {
+  border: 0;
+  gap: 24px;
+  min-height: 72px;
+}
+
+.run .copy-button {
+  background: var(--paper);
+  border-radius: 4px;
+  color: var(--ink);
+  font-weight: 600;
+  padding: 12px 16px;
+  text-decoration: none;
+}
+
+.run .copy-button:hover {
+  background: var(--paper-deep);
+}
+
+.run .copy-button:focus-visible,
+.run .text-link:focus-visible {
+  outline-color: var(--paper);
+}
+
+.run .text-link {
+  color: var(--paper);
+  text-decoration-color: var(--muted);
 }
 
 .command-line {
@@ -1013,20 +1028,8 @@ code {
   transform: translateY(1px);
 }
 
-.run__commands > p {
-  color: var(--muted);
-  font-size: 14px;
-  line-height: 1.6;
-  margin: 20px 0;
-  max-width: 65ch;
-}
-
-.run__commands > p code {
-  color: var(--ink);
-}
-
-.run__commands > .text-link {
-  margin-top: 4px;
+.run__intro > .text-link {
+  margin-top: 32px;
 }
 
 .footer {
@@ -1078,14 +1081,21 @@ code {
   transform: translate(-50%, 0);
 }
 
+@media (max-width: 1000px) {
+  .run {
+    gap: 48px;
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .run h2 {
+    max-width: none;
+  }
+}
+
 @media (max-width: 1200px) {
   .hero {
     grid-template-columns: minmax(0, 1fr);
     gap: 40px;
-  }
-
-  .product-demo {
-    height: 580px;
   }
 
   .hero__command {
@@ -1114,6 +1124,7 @@ code {
 
   .hero {
     padding-top: 112px;
+    padding-bottom: 40px;
     gap: 32px;
   }
 
@@ -1129,10 +1140,6 @@ code {
   .hero__copy > p {
     font-size: 18px;
     margin-top: 0;
-  }
-
-  .hero__actions {
-    margin-top: 16px;
   }
 
   .hero__command {
@@ -1151,10 +1158,6 @@ code {
 
   .demo-intro {
     padding: 0 var(--page-pad);
-  }
-
-  .demo-invitation {
-    padding-bottom: 0;
   }
 
   .product-demo:not(.is-mobile-expanded) .demo-diff-row--preview-skip {
@@ -1325,8 +1328,20 @@ code {
   }
 
   .run {
-    padding-top: 48px;
-    padding-bottom: 48px;
+    gap: 40px;
+    grid-template-columns: minmax(0, 1fr);
+    padding-top: 64px;
+    padding-bottom: 64px;
+  }
+
+  .run h2 {
+    max-width: none;
+  }
+
+  .run .command-line {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 16px;
   }
 
   .command-line {
