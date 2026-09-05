@@ -11,8 +11,9 @@ Run from a Git checkout:
 npx diffsplain
 ```
 
-The command opens a local page and compares the checkout with its default
-branch. It starts at port `2299` and uses the next free port when needed. You
+The command opens a local page showing staged, unstaged, and untracked changes
+against `HEAD`, the same as `--worktree`. It starts at port `2299` and uses the
+next free port when needed. You
 need Node.js 22.13 or newer and a signed-in Codex, Claude, Copilot, Cursor, or
 OpenCode CLI. Set a default with `diffsplain config agent NAME`, or choose one
 run with `--agent NAME`. If neither is set, an interactive terminal lists

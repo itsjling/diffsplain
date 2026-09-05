@@ -21,8 +21,7 @@ See the [CLI guide](/cli/) for all review commands.
 
 | Target | Comparison | Workspace changes | Network and cache | Refresh |
 | --- | --- | --- | --- | --- |
-| Current checkout (no target flag) | Default-branch merge base through the current checkout | Local commits, staged, unstaged, and untracked files | May query the remote to find its default branch; does not fetch | Local state every two seconds |
-| `--worktree` | `HEAD` through the current worktree | Staged, unstaged, and untracked files; excludes prior commits | No Git network | Local state every two seconds |
+| Current checkout (no target flag), or `--worktree` | `HEAD` through the current worktree | Staged, unstaged, and untracked files; excludes prior commits | No Git network | Local state every two seconds |
 | `--base REF` | The resolved base commit through the current worktree | Later commits, staged, unstaged, and untracked files | No Git network | Local state every two seconds |
 | `--base REF --head REF` | The two resolved commit trees | None | No Git network | Moved refs every two seconds |
 | `--branch NAME` | Remote base/head merge base through the remote branch head | None | Fetches into the Diffsplain bare cache | Remote data every 30 seconds |
