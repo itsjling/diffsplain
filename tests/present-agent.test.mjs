@@ -390,7 +390,7 @@ test("starts the note agent after the watch snapshot and stops cleanly", async (
   }
 });
 
-test("warns once and passes snapshot-only access to a mismatched range", async () => {
+test("passes snapshot-only access to a mismatched range without warning", async () => {
   const root = await mkdtemp(join(tmpdir(), "diffsplain-present-access-"));
   const repo = join(root, "repo");
   const bin = join(root, "bin");
@@ -481,8 +481,7 @@ test("warns once and passes snapshot-only access to a mismatched range", async (
       return value.notes?.complete ? value : undefined;
     });
 
-    const warning = "Warning: This target does not map to the live checkout. Agent notes will use the supplied snapshot only.";
-    assert.equal(outputText().split(warning).length - 1, 1);
+    assert.doesNotMatch(outputText(), /does not map to the live checkout/);
     assert.equal(snapshot.notes.accessMode, "snapshot-only");
     const agentCalls = (await readFile(calls, "utf8"))
       .trim()

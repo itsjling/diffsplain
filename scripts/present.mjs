@@ -273,15 +273,6 @@ if (agentEnabled) {
       performance.now() - selectionStarted,
     );
     agentArgs.push('--agent', selectedAgent);
-    if (
-      accessMode.mode === 'snapshot-only' &&
-      accessMode.reason === 'target-mismatch'
-    ) {
-      console.log(
-        'Warning: This target does not map to the live checkout. Agent notes will use the supplied snapshot only.',
-      );
-      agentArgs.push('--access-warning-emitted');
-    }
     const readOnlyWarning = agentReadOnlyWarning(selectedAgent, accessMode);
     if (readOnlyWarning) {
       console.log(readOnlyWarning);
