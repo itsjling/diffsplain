@@ -557,20 +557,21 @@ test("keeps click focus and arrow-key scrolling inside scroll regions", async ()
 });
 
 
-test("keeps the quick start clear of the demo across desktop widths", async () => {
+test("shows a full-width demo below the quick start", async () => {
   await runLandingJourney(
-    "landing layout separation",
+    "landing single-column layout",
     { viewport: { width: 1280, height: 900 } },
     async (page) => {
       await page.goto(server.url);
-      for (const width of [1280, 1440, 1920]) {
+      for (const width of [768, 1280, 1440, 1920]) {
         await page.setViewportSize({ width, height: 900 });
-        const gap = await page.evaluate(() => {
-          const command = document.querySelector(".hero__command").getBoundingClientRect();
+        const layout = await page.evaluate(() => {
+          const copy = document.querySelector(".hero__copy").getBoundingClientRect();
           const demo = document.querySelector(".hero__demo-stage").getBoundingClientRect();
-          return demo.left - command.right;
+          return { gap: demo.top - copy.bottom, widthDifference: demo.width - copy.width };
         });
-        assert.ok(gap >= 32, `Expected a clear gutter at ${width}px; got ${gap}px`);
+        assert.ok(layout.gap >= 32, `Expected vertical separation at ${width}px`);
+        assert.ok(Math.abs(layout.widthDifference) < 1, `Expected full-width demo at ${width}px`);
       }
     },
   );

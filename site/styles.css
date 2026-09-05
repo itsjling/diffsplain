@@ -159,7 +159,7 @@ code {
 .hero {
   border-bottom: 1px solid var(--line);
   display: grid;
-  grid-template-columns: minmax(320px, 0.8fr) minmax(0, 1.4fr);
+  grid-template-columns: minmax(0, 1fr);
   gap: 48px;
   overflow: hidden;
   padding: clamp(136px, 17vh, 176px) var(--page-pad) 0;
@@ -264,7 +264,7 @@ code {
   border: 1px solid rgb(32 35 31 / 14%);
   border-radius: 15px 15px 0 0;
   box-shadow: var(--shadow);
-  height: clamp(470px, 54vh, 610px);
+  height: clamp(580px, 68vh, 740px);
   overflow: hidden;
   position: relative;
   width: 100%;
@@ -1202,13 +1202,6 @@ code {
   .hero {
     grid-template-columns: minmax(0, 1fr);
     gap: 40px;
-  }
-
-  .hero__demo-stage {
-    margin-left: 12%;
-    position: relative;
-    right: auto;
-    width: 88%;
   }
 
   .product-demo {
