@@ -7,9 +7,8 @@ sidebar:
 
 ## Current checkout
 
-With no target, Diffsplain compares the current checkout with its default
-branch. The result includes local commits plus staged, unstaged, and untracked
-work.
+With no target, Diffsplain shows staged, unstaged, and untracked changes
+against `HEAD`, the same as `--worktree`. Already committed changes are excluded.
 
 ```sh
 npx diffsplain
@@ -62,7 +61,8 @@ npx diffsplain \
 
 ## Worktree changes
 
-Use `--worktree` to show only tracked and untracked changes against `HEAD`:
+Use `--worktree` explicitly to select the default review of tracked and
+untracked changes against `HEAD`:
 
 ```sh
 npx diffsplain --worktree

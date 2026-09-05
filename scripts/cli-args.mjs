@@ -76,7 +76,7 @@ const hostOption = cliOptions['--host'];
 
 export const helpText = `Usage: diffsplain [REPO] [options]
 
-Show the current checkout against its default branch:
+Show worktree changes against HEAD (default):
   diffsplain
 
 Commands:
@@ -390,7 +390,7 @@ export function parseCliArgs(
   if (branch) commonArgs.push('--branch', branch);
   if (worktree) commonArgs.push('--worktree');
   if (!pullRequest && !branch && !worktree && !base && !head) {
-    commonArgs.push('--checkout');
+    commonArgs.push('--worktree');
   }
   if (base) commonArgs.push('--base', base);
   if (head) commonArgs.push('--head', head);

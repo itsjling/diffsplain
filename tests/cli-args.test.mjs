@@ -29,16 +29,32 @@ test('leaves agent selection open when no agent is passed', () => {
   assert.equal(parsed.portWasPassed, false);
   assert.equal(parsed.host, 'localhost');
   assert.equal(parsed.browserEnabled, true);
-  assert.deepEqual(parsed.feedArgs, ['--repo', cwd, '--checkout']);
+  assert.deepEqual(parsed.feedArgs, ['--repo', cwd, '--worktree']);
   assert.deepEqual(parsed.agentArgs, [
     '--repo',
     cwd,
-    '--checkout',
+    '--worktree',
     '--batch-size',
     '12',
     '--jobs',
     '3',
   ]);
+});
+
+test('defaults to the same review as --worktree when no target is supplied', () => {
+  for (const args of [
+    [],
+    ['--no-agent', '--no-browser'],
+    ['--agent', 'claude'],
+    ['--repo', '/another/repo'],
+  ]) {
+    const context = { callerDirectory: cwd, pathExists: missing };
+    assert.deepEqual(
+      parseCliArgs(args, context),
+      parseCliArgs([...args, '--worktree'], context),
+      args.join(' '),
+    );
+  }
 });
 
 test('passes no-checkout-access only to agent notes', () => {
@@ -74,6 +90,8 @@ test('keeps repeated exclusion rules in encounter order for both builders', () =
 
 test('forwards flag-shaped exclusion patterns as values for both builders', () => {
   const parsed = parseCliArgs([
+    '--base',
+    'main',
     '--exclude',
     'private/**',
     '--exclude=--help',
