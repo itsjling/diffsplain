@@ -129,34 +129,31 @@ FORM: Quiet corner, grounded structure 5, staged as a product announcement; seed
             Each file’s diff and explanation, side by side.
           </p>
 
-          <label class="command-choice">
-            Try a PR
-            <select data-command-choice>
-              <option value="npx diffsplain --pr &lt;integer&gt;">Your repo</option>
-              <option value="npx diffsplain react/react --pr 37524" data-url="https://github.com/react/react/pull/37524" data-note="3 files · merged Sep 4, 2026">React — 3 files</option>
-              <option value="npx diffsplain microsoft/vscode --pr 334672" data-url="https://github.com/microsoft/vscode/pull/334672" data-note="2 files · merged Sep 5, 2026">VS Code — 2 files</option>
-              <option value="npx diffsplain vitejs/vite --pr 23387" data-url="https://github.com/vitejs/vite/pull/23387" data-note="5 files · merged Sep 4, 2026">Vite — 5 files</option>
-            </select>
-          </label>
-
           <div
             class="hero__command"
             role="group"
             aria-label="Quick start command"
           >
             <span aria-hidden="true">$</span>
-            <code data-hero-command>npx diffsplain --pr &lt;integer&gt;</code>
+            <code data-hero-command>npx diffsplain</code>
             <button
               class="copy-button copy-button--hero"
               type="button"
-              data-copy="npx diffsplain --pr &lt;integer&gt;"
+              data-copy="npx diffsplain"
               data-hero-copy
             >
               Copy command
             </button>
           </div>
 
-          <p class="hero__setup"><span data-command-note>Run in your repo. Replace &lt;integer&gt; with a PR number before running.</span> <a data-command-source hidden>View PR ↗</a></p>
+          <div class="command-choices" role="group" aria-label="Command examples">
+            <button type="button" data-command-choice="npx diffsplain" aria-pressed="true">Your repo</button>
+            <button type="button" data-command-choice="npx diffsplain react/react --pr 37524" data-url="https://github.com/react/react/pull/37524" aria-pressed="false">React</button>
+            <button type="button" data-command-choice="npx diffsplain microsoft/vscode --pr 334672" data-url="https://github.com/microsoft/vscode/pull/334672" aria-pressed="false">VS Code</button>
+            <button type="button" data-command-choice="npx diffsplain vitejs/vite --pr 23387" data-url="https://github.com/vitejs/vite/pull/23387" aria-pressed="false">Vite</button>
+          </div>
+
+          <p class="hero__setup"><span data-command-note>Run in your repo to compare with its default branch.</span> <a data-command-source hidden>View PR ↗</a></p>
           <div class="hero__actions">
             <a class="text-link text-link--primary" href="#run">
               Requirements <span aria-hidden="true">↓</span>

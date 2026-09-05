@@ -47,24 +47,28 @@ for (const copyButton of copyButtons) {
   });
 }
 
-const commandChoice = document.querySelector("[data-command-choice]");
-commandChoice.addEventListener("change", () => {
-  const option = commandChoice.selectedOptions[0];
-  const command = commandChoice.value;
-  document.querySelector("[data-hero-command]").textContent = command;
-  document.querySelector("[data-hero-copy]").dataset.copy = command;
-  document.querySelector("[data-command-note]").textContent = option.dataset.note
-    ? `${option.dataset.note}. Run from any directory.`
-    : "Run in your repo. Replace <integer> with a PR number before running.";
-  const source = document.querySelector("[data-command-source]");
-  source.hidden = !option.dataset.url;
-  if (option.dataset.url) source.href = option.dataset.url;
-  else source.removeAttribute("href");
-  clearTimeout(statusTimer);
-  resetCopyButtons();
-  copyStatus.classList.remove("is-visible");
-  copyStatus.textContent = "";
-});
+const commandChoices = [...document.querySelectorAll("[data-command-choice]")];
+for (const choice of commandChoices) {
+  choice.addEventListener("click", () => {
+    const command = choice.dataset.commandChoice;
+    for (const button of commandChoices) {
+      button.setAttribute("aria-pressed", String(button === choice));
+    }
+    document.querySelector("[data-hero-command]").textContent = command;
+    document.querySelector("[data-hero-copy]").dataset.copy = command;
+    document.querySelector("[data-command-note]").textContent = choice.dataset.url
+      ? "Run from any directory."
+      : "Run in your repo to compare with its default branch.";
+    const source = document.querySelector("[data-command-source]");
+    source.hidden = !choice.dataset.url;
+    if (choice.dataset.url) source.href = choice.dataset.url;
+    else source.removeAttribute("href");
+    clearTimeout(statusTimer);
+    resetCopyButtons();
+    copyStatus.classList.remove("is-visible");
+    copyStatus.textContent = "";
+  });
+}
 
 const demo = document.querySelector("[data-demo]");
 

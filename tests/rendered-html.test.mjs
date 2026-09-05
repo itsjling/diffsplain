@@ -118,7 +118,7 @@ test("makes the landing-page demo interactive", async () => {
   assert.match(html, /data-demo-invitation/);
   assert.match(html, /data-demo-mobile-toggle/);
   assert.match(html, /data-hero-copy/);
-  assert.match(html, /npx diffsplain --pr &lt;integer&gt;/);
+  assert.match(html, /<code data-hero-command>npx diffsplain<\/code>/);
   assert.doesNotMatch(html, /--pr 198|#run-it/);
   assert.match(html, /https:\/\/itsjling.github.io\/diffsplain\/docs\/cli\//);
   assert.match(html, /does not switch branches or change your target checkout/);

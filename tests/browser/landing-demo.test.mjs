@@ -299,11 +299,11 @@ test("reports copy success and failure without stale status", async () => {
       assert.equal(await copy.textContent(), "Copied");
       assert.equal(
         await status.textContent(),
-        "Command copied. Replace placeholders before running.",
+        "Command copied. Paste it in your terminal.",
       );
       assert.equal(
         await page.evaluate(() => window.__copiedCommand),
-        "npx diffsplain --pr <integer>",
+        "npx diffsplain",
       );
 
       await page.evaluate(() => {
@@ -596,18 +596,21 @@ test("copies each OSS example and each alternative command", async () => {
       });
     });
     await page.goto(server.url);
-    const choices = page.getByLabel("Try a PR");
+    const choices = page.getByRole("group", { name: "Command examples" });
     for (const [repo, pr] of [["react/react", 37524], ["microsoft/vscode", 334672], ["vitejs/vite", 23387]]) {
       const command = `npx diffsplain ${repo} --pr ${pr}`;
-      await choices.selectOption(command);
+      const choice = choices.locator(`[data-command-choice="${command}"]`);
+      await choice.click();
+      assert.equal(await choice.getAttribute("aria-pressed"), "true");
+      assert.equal(await choices.locator('[aria-pressed="true"]').count(), 1);
       assert.equal(await page.locator("[data-hero-command]").textContent(), command);
       assert.equal(await page.locator("[data-command-source]").getAttribute("href"), `https://github.com/${repo}/pull/${pr}`);
       await page.locator("[data-hero-copy]").click();
       assert.equal(await page.evaluate(() => window.__copiedCommand), command);
     }
-    await choices.selectOption("npx diffsplain --pr <integer>");
+    await choices.getByRole("button", { name: "Your repo" }).click();
     assert.equal(await page.locator("[data-command-source]").isVisible(), false);
-    assert.match(await page.locator("[data-command-note]").textContent(), /Replace <integer>/);
+    assert.match(await page.locator("[data-command-note]").textContent(), /compare with its default branch/);
     const examples = page.locator(".command-example");
     assert.equal(await examples.count(), 3);
     for (let i = 0; i < 3; i += 1) {
