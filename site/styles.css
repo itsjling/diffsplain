@@ -115,24 +115,10 @@ code {
 }
 
 .wordmark__mark {
-  border: 1px solid var(--ink);
-  display: grid;
-  font: 650 10px/1 "Geist Mono", monospace;
-  grid-template-columns: 1fr 1fr;
-  height: 34px;
-  letter-spacing: -0.04em;
-  width: 34px;
-}
-
-.wordmark__mark span {
-  align-items: center;
-  display: flex;
-  justify-content: center;
-}
-
-.wordmark__mark span:first-child {
-  background: var(--ink);
-  color: var(--paper);
+  display: block;
+  height: 48px;
+  width: 48px;
+  object-fit: contain;
 }
 
 .wordmark__text {
