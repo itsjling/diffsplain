@@ -597,7 +597,7 @@ test("copies each OSS example and each alternative command", async () => {
     });
     await page.goto(server.url);
     const choices = page.getByRole("group", { name: "Command examples" });
-    for (const [repo, pr] of [["react/react", 37524], ["microsoft/vscode", 334672], ["vitejs/vite", 23387]]) {
+    for (const [repo, pr] of [["react/react", 36094], ["microsoft/vscode", 334672], ["vitejs/vite", 23387]]) {
       const command = `npx diffsplain ${repo} --pr ${pr}`;
       const choice = choices.locator(`[data-command-choice="${command}"]`);
       await choice.click();
