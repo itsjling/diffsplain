@@ -135,24 +135,11 @@ a {
 }
 
 .brand-mark {
-  border: 1px solid var(--ink);
-  display: grid;
-  flex: 0 0 38px;
-  font: 700 10px/1 var(--font-geist-mono), monospace;
-  grid-template-columns: 1fr 1fr;
-  height: 38px;
-  letter-spacing: -0.06em;
-}
-
-.brand-mark span {
-  align-items: center;
-  display: flex;
-  justify-content: center;
-}
-
-.brand-mark span:first-child {
-  background: var(--ink);
-  color: var(--paper);
+  display: block;
+  flex: 0 0 52px;
+  height: 52px;
+  width: 52px;
+  object-fit: contain;
 }
 
 .brand-name,
