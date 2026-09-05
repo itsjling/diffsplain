@@ -470,10 +470,7 @@ function fileNavigationStep(event: KeyboardEvent) {
 function BrandBlock() {
   return (
     <div className="brand-block">
-      <div className="brand-mark" aria-hidden="true">
-        <span>D</span>
-        <span>S</span>
-      </div>
+      <img className="brand-mark" src="./logo-256.png" width="52" height="52" alt="" />
       <div>
         <p className="brand-name">Diffsplain</p>
         <p className="brand-tag">Agent-made change notes</p>

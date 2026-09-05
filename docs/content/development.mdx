@@ -174,8 +174,10 @@ corepack pnpm run cloud:check
 `cloud:check` runs the clean-checkout gate and the provider/browser tests.
 Those tests use fake coding providers and a fake browser command. Real Codex,
 Claude, Copilot, Cursor, OpenCode, GitHub, or browser login is optional and is
-needed only for a live integration task. Diffsplain tries Codex, Claude,
-Copilot, Cursor, then OpenCode for notes. Cursor Agent 2026.08.11 or newer uses
+needed only for a live integration task. Without a configured default or
+`--agent`, an interactive terminal lists usable agents in this order: Codex,
+Claude, Copilot, Cursor, then OpenCode. You choose one. Non-interactive runs need a configured default,
+`--agent NAME`, or `--no-agent`. Cursor Agent 2026.08.11 or newer uses
 the signed-in Cursor CLI in the user's home. It still contacts the Cursor
 service. Keep credentials in Codex environment settings, not checked-in rules
 or scripts.

@@ -20,22 +20,25 @@ Diffsplain runs on a PR and pairs each unified diff with agent-written context a
 
 ## Operating Context
 
-Developers run `npx diffsplain` in a Git checkout. With no arguments, it compares the checkout with its default branch. They can also pass a repo path, URL, or `owner/name`, then choose a branch or pull request. Developers move through changed files, search the file list, and expand long patches when needed. The page updates when the diff or agent notes change.
+Developers run `npx diffsplain` in a Git checkout. With no target, it shows staged, unstaged, and untracked changes against `HEAD`. They can also pass a repo path, URL, or `owner/name`, then choose a branch or pull request. Developers move through changed files, search the file list, and expand long patches when needed. The page updates when the diff or agent notes change.
 
 ## Capabilities and Constraints
 
 - Show GitHub pull requests without changing the local checkout.
-- Compare the current checkout with its default branch when no target is passed.
+- Show staged, unstaged, and untracked changes against `HEAD` when no target is passed.
 - Accept local paths, Git URLs, and GitHub `owner/name` repo names.
 - Report local dependency paths, versions, and readiness with `diffsplain doctor`.
-- Try Codex, Claude, Copilot, Cursor, then OpenCode when no agent is chosen.
+- Use the explicit agent or configured default. With neither set, let an
+  interactive user choose from usable agents in this order: Codex, Claude,
+  Copilot, Cursor, then OpenCode. Non-interactive runs need a configured
+  default, `--agent NAME`, or `--no-agent`.
   Use Cursor when version 2026.08.11 or newer is installed. Run the signed-in
   Cursor CLI in the user's home, in non-interactive Ask mode, with `--trust`
   and `--workspace` pointed at the selected repo for local checkout access or
   at Diffsplain's temporary snapshot folder for snapshot-only access.
   Cursor still contacts its service. Once Diffsplain chooses an agent, do not
   switch agents after a failed check or run.
-- Show tracked and untracked worktree changes, exact local ranges, and remote branches as secondary targets.
+- Support worktree changes, a base through the working tree, exact local ranges, and remote branches.
 - Present full or shortened unified diffs, including binary-file metadata.
 - Pair the whole change and each file with agent-written summaries, reasons, details, and risks.
 - Keep local review read-only: the app must not change the target repo.

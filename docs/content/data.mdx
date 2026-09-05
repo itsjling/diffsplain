@@ -69,6 +69,15 @@ screen while the page reconnects.
 
 In watch mode, remote pull requests and branches update every 30 seconds.
 
+## Agent usage
+
+The served snapshot includes `usage.agentNotes`, `usage.reviewChat`, and
+`usage.combined`. Each reports its call count and whether token counts are
+complete, partial, or unavailable. Counts cover provider-reported input,
+output, cache reads, and cache writes for the current review. They do not
+include account-wide history or the past work that produced cached notes.
+See [Agent usage](/agent-notes/#agent-usage).
+
 ## Chat state and refresh
 
 When a review has a selected coding agent, the local server also keeps its
