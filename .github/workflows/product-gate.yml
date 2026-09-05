@@ -8,7 +8,7 @@ permissions:
 
 jobs:
   product-gate:
-    name: Product gate (latest Node LTS)
+    name: Product gate (Node 24.20.0)
     runs-on: ubuntu-latest
     steps:
       - name: Check out repository
@@ -18,8 +18,7 @@ jobs:
       - name: Set up Node
         uses: actions/setup-node@v6
         with:
-          node-version: 'lts/*'
-          check-latest: true
+          node-version: '24.20.0'
           cache: pnpm
           cache-dependency-path: pnpm-lock.yaml
       - name: Install lockfile dependencies
