@@ -126,9 +126,12 @@ Use `http://localhost:2299` in an iOS Simulator. On Android Emulator, use
 Do not expose a real review through a public tunnel: its diff data may contain
 private source code.
 
-The packaged `npx diffsplain` server binds to `localhost`. It is for the
-computer that starts the review, not for direct phone review. That boundary
-keeps the local review local.
+The packaged `npx diffsplain` server binds to `localhost` by default. For a
+phone on the same trusted network, use `--host 0.0.0.0 --no-browser`, then
+replace the host in the printed URL with the computer’s LAN address. Keep the
+port and access token in the URL. Anyone with that token and network access
+can read the review and use its chat, so share it only with trusted reviewers
+and stop the server when done.
 
 For cloud browser checks, use BrowserStack Local or an equivalent private
 tunnel with a non-sensitive fixture. Test current Chrome on Android and Safari

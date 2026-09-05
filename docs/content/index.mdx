@@ -11,11 +11,15 @@ patch on the left and a short coding agent note on the right.
 
 ## Start a review
 
-You need Node.js 22.13 or newer and a signed-in Codex, Claude, Copilot, Cursor,
-or OpenCode CLI. Diffsplain tries Codex, Claude, Copilot, Cursor, then OpenCode
-when you do not choose one. Cursor Agent must be version 2026.08.11 or newer.
-It uses the signed-in Cursor CLI in the user's home. Cursor still contacts its
-service.
+You need Node.js 22.13 or newer and Git. For agent notes, you also need a
+signed-in coding agent CLI. Set a default with `diffsplain config agent NAME`
+or choose one run with `--agent NAME`. With neither set, an interactive
+terminal lists usable agents in this order: Codex, Claude, Copilot, Cursor,
+then OpenCode. You choose one; Diffsplain does not switch agents if it fails.
+In scripts, set a default, pass `--agent NAME`, or use `--no-agent` for a plain review.
+
+Cursor Agent must be version 2026.08.11 or newer. It uses the signed-in Cursor
+CLI in the user's home. Cursor still contacts its service.
 
 ```sh
 npx diffsplain

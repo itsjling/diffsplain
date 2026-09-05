@@ -947,6 +947,10 @@ code {
   max-width: 34ch;
 }
 
+.run__intro > p + p {
+  margin-top: 16px;
+}
+
 .run .command-example {
   border-top: 1px solid var(--line-dark);
   padding-top: 24px;

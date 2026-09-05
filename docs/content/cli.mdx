@@ -137,7 +137,7 @@ temporary review input and must use only that input; it must not run commands
 or read other files.
 
 Pass `--no-checkout-access` to use `snapshot-only` access for any target. This
-option affects agent notes only. It does not change the diff or the page.
+option limits both agent notes and Review chat. It does not change the diff.
 
 ## Exclude files from agent context
 
@@ -192,6 +192,30 @@ The normal check does not send prompts to a provider. `--deep` runs local
 `--help` checks for installed providers after a warning; it does not send a
 provider prompt.
 
+## Saved note cache
+
+Inspect the default note cache, or remove inactive notes:
+
+```sh
+npx diffsplain cache
+npx diffsplain cache status
+npx diffsplain cache prune --age 30
+npx diffsplain cache prune --size 104857600
+npx diffsplain cache clear --yes
+```
+
+`cache` and `cache status` show the cache location, byte count, oldest entry,
+and active targets. `prune --age DAYS` removes notes older than that many days.
+`prune --size BYTES` removes the oldest notes first until the cache fits the
+limit or only active notes remain. Pass one limit at a time; both accept
+non-negative numbers. `clear` requires `--yes`. All cleanup keeps notes under
+an active lease.
+
+These commands manage the default user note cache. They do not remove fetched
+Git objects or custom `--summaries` files outside that cache. `--cache-dir`
+chooses the bare Git cache for reviews, not the note cache. See
+[Agent notes](/agent-notes/#cache-control) for storage details.
+
 ## First run and shutdown
 
 Run the setup check through `npx`, which installs the package if needed:
@@ -230,7 +254,8 @@ pnpm run doctor
 
 | Argument | Use |
 | --- | --- |
-| `doctor` | Show dependency paths, versions, and readiness. |
+| `doctor [--json] [--deep]` | Check local review, agent note, and pull request capabilities. |
+| `cache [status\|prune --age DAYS\|prune --size BYTES\|clear --yes]` | Inspect or remove inactive saved notes. |
 | `config agent [NAME\|--unset]` | Show, set, or unset the default coding agent. |
 | `REPO`, `--repo PATH\|URL\|OWNER/REPO` | Select a local path, Git URL, or GitHub repo. |
 | `--pr NUMBER\|URL` | Review a GitHub pull request. |
@@ -240,7 +265,7 @@ pnpm run doctor
 | `--base REF --head REF` | Review an exact local range. |
 | `--agent NAME` | Use `codex`, `claude`, `copilot`, `cursor`, or `opencode`. |
 | `--no-agent` | Show the diff without agent notes. |
-| `--no-checkout-access` | Limit agent notes to the supplied snapshot. |
+| `--no-checkout-access` | Limit agent notes and Review chat to the supplied snapshot. |
 | `--exclude PATTERN` | Keep matching files out of automatic agent input. Repeat in gitignore order. |
 | `--model NAME` | Choose the model used for notes. |
 | `--reasoning LEVEL` | Set `minimal`, `low`, `medium`, `high`, or `xhigh`. |
@@ -261,7 +286,8 @@ pnpm run doctor
 | `-h`, `--help` | Show command help. |
 | `-v`, `--version` | Show the installed version. |
 
-Remote repos need `--branch` or `--pr`. You cannot combine two target options.
+Remote repos need `--branch` or `--pr`. `--pr` cannot use `--branch`, `--base`,
+or `--head`. `--branch` can use `--base`, but not `--head`.
 `--head` requires `--base`. Without `--head`, local `--base` compares that
 exact commit with the live working tree; a branch can also use `--base` as its
 remote base. `--worktree` cannot use another target. `--no-agent` cannot use
@@ -282,7 +308,10 @@ entitlement errors come from the provider.
 `--batch-size` defaults to `12` and accepts `1` through `50`. `--jobs` defaults
 to `3` and accepts `1` through `8`. `--port` accepts `0` through `65535`. When
 you omit it, Diffsplain starts at `2299` and increments until it finds a free
-port. When you omit `--agent` and have no configured default in an interactive
+port. An explicit occupied port stops the command; `--port 0` asks the OS for
+a free port.
+
+When you omit `--agent` and have no configured default in an interactive
 terminal, Diffsplain lists the usable choices in this order: Codex, Claude,
 Copilot, Cursor, then OpenCode. Choose one before the review starts. In a
 script or other non-interactive run, configure a default, pass `--agent NAME`,
