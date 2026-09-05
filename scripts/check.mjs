@@ -102,11 +102,23 @@ const privatePackageFile = /(^|\/)(?:\.env|\.npmrc|\.git|\.github|\.agents|\.cod
 const mitLicenseSha256 =
   '6a716032ab0de9dbd312e06686f5b89996de8908c65425fa48bd5dbb081444a7';
 
+function validateMitLicenseText(licenseText) {
+  if (licenseText.length === 0) {
+    throw new Error('Package manifest check failed: missing license text');
+  }
+  if (
+    createHash('sha256').update(licenseText).digest('hex') !== mitLicenseSha256
+  ) {
+    throw new Error('Package manifest check failed: license text does not match MIT');
+  }
+}
+
 export function validatePackageManifest(
   pack,
   packageJson = {},
   licenseText = '',
 ) {
+  validateMitLicenseText(licenseText);
   const files = pack.files ?? [];
   const paths = new Set(files.map((file) => file.path));
   const missing = requiredPackageFiles.filter((path) => !paths.has(path));
@@ -134,14 +146,6 @@ export function validatePackageManifest(
       present:
         packageJson.license !== undefined && packageJson.license !== 'MIT',
       text: `license ${packageJson.license} does not match MIT`,
-    },
-    { present: licenseText.length === 0, text: 'missing license text' },
-    {
-      present:
-        licenseText.length > 0 &&
-        createHash('sha256').update(licenseText).digest('hex') !==
-          mitLicenseSha256,
-      text: 'license text does not match MIT',
     },
   ]
     .filter((problem) => problem.present)
@@ -225,6 +229,14 @@ function verifySmokeResults({ packageJson, version, help, doctor, runtime }) {
   }
 }
 
+function readPackedLicense(pack, consumerRoot) {
+  if (!pack.files?.some((file) => file.path === 'LICENSE')) return '';
+  return readFile(
+    join(consumerRoot, 'node_modules/diffsplain/LICENSE'),
+    'utf8',
+  );
+}
+
 async function smokeTestPackage() {
   const packageRoot = await mkdtemp(join(tmpdir(), 'diffsplain-package-'));
   const consumerRoot = join(packageRoot, 'consumer');
@@ -258,9 +270,7 @@ async function smokeTestPackage() {
     const packageJson = JSON.parse(
       await readFile(join(consumerRoot, 'node_modules/diffsplain/package.json')),
     );
-    const licenseText = pack.files?.some((file) => file.path === 'LICENSE')
-      ? await readFile(join(consumerRoot, 'node_modules/diffsplain/LICENSE'), 'utf8')
-      : '';
+    const licenseText = await readPackedLicense(pack, consumerRoot);
     validatePackageManifest(pack, packageJson, licenseText);
     const executable = resolve(
       consumerRoot,
