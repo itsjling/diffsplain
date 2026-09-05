@@ -103,6 +103,18 @@ page. A missing or old token cannot read or change its threads. Review-wide
 questions respect `--exclude` rules. A direct question about an excluded file
 may include that file, but this does not change the rules for review-wide chat.
 
+## Agent usage
+
+Open **Agent usage** on the review page to see separate totals for notes and
+chat, plus their combined use. Counts cover provider-reported input, output,
+cache reads, and cache writes for this review. They do not show prices or your
+account-wide history.
+
+**Partial** means some calls did not report use; **Unavailable** means none
+did. Missing reports do not mean zero tokens. A review that makes no agent
+calls reports zero input and output tokens. Reusing saved notes does not add
+the tokens spent creating them in an earlier run.
+
 ## Exclude files from automatic notes
 
 `--exclude PATTERN` controls prepared agent context. Repeat gitignore-style
@@ -144,8 +156,10 @@ pnpm run summarize -- --repo /path/to/repo --pr 198
 ```
 
 The same command accepts branch, worktree, checkout, and exact-range targets.
-The command reuses complete notes for files whose patches have not changed.
-Pass `--force` to replace every note:
+The command reuses complete notes when the file patches, agent, model,
+reasoning, and access mode still match. Changing those settings starts a new
+pass even when the patches stay the same. Pass `--force` to replace every
+non-excluded note:
 
 ```sh
 pnpm run summarize -- --repo /path/to/repo --pr 198 --force
@@ -194,6 +208,12 @@ npx diffsplain cache prune --age 30
 npx diffsplain cache prune --size 104857600
 npx diffsplain cache clear --yes
 ```
+
+These commands manage the default note cache, not fetched Git objects or
+custom `--summaries` files outside that cache. `--cache-dir` selects the bare
+Git cache and does not change the note cache.
+
+## Note file format
 
 The file has one change note and notes keyed by file path:
 

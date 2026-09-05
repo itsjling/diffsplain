@@ -119,9 +119,9 @@ test("makes the landing-page demo interactive", async () => {
   assert.match(html, /data-demo-mobile-toggle/);
   assert.match(html, /data-hero-copy/);
   assert.match(html, /<code data-hero-command>npx diffsplain<\/code>/);
-  assert.doesNotMatch(html, /--pr 198|#run-it/);
+  assert.doesNotMatch(html, /#run-it/);
   assert.match(html, /https:\/\/itsjling.github.io\/diffsplain\/docs\/cli\//);
-  assert.match(html, /Your checkout stays as it is/);
+  assert.match(html, /Diffsplain does not change your checkout/);
   assert.match(script, /import \{ todoDemoFiles \} from "\.\/todo-demo\.js"/);
   assert.match(script, /ArrowLeft/);
   assert.match(script, /ArrowRight/);

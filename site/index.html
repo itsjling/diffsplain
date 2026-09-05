@@ -12,7 +12,7 @@ FORM: Quiet corner, grounded structure 5, staged as a product announcement; seed
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <meta
       name="description"
-      content="Diffsplain is an open-source developer tool for reviewing GitHub pull requests one file at a time."
+      content="Diffsplain is an open-source developer tool for reviewing local Git changes and GitHub pull requests one file at a time."
     />
     <meta name="theme-color" content="#e9e2d5" />
     <link rel="icon" href="./favicon-32.png" type="image/png" sizes="32x32" />
@@ -108,7 +108,7 @@ FORM: Quiet corner, grounded structure 5, staged as a product announcement; seed
       </a>
 
       <nav class="masthead__nav" aria-label="Main navigation">
-        <span>Local · read-only</span>
+        <span>Runs locally</span>
         <a
           href="https://github.com/itsjling/diffsplain"
           target="_blank"
@@ -151,7 +151,7 @@ FORM: Quiet corner, grounded structure 5, staged as a product announcement; seed
             <button type="button" data-command-choice="npx diffsplain" aria-pressed="true">Your repo</button>
             <span class="command-choices__label">Or an open-source repo:</span>
             <span class="command-choices__repos">
-            <button type="button" data-command-choice="npx diffsplain react/react --pr 36094" aria-pressed="false">React</button>
+            <button type="button" data-command-choice="npx diffsplain facebook/react --pr 36094" aria-pressed="false">React</button>
             <button type="button" data-command-choice="npx diffsplain microsoft/vscode --pr 334672" aria-pressed="false">VS Code</button>
             <button type="button" data-command-choice="npx diffsplain vitejs/vite --pr 23387" aria-pressed="false">Vite</button>
             </span>
@@ -344,7 +344,26 @@ FORM: Quiet corner, grounded structure 5, staged as a product announcement; seed
           <h2 id="run-title">Run locally</h2>
           <p>
             Bring the same file-by-file view to your next PR or local changes.
-            Your checkout stays as it is.
+            Diffsplain does not change your checkout.
+          </p>
+          <p>
+            Run <code>npx diffsplain</code> in a Git checkout to review staged,
+            unstaged, and untracked changes against <code>HEAD</code>.
+            The page updates as files change. Press Ctrl-C to stop.
+          </p>
+          <p>
+            Requires Node.js 22.13 or newer and Git. For notes and chat, choose
+            a signed-in Codex, Claude, Copilot, Cursor, or OpenCode CLI.
+            Set a default with <code>diffsplain config agent NAME</code>, pass
+            <code>--agent NAME</code>, or choose from the terminal picker.
+            Cursor Agent needs version 2026.08.11 or newer.
+            PRs also need a signed-in GitHub CLI.
+          </p>
+          <p>
+            The page runs locally; agent notes and chat use your provider.
+            Local reviews let the agent inspect your checkout under your user
+            permissions. Use <code>--no-checkout-access</code> to limit agent
+            input to the snapshot, or <code>--no-agent</code> for a plain diff.
           </p>
           <a
             class="text-link"
@@ -360,22 +379,22 @@ FORM: Quiet corner, grounded structure 5, staged as a product announcement; seed
           <div class="command-example">
             <h3>Review a GitHub PR</h3>
             <div class="command-line">
-              <code>npx diffsplain --repo owner/repo --pr &lt;integer&gt;</code>
-              <button class="copy-button" type="button" data-copy="npx diffsplain --repo owner/repo --pr &lt;integer&gt;" aria-label="Copy command: review a GitHub PR">Copy command</button>
+              <code>npx diffsplain --repo owner/repo --pr 198</code>
+              <button class="copy-button" type="button" data-copy="npx diffsplain --repo owner/repo --pr 198" aria-label="Copy command: review a GitHub PR">Copy command</button>
             </div>
           </div>
           <div class="command-example">
             <h3>Choose your agent and model</h3>
             <div class="command-line">
-              <code>npx diffsplain --agent claude --model &lt;model&gt;</code>
-              <button class="copy-button" type="button" data-copy="npx diffsplain --agent claude --model &lt;model&gt;" aria-label="Copy command: choose your agent and model">Copy command</button>
+              <code>npx diffsplain --agent claude --model MODEL_NAME</code>
+              <button class="copy-button" type="button" data-copy="npx diffsplain --agent claude --model MODEL_NAME" aria-label="Copy command: choose your agent and model">Copy command</button>
             </div>
           </div>
           <div class="command-example">
-            <h3>Compare a branch with the default branch</h3>
+            <h3>Compare a remote branch with its default branch</h3>
             <div class="command-line">
-              <code>npx diffsplain --branch &lt;branch&gt;</code>
-              <button class="copy-button" type="button" data-copy="npx diffsplain --branch &lt;branch&gt;" aria-label="Copy command: compare a branch with the default branch">Copy command</button>
+              <code>npx diffsplain --branch feature/my-change</code>
+              <button class="copy-button" type="button" data-copy="npx diffsplain --branch feature/my-change" aria-label="Copy command: compare a remote branch with its default branch">Copy command</button>
             </div>
           </div>
         </div>
@@ -384,7 +403,7 @@ FORM: Quiet corner, grounded structure 5, staged as a product announcement; seed
     </main>
 
     <footer class="footer">
-      <p>Open-source pull request review.</p>
+      <p>Open-source Git diff review.</p>
       <nav aria-label="Footer">
         <a href="https://github.com/itsjling/diffsplain">GitHub</a>
         <a href="https://itsjling.github.io/diffsplain/docs/">Docs</a>
