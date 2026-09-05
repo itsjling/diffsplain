@@ -3,6 +3,7 @@
   "include": [
     "scripts/cli-args.mjs",
     "scripts/build-diff-data.mjs",
+    "scripts/agent-note-output.mjs",
     "scripts/generate-summaries.mjs",
     "scripts/present.mjs",
     "scripts/serve-built.mjs"

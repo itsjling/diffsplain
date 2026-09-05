@@ -60,6 +60,7 @@ const executeStage = proofMode
     }
   : (_id, run) => run();
 const packageOnly = process.argv.includes('--package-only');
+const skipDocs = process.argv.includes('--skip-docs');
 const releaseTarballIndex = process.argv.indexOf('--release-tarball');
 const releaseTarball =
   releaseTarballIndex === -1
@@ -73,6 +74,7 @@ const requiredPackageFiles = [
   'scripts/agent-usage.mjs',
   'scripts/agent-config.mjs',
   'scripts/agent-exclusions.mjs',
+  'scripts/agent-note-output.mjs',
   'scripts/agent-review.mjs',
   'scripts/build-diff-data.mjs',
   'scripts/cache.mjs',
@@ -93,7 +95,7 @@ const requiredPackageFiles = [
   'scripts/summary-path.mjs',
   'scripts/support-record.mjs',
 ];
-const allowedPackageFile = /^(README(?:\.md)?|LICENSE(?:\.md)?|NOTICE(?:\.md)?|package\.json|dist\/.+|scripts\/(?:access-token|agent-config|agent-exclusions|agent-review|agent-usage|build-diff-data|cache|cli-args|coding-agents|dev|doctor|generate-summaries|local-target|mock-agent|present|presenter-runtime|review-chat(?:-context|-controller|-provider)?|serve-built|summary-path|support-record)\.mjs)$/;
+const allowedPackageFile = /^(README(?:\.md)?|LICENSE(?:\.md)?|NOTICE(?:\.md)?|package\.json|dist\/.+|scripts\/(?:access-token|agent-config|agent-exclusions|agent-note-output|agent-review|agent-usage|build-diff-data|cache|cli-args|coding-agents|dev|doctor|generate-summaries|local-target|mock-agent|present|presenter-runtime|review-chat(?:-context|-controller|-provider)?|serve-built|summary-path|support-record)\.mjs)$/;
 const privatePackageFile = /(^|\/)(?:\.env|\.npmrc|\.git|\.github|\.agents|\.codex)(?:\/|$)|\.(?:pem|key)$/i;
 
 export function validatePackageManifest(pack) {
@@ -219,11 +221,6 @@ async function smokeTestPackage() {
       ? pack.filename
       : join(packageRoot, pack.filename);
     validatePackageManifest(pack);
-    if (releaseTarball) {
-      await mkdir(dirname(releaseTarball), { recursive: true });
-      await copyFile(tarball, releaseTarball);
-    }
-
     await mkdir(consumerRoot);
     await writeFile(
       join(consumerRoot, 'package.json'),
@@ -256,6 +253,10 @@ async function smokeTestPackage() {
     });
     const runtime = await makeSmokeRuntimeFixture(consumerRoot);
     verifySmokeResults({ packageJson, version, help, doctor, runtime });
+    if (releaseTarball) {
+      await mkdir(dirname(releaseTarball), { recursive: true });
+      await copyFile(tarball, releaseTarball);
+    }
   } finally {
     await rm(packageRoot, { force: true, recursive: true });
   }
@@ -270,9 +271,9 @@ const stages = [
 ];
 
 export async function runCheck() {
-  const selectedStages = packageOnly
-    ? stages.filter(([id]) => id === 'build')
-    : stages;
+  const selectedStages = stages.filter(([id]) =>
+    packageOnly ? id === 'build' : !(skipDocs && id === 'docs'),
+  );
   for (const [id, name, run] of selectedStages) {
     await runStage(id, name, run);
   }

@@ -37,6 +37,29 @@ for (const stage of ['test', 'lint', 'docs', 'build', 'package']) {
   });
 }
 
+test('release checks skip docs and still run each package check once', () => {
+  const result = spawnSync(process.execPath, [check, '--skip-docs'], {
+    cwd: root,
+    encoding: 'utf8',
+    env: {
+      ...process.env,
+      DIFFSPLAIN_CHECK_PROOF_MODE: '1',
+      DIFFSPLAIN_CHECK_PROOF_FAIL_STAGE: 'docs',
+    },
+  });
+
+  assert.equal(result.status, 0, result.stderr);
+  assert.deepEqual(
+    result.stdout.split('\n').filter((line) => line.startsWith('✓ ')),
+    [
+      '✓ React and TypeScript lint',
+      '✓ Production app build',
+      '✓ Unit and integration tests',
+      '✓ Packed-package smoke test',
+    ],
+  );
+});
+
 test('builds fresh assets before standalone package verification', () => {
   const result = spawnSync(process.execPath, [check, '--package-only'], {
     cwd: root,

@@ -10,6 +10,7 @@ const requiredFiles = [
   'scripts/agent-usage.mjs',
   'scripts/agent-config.mjs',
   'scripts/agent-exclusions.mjs',
+  'scripts/agent-note-output.mjs',
   'scripts/agent-review.mjs',
   'scripts/build-diff-data.mjs',
   'scripts/cache.mjs',

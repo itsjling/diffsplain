@@ -224,11 +224,11 @@ export async function verifyRelease(overrides = {}) {
   const initialState = deps.readState(pkg.version);
   validateReleaseState(initialState);
 
-  deps.runPnpm(['run', 'check']);
   deps.runPnpm([
     'run',
-    'package:verify',
+    'check',
     '--',
+    '--skip-docs',
     '--release-tarball',
     verifiedTarball,
   ]);

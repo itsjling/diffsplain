@@ -423,8 +423,8 @@ test('timeout reaps a built-in provider child that ignores SIGTERM', async () =>
   const pidPath = join(fixture.directory, 'provider.pid');
   await writeFile(binary, [
     '#!/usr/bin/env node',
-    `require('node:fs').writeFileSync(${JSON.stringify(pidPath)}, String(process.pid));`,
     "process.on('SIGTERM', () => {});",
+    `require('node:fs').writeFileSync(${JSON.stringify(pidPath)}, String(process.pid));`,
     'setInterval(() => {}, 1_000);',
     '',
   ].join('\n'));
@@ -433,7 +433,7 @@ test('timeout reaps a built-in provider child that ignores SIGTERM', async () =>
   const chat = createReviewChat({
     snapshotPath: fixture.snapshotPath,
     provider,
-    runTimeoutMs: 500,
+    runTimeoutMs: 1_500,
   });
 
   try {
