@@ -148,9 +148,12 @@ FORM: Quiet corner, grounded structure 5, staged as a product announcement; seed
 
           <div class="command-choices" role="group" aria-label="Command examples">
             <button type="button" data-command-choice="npx diffsplain" aria-pressed="true">Your repo</button>
+            <span class="command-choices__label">Or an open-source repo:</span>
+            <span class="command-choices__repos">
             <button type="button" data-command-choice="npx diffsplain react/react --pr 37524" data-url="https://github.com/react/react/pull/37524" aria-pressed="false">React</button>
             <button type="button" data-command-choice="npx diffsplain microsoft/vscode --pr 334672" data-url="https://github.com/microsoft/vscode/pull/334672" aria-pressed="false">VS Code</button>
             <button type="button" data-command-choice="npx diffsplain vitejs/vite --pr 23387" data-url="https://github.com/vitejs/vite/pull/23387" aria-pressed="false">Vite</button>
+            </span>
           </div>
 
           <p class="hero__setup"><span data-command-note>Run in your repo to compare with its default branch.</span> <a data-command-source hidden>View PR ↗</a></p>

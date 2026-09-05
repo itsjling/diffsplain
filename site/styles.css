@@ -1357,6 +1357,7 @@ code {
 }
 
 .command-choices {
+  align-items: center;
   display: flex;
   flex-wrap: wrap;
   gap: 4px 16px;
@@ -1399,4 +1400,14 @@ code {
 
 .command-line code {
   min-width: 0;
+}
+
+.command-choices__label {
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.command-choices__repos {
+  display: flex;
+  gap: 16px;
 }
