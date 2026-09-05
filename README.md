@@ -3,7 +3,17 @@
 Review a Git diff one file at a time, with a short coding agent note beside each
 patch.
 
-## Use
+## Prerequisites
+
+- Node.js 22.13 or newer and Git.
+- For agent notes: a signed-in Codex, Claude, Copilot, Cursor, or OpenCode CLI.
+  Cursor Agent requires version 2026.08.11 or newer.
+- For pull requests: a signed-in GitHub CLI (`gh auth login`).
+
+Check your setup with `npx diffsplain doctor`. See [Agent notes](docs/content/agent-notes.mdx)
+for provider access and login details.
+
+## Quick start
 
 Run from a Git checkout:
 
@@ -11,67 +21,23 @@ Run from a Git checkout:
 npx diffsplain
 ```
 
-The command opens a local page showing staged, unstaged, and untracked changes
-against `HEAD`, the same as `--worktree`. It starts at port `2299` and uses the
-next free port when needed. Keep the command running while you review; press
-Ctrl-C to stop it.
+Choose an agent when prompted, or use `--no-agent` for a plain diff. The page
+shows staged, unstaged, and untracked changes against `HEAD` and updates as
+files change. It starts at port `2299`, using the next free port if needed.
+Press Ctrl-C to stop.
 
-You need Node.js 22.13 or newer and Git. Agent notes also need a signed-in
-Codex, Claude, Copilot, Cursor, or OpenCode CLI. Set a default with
-`diffsplain config agent NAME`, or choose one run with `--agent NAME`. If
-neither is set, an interactive terminal lists usable agents in that order and
-asks you to choose one. For a plain review without an agent, run
-`npx diffsplain --no-agent`. In a non-interactive run, set a default or pass
-`--agent NAME` or `--no-agent`.
-
-Cursor Agent must be version 2026.08.11 or newer. It uses the signed-in Cursor
-CLI in the user's home and still contacts the Cursor service.
-Pull requests also need a signed-in GitHub CLI. Once Diffsplain chooses an
-agent, a failed check or run ends the command; it does not switch agents.
-
-Common targets:
+Other targets:
 
 ```sh
 npx diffsplain --pr 198
 npx diffsplain owner/repo --branch feature/my-change
-npx diffsplain --worktree
 npx diffsplain --base BASE_REF
 npx diffsplain --base BASE_REF --head HEAD_REF
 ```
 
-Check Git, the GitHub CLI, and each supported coding agent:
+## Full arguments
 
-```sh
-npx diffsplain doctor
-npx diffsplain doctor --json
-```
-
-Show, set, or unset the default coding agent:
-
-```sh
-npx diffsplain config agent
-npx diffsplain config agent claude
-npx diffsplain config agent --unset
-```
-
-An explicit `--agent` overrides the configured default, and `--no-agent`
-overrides both. A damaged, unsupported, or unavailable configured agent stops
-the command instead of switching providers; use either explicit option as a
-recovery path. The two per-run options cannot be combined.
-
-Inspect or clean up saved agent notes:
-
-```sh
-npx diffsplain cache status
-npx diffsplain cache prune --age 30
-npx diffsplain cache prune --size 104857600
-npx diffsplain cache clear --yes
-```
-
-Cleanup keeps notes in active use. These commands manage the default note
-cache, not the bare Git cache selected by `--cache-dir`.
-
-Arguments (see the [full CLI reference](docs/content/cli.mdx) for details):
+See the [CLI reference](docs/content/cli.mdx) for details.
 
 | Argument | Use |
 | --- | --- |
@@ -105,6 +71,32 @@ Arguments (see the [full CLI reference](docs/content/cli.mdx) for details):
 | `--no-browser` | Print the page URL without opening a browser. |
 | `-h`, `--help` | Show command help. |
 | `-v`, `--version` | Show the installed version. |
+
+### Default agent
+
+```sh
+npx diffsplain config agent          # Show the default
+npx diffsplain config agent claude   # Set it
+npx diffsplain config agent --unset  # Remove it
+```
+
+Use `--agent NAME` to override the default or `--no-agent` for a plain diff;
+the two flags cannot be combined. Without a choice, an interactive terminal
+asks you to pick a usable agent. Scripts need a default or one of these flags.
+A failed agent check or run stops the command; Diffsplain does not switch
+agents.
+
+### Saved notes
+
+```sh
+npx diffsplain cache status
+npx diffsplain cache prune --age 30
+npx diffsplain cache prune --size 104857600
+npx diffsplain cache clear --yes
+```
+
+Cleanup keeps notes in active use. These commands manage the default note
+cache, not the bare Git cache selected by `--cache-dir`.
 
 ## Local development
 
