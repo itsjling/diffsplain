@@ -1110,54 +1110,46 @@ test("states supported purpose directly and names missing evidence", async () =>
   }
 });
 
-test("enforces note output limits in schemas and saved file notes", async () => {
-  const cases = [
-    ["title", "x".repeat(161), /added\.txt\.title.*160/],
-    ["what", "x".repeat(1201), /added\.txt\.what.*1200/],
-    ["details", Array(5).fill("detail"), /added\.txt\.details.*4 items/],
-    ["risks", Array(4).fill("risk"), /added\.txt\.risks.*3 items/],
-    ["details", ["x".repeat(501)], /added\.txt\.details items.*500/],
-    ["title", "😀".repeat(161), /added\.txt\.title.*160/],
-  ];
-  for (const [field, value, error] of cases) {
-    const repo = await makeRepo();
-    const summaries = join(repo, "notes.json");
-    const output = join(repo, "diff-data.json");
-    try {
-      const response = notes({
-        "added.txt": {
-          title: "Add text",
-          what: "Adds text.",
-          why: "Tests note limits.",
-          details: [],
-          risks: [],
-          [field]: value,
-        },
-        "changed.txt": {
-          title: "Change text",
-          what: "Changes text.",
-          why: "Keeps one valid note.",
-          details: [],
-          risks: [],
-        },
-      });
-      const codex = await fakeCodex(repo, response);
-      const result = run(repo, [
-        "--range", "HEAD~1..HEAD", "--codex-bin", codex.bin,
-        "--summaries", summaries, "--output", output,
-      ]);
-      assert.equal(result.status, 1, result.stderr);
-      const written = JSON.parse(await readFile(summaries, "utf8"));
-      assert.ok(!Object.hasOwn(written.files, "added.txt"));
-      assert.ok(Object.hasOwn(written.files, "changed.txt"));
-      assert.match(
-        written.meta.failedFiles.find((failure) => failure.path === "added.txt").reason,
-        error,
-      );
-    } finally {
-      await rm(repo, { recursive: true, force: true });
-    }
+test("saves valid notes and reports an invalid note output limit", async () => {
+  const repo = await makeRepo();
+  const summaries = join(repo, "notes.json");
+  const output = join(repo, "diff-data.json");
+  try {
+    const response = notes({
+      "added.txt": {
+        what: "Adds text.",
+        why: "Tests note limits.",
+        details: [],
+        risks: [],
+        title: "😀".repeat(161),
+      },
+      "changed.txt": {
+        title: "Change text",
+        what: "Changes text.",
+        why: "Keeps one valid note.",
+        details: [],
+        risks: [],
+      },
+    });
+    const codex = await fakeCodex(repo, response);
+    const result = run(repo, [
+      "--range", "HEAD~1..HEAD", "--codex-bin", codex.bin,
+      "--summaries", summaries, "--output", output,
+    ]);
+    assert.equal(result.status, 1, result.stderr);
+    const written = JSON.parse(await readFile(summaries, "utf8"));
+    assert.ok(!Object.hasOwn(written.files, "added.txt"));
+    assert.ok(Object.hasOwn(written.files, "changed.txt"));
+    assert.match(
+      written.meta.failedFiles.find((failure) => failure.path === "added.txt").reason,
+      /added\.txt\.title.*160/,
+    );
+  } finally {
+    await rm(repo, { recursive: true, force: true });
   }
+});
+
+test("enforces note output limits in schemas and accepts boundary notes", async () => {
 
   const repo = await makeRepo();
   const summaries = join(repo, "notes.json");

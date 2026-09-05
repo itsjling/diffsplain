@@ -43,11 +43,11 @@ test('verifies a tagged release and records the exact tarball', async () => {
   });
 
   assert.deepEqual(calls, [
-    ['run', 'check'],
     [
       'run',
-      'package:verify',
+      'check',
       '--',
+      '--skip-docs',
       '--release-tarball',
       '.cache/diffsplain-release.tgz',
     ],
@@ -68,6 +68,34 @@ test('rejects the wrong branch, a dirty tree, and a mismatched tag', () => {
   assert.throws(
     () => validateReleaseState({ ...cleanState, tagCommit: 'def456' }),
     /v1\.2\.3 must point to the checked-out commit/,
+  );
+});
+
+test('does not record verification after a failed check or changed commit', async () => {
+  const common = {
+    readPackage: async () => ({ name: 'diffsplain', version: '1.2.3' }),
+    sha256: async () => assert.fail('failed verification must not hash a tarball'),
+    writeReceipt: async () => assert.fail('failed verification must not write a receipt'),
+  };
+  await assert.rejects(
+    verifyRelease({
+      ...common,
+      readState: () => cleanState,
+      runPnpm: () => { throw new Error('smoke test failed'); },
+    }),
+    /smoke test failed/,
+  );
+
+  let reads = 0;
+  await assert.rejects(
+    verifyRelease({
+      ...common,
+      runPnpm: () => {},
+      readState: () => reads++ === 0
+        ? cleanState
+        : { ...cleanState, commit: 'def456', tagCommit: 'def456' },
+    }),
+    /checked-out commit changed/,
   );
 });
 

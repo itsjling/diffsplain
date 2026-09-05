@@ -56,6 +56,10 @@ lint, builds the app, runs the Node unit and integration tests, checks and
 builds the docs, then installs the packed package in a temporary folder and
 runs its CLI. Each stage names its failure before the command stops.
 
+Npm release verification skips docs and saves the tarball from that same
+package smoke test. Publishing uses that verified tarball without rebuilding
+it. PR checks and site deployment still check and build the docs.
+
 Install Chromium once after setup, and again when Playwright changes:
 
 ```sh
@@ -85,19 +89,23 @@ corepack pnpm run test:platform
 | Command | What it checks |
 | --- | --- |
 | `pnpm run test:unit` | Fast parser, provider, doctor, release, config, and path checks. It does not build the app. |
-| `pnpm run test:integration` | The production build plus local Git, timing, agent note, presenter, and server checks. |
-| `pnpm run test:coverage` | Per-file coverage for the CLI parser, target builder, agent note writer, and presenter. |
+| `pnpm run test:integration` | The production build plus local Git, agent note, presenter, and server checks. |
+| `pnpm run test:coverage` | Unit and integration tests once, with per-file coverage checks. |
 | `pnpm run test:browser` | The review journey in Chromium. It does not download a browser. |
 | `pnpm run test:platform` | Host command lookup and npm launcher rules with local fake tools. |
-| `pnpm test` | All five lanes in order. |
+| `pnpm test` | Unit and integration tests with coverage, then browser and platform tests. |
+
+Coverage wraps `test:core`, which runs the unit and integration commands. It
+does not repeat the integration tests. The fast unit job also runs on its own
+in CI to report failures early.
 
 The coverage lane writes text, JSON summary, and LCOV reports under
 `coverage/`. Each covered file must keep at least 80% statement and line
 coverage, 60% branch coverage, and 90% function coverage. The check applies
 the floor to each file.
 
-Pull request jobs run the unit, integration, coverage, and browser lanes from
-a clean Ubuntu checkout. They use local Git repos, fake coding agents, and
+Pull request jobs run a fast unit check, the combined core coverage check,
+and browser tests from a clean Ubuntu checkout. They use local Git repos, fake coding agents, and
 checked-in browser data. A weekly job runs the platform lane on macOS 15 and
 Windows 2025. You can also start the **Test lanes** workflow by hand.
 
@@ -284,6 +292,19 @@ same bounded canary from an authenticated checkout with:
 pnpm run benchmark:canary -- --runs 1 --reasoning minimal
 ```
 
+## Measure live updates
+
+Run the live-update benchmark by hand when changing event delivery or polling:
+
+```sh
+pnpm run benchmark:live-update -- --mode events
+pnpm run benchmark:live-update -- --mode poll
+```
+
+These commands report timing samples. They do not enforce a speed threshold
+and are not part of the test suite. Server and browser tests check live-update
+behavior and recovery.
+
 ## Publish a release
 
 Use the GitHub Actions `Release` workflow for normal releases. Run it from
@@ -355,7 +376,7 @@ corepack pnpm run release:verify
 ```
 
 This command requires a clean tree and a `v<version>` tag on `HEAD`. It runs the
-full product gate, installs and tests the exact tarball in a temporary consumer,
+product gate without docs, installs and tests the exact tarball in a temporary consumer,
 and records the commit and tarball hash in `.cache/`.
 
 Sign in to npm when needed, then publish by naming the exact version again:

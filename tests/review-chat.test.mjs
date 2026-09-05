@@ -78,8 +78,11 @@ function flush() {
   return new Promise((resolve) => setImmediate(resolve));
 }
 
+// Keep fixture polling on real time when a test controls provider deadlines.
+const realSetTimeout = setTimeout;
+
 function pause(milliseconds) {
-  return new Promise((resolve) => setTimeout(resolve, milliseconds));
+  return new Promise((resolve) => realSetTimeout(resolve, milliseconds));
 }
 
 async function waitFor(read, predicate, timeoutMs = 2_000) {
@@ -417,14 +420,14 @@ test('times out compaction into the existing retryable blocked state', async () 
   }
 });
 
-test('timeout reaps a built-in provider child that ignores SIGTERM', async () => {
+test('timeout reaps a built-in provider child that ignores SIGTERM', async (context) => {
   const fixture = await createFixture();
   const binary = join(fixture.directory, 'codex');
   const pidPath = join(fixture.directory, 'provider.pid');
   await writeFile(binary, [
     '#!/usr/bin/env node',
-    `require('node:fs').writeFileSync(${JSON.stringify(pidPath)}, String(process.pid));`,
     "process.on('SIGTERM', () => {});",
+    `require('node:fs').writeFileSync(${JSON.stringify(pidPath)}, String(process.pid));`,
     'setInterval(() => {}, 1_000);',
     '',
   ].join('\n'));
@@ -436,14 +439,18 @@ test('timeout reaps a built-in provider child that ignores SIGTERM', async () =>
     runTimeoutMs: 500,
   });
 
+  context.mock.timers.enable({ apis: ['setTimeout'] });
   try {
     chat.command({ type: 'new', scope: 'review' });
     chat.command({ type: 'ask', scope: 'review', question: 'Please wait.' });
-    const pid = await waitForFileNumber(pidPath);
-    await waitFor(
-      () => thread(chat.getState(), 'review'),
-      (value) => value.status === 'failed',
-    );
+    const pid = await waitForFileNumber(pidPath, 10_000);
+    assert.equal(thread(chat.getState(), 'review').status, 'running');
+    context.mock.timers.tick(500);
+    const failed = thread(chat.getState(), 'review');
+    assert.equal(failed.status, 'failed');
+    assert.match(failed.error, /timed out/i);
+    assert.doesNotThrow(() => process.kill(pid, 0));
+    context.mock.timers.tick(250);
     await waitFor(
       () => {
         try {
@@ -457,6 +464,8 @@ test('timeout reaps a built-in provider child that ignores SIGTERM', async () =>
     );
   } finally {
     chat.close();
+    context.mock.timers.tick(250);
+    context.mock.timers.reset();
     await rm(fixture.directory, { recursive: true, force: true });
   }
 });

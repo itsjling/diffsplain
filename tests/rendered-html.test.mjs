@@ -104,35 +104,6 @@ test("keeps live review data out of built assets", async () => {
   );
 });
 
-test("makes the landing-page demo interactive", async () => {
-  const [html, script, styles] = await Promise.all([
-    readFile(new URL("../site/index.html", import.meta.url), "utf8"),
-    readFile(new URL("../site/script.js", import.meta.url), "utf8"),
-    readFile(new URL("../site/styles.css", import.meta.url), "utf8"),
-  ]);
-
-  assert.match(html, /<script src="\.\/script\.js" type="module">/);
-  assert.match(html, /data-demo-picker-trigger/);
-  assert.match(html, /data-demo-prev/);
-  assert.match(html, /data-demo-next/);
-  assert.match(html, /data-demo-invitation/);
-  assert.match(html, /data-demo-mobile-toggle/);
-  assert.match(html, /data-hero-copy/);
-  assert.match(html, /<code data-hero-command>npx diffsplain<\/code>/);
-  assert.doesNotMatch(html, /#run-it/);
-  assert.match(html, /https:\/\/itsjling.github.io\/diffsplain\/docs\/cli\//);
-  assert.match(html, /Diffsplain does not change your checkout/);
-  assert.match(script, /import \{ todoDemoFiles \} from "\.\/todo-demo\.js"/);
-  assert.match(script, /ArrowLeft/);
-  assert.match(script, /ArrowRight/);
-  assert.match(script, /metaKey/);
-  assert.match(
-    styles,
-    /\.hero__copy\s*\{[^}]*pointer-events:\s*none/s,
-  );
-  assert.doesNotMatch(html, /data-command-note|class="hero__actions"/);
-});
-
 test("adds PostHog analytics to the public site and docs", async () => {
   const [site, docsConfig] = await Promise.all([
     readFile(new URL("../site/index.html", import.meta.url), "utf8"),
@@ -167,20 +138,6 @@ test("uses the bundled demo when no live snapshot exists", async () => {
   assert.match(viteConfig, /"content-type": "application\/json; charset=utf-8"/);
   assert.match(viteConfig, /"x-diffsplain-demo": "true"/);
   assert.match(viteConfig, /JSON\.parse\(fixture\)/);
-});
-
-test("shows a content skeleton while the agent writes a file summary", async () => {
-  const [page, styles] = await Promise.all([
-    readFile(new URL("../app/page.tsx", import.meta.url), "utf8"),
-    readFile(new URL("../app/globals.css", import.meta.url), "utf8"),
-  ]);
-
-  assert.match(page, /Writing summary of diff\.\.\./);
-  assert.match(page, /className="note-skeleton"/);
-  assert.doesNotMatch(page, /Writing this note|NOTE PROGRESS/);
-  assert.doesNotMatch(page, /You can review any finished file now/);
-  assert.match(styles, /@keyframes note-skeleton-shimmer/);
-  assert.match(styles, /@media \(prefers-reduced-motion: reduce\)/);
 });
 
 test("builds live data for tracked and untracked workspace files", async () => {

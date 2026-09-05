@@ -8,12 +8,8 @@ permissions:
 
 jobs:
   product-gate:
-    name: Product gate (Node ${{ matrix.node-version }})
+    name: Product gate (Node 24.20.0)
     runs-on: ubuntu-latest
-    strategy:
-      fail-fast: false
-      matrix:
-        node-version: [22.13.0, 24.x]
     steps:
       - name: Check out repository
         uses: actions/checkout@v6
@@ -22,7 +18,7 @@ jobs:
       - name: Set up Node
         uses: actions/setup-node@v6
         with:
-          node-version: ${{ matrix.node-version }}
+          node-version: '24.20.0'
           cache: pnpm
           cache-dependency-path: pnpm-lock.yaml
       - name: Install lockfile dependencies

@@ -49,14 +49,15 @@ test('keeps the test lanes separate and composes the complete test gate', async 
   }
   assert.equal(
     scripts.test,
-    'pnpm run test:unit && pnpm run test:integration && pnpm run test:coverage && pnpm run test:browser && pnpm run test:platform',
+    'pnpm run test:coverage && pnpm run test:browser && pnpm run test:platform',
   );
   assert.doesNotMatch(scripts['test:unit'], /browser|pnpm run build/);
   assert.match(scripts['test:integration'], /pnpm run build/);
   assert.match(scripts['test:integration'], /--test-concurrency=1/);
-  assert.match(scripts['test:coverage'], /pnpm run build/);
-  assert.match(scripts['test:coverage'], /--test-concurrency=1/);
-  assert.match(scripts['test:coverage'], /tests\/serve-built\.test\.mjs/);
+  assert.equal(scripts['test:coverage'], 'c8 pnpm run test:core');
+  assert.equal(scripts['test:core'], 'pnpm run test:unit && pnpm run test:integration');
+  assert.doesNotMatch(scripts['test:integration'], /live-update-speed/);
+  assert.equal(scripts['benchmark:live-update'], 'node benchmarks/live-update-speed.mjs');
   assert.equal(
     scripts['test:browser'],
     'pnpm run build && node --test tests/browser/*.test.mjs',
@@ -94,6 +95,7 @@ test('holds each core path to the documented coverage floor', async () => {
   assert.deepEqual(config.include, [
     'scripts/cli-args.mjs',
     'scripts/build-diff-data.mjs',
+    'scripts/agent-note-output.mjs',
     'scripts/generate-summaries.mjs',
     'scripts/present.mjs',
     'scripts/serve-built.mjs',
@@ -119,7 +121,6 @@ test('runs pull request lanes on Linux and scheduled shell checks elsewhere', as
 
   for (const command of [
     'pnpm run test:unit',
-    'pnpm run test:integration',
     'pnpm run test:coverage',
     'pnpm run test:browser',
     'pnpm run test:platform',
@@ -132,7 +133,7 @@ test('runs pull request lanes on Linux and scheduled shell checks elsewhere', as
   assert.match(workflow, /windows-2025/);
   assert.equal(
     workflow.match(/run: pnpm install --frozen-lockfile/g)?.length,
-    5,
+    4,
   );
   assert.match(workflow, /permissions:\n  contents: read/);
   assert.doesNotMatch(workflow, /pull_request_target:|secrets\.|write-all/);
@@ -149,5 +150,5 @@ test('installs pnpm before each Node setup and caches dependencies', async () =>
   );
 
   assertPnpmCacheSetup(productGate, 1);
-  assertPnpmCacheSetup(testLanes, 5);
+  assertPnpmCacheSetup(testLanes, 4);
 });
