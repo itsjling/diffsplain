@@ -1,4 +1,5 @@
 import { execFile, spawn } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import {
   chmod,
   copyFile,
@@ -68,6 +69,7 @@ const releaseTarball =
     : resolve(root, process.argv[releaseTarballIndex + 1]);
 const requiredPackageFiles = [
   'README.md',
+  'LICENSE',
   'package.json',
   'dist/index.html',
   'scripts/access-token.mjs',
@@ -97,8 +99,28 @@ const requiredPackageFiles = [
 ];
 const allowedPackageFile = /^(README(?:\.md)?|LICENSE(?:\.md)?|NOTICE(?:\.md)?|package\.json|dist\/.+|scripts\/(?:access-token|agent-config|agent-exclusions|agent-note-output|agent-review|agent-usage|build-diff-data|cache|cli-args|coding-agents|dev|doctor|generate-summaries|local-target|mock-agent|present|presenter-runtime|review-chat(?:-context|-controller|-provider)?|serve-built|summary-path|support-record)\.mjs)$/;
 const privatePackageFile = /(^|\/)(?:\.env|\.npmrc|\.git|\.github|\.agents|\.codex)(?:\/|$)|\.(?:pem|key)$/i;
+const mitLicenseSha256 =
+  '6a716032ab0de9dbd312e06686f5b89996de8908c65425fa48bd5dbb081444a7';
 
-export function validatePackageManifest(pack) {
+function validateMitLicenseText(licenseText) {
+  if (licenseText.length === 0) {
+    throw new Error('Package manifest check failed: missing license text');
+  }
+  if (
+    createHash('sha256')
+      .update(licenseText.replaceAll('\r\n', '\n'))
+      .digest('hex') !== mitLicenseSha256
+  ) {
+    throw new Error('Package manifest check failed: license text does not match MIT');
+  }
+}
+
+export function validatePackageManifest(
+  pack,
+  packageJson = {},
+  licenseText = '',
+) {
+  validateMitLicenseText(licenseText);
   const files = pack.files ?? [];
   const paths = new Set(files.map((file) => file.path));
   const missing = requiredPackageFiles.filter((path) => !paths.has(path));
@@ -118,6 +140,15 @@ export function validatePackageManifest(pack) {
     },
     { present: oversizedPackage, text: 'package exceeds 12 MB' },
     { present: oversizedFile, text: 'file exceeds 1 MB' },
+    {
+      present: packageJson.license === undefined,
+      text: 'missing package license',
+    },
+    {
+      present:
+        packageJson.license !== undefined && packageJson.license !== 'MIT',
+      text: `license ${packageJson.license} does not match MIT`,
+    },
   ]
     .filter((problem) => problem.present)
     .map((problem) => problem.text);
@@ -200,6 +231,14 @@ function verifySmokeResults({ packageJson, version, help, doctor, runtime }) {
   }
 }
 
+function readPackedLicense(pack, consumerRoot) {
+  if (!pack.files?.some((file) => file.path === 'LICENSE')) return '';
+  return readFile(
+    join(consumerRoot, 'node_modules/diffsplain/LICENSE'),
+    'utf8',
+  );
+}
+
 async function smokeTestPackage() {
   const packageRoot = await mkdtemp(join(tmpdir(), 'diffsplain-package-'));
   const consumerRoot = join(packageRoot, 'consumer');
@@ -220,7 +259,6 @@ async function smokeTestPackage() {
     const tarball = isAbsolute(pack.filename)
       ? pack.filename
       : join(packageRoot, pack.filename);
-    validatePackageManifest(pack);
     await mkdir(consumerRoot);
     await writeFile(
       join(consumerRoot, 'package.json'),
@@ -234,6 +272,8 @@ async function smokeTestPackage() {
     const packageJson = JSON.parse(
       await readFile(join(consumerRoot, 'node_modules/diffsplain/package.json')),
     );
+    const licenseText = await readPackedLicense(pack, consumerRoot);
+    validatePackageManifest(pack, packageJson, licenseText);
     const executable = resolve(
       consumerRoot,
       'node_modules/diffsplain',
