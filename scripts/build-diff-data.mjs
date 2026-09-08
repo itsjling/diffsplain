@@ -443,7 +443,7 @@ class RemoteConnectionError extends Error {}
 
 function remoteLookupError(message, error) {
   const detail = error?.stderr?.toString().trim() || '';
-  const transient = /(?:failed to connect|couldn't connect|could not resolve host|could not resolve hostname|temporary failure in name resolution|connection (?:timed out|reset|refused|closed)|network is unreachable|operation timed out|i\/o timeout|TLS connection was non-properly terminated|error connecting to|HTTP 50[234]|requested URL returned error: 50[234])/i.test(detail);
+  const transient = /(?:failed to connect|couldn't connect|could not resolve host|could not resolve hostname|temporary failure in name resolution|connection (?:timed out|reset|refused|closed)|network is unreachable|operation timed out|i\/o timeout|TLS connection was non-properly terminated|error connecting to|HTTP 50[0234]|requested URL returned error: 50[0234])/i.test(detail);
   const ErrorType = transient ? RemoteConnectionError : Error;
   return new ErrorType(message);
 }

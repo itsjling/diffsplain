@@ -1355,20 +1355,10 @@ test("rejects conflicting remote target flags", async () => {
   }
 });
 
-for (const target of ["branch fetch", "branch ls-remote", "pr fetch", "pr gh"]) {
-  test(`retains the snapshot and retries after transient ${target} failures`, async () => {
-    const fixture = await makeRemoteRepo();
-    const output = join(fixture.root, "watch.json");
-    const failure = join(fixture.root, "failure.json");
-    const remoteUrl = "https://github.com/example/project.git";
-    let watched;
-    try {
-      const env = await proxyRemote(fixture, remoteUrl, failure);
-      git(fixture.repo, "remote", "set-url", "origin", remoteUrl);
-      const isPr = target.startsWith("pr");
-      if (isPr) {
-        const gh = join(fixture.root, "git-proxy", "gh");
-        await writeFile(gh, `#!/usr/bin/env node
+async function remoteWatchTargetArgs(fixture, target, failure) {
+  if (!target.startsWith("pr")) return ["--branch", "feature"];
+  const gh = join(fixture.root, "git-proxy", "gh");
+  await writeFile(gh, `#!/usr/bin/env node
 const { existsSync, readFileSync, appendFileSync } = require("node:fs");
 const failurePath = ${JSON.stringify(failure)};
 if (existsSync(failurePath)) {
@@ -1385,11 +1375,28 @@ process.stdout.write(JSON.stringify({
   headRefName: "feature", headRefOid: ${JSON.stringify(fixture.featureOid)}
 }));
 `);
-        await chmod(gh, 0o755);
-        execFileSync("git", ["--git-dir", fixture.remote, "update-ref", "refs/pull/7/head", fixture.featureOid]);
-      }
+  await chmod(gh, 0o755);
+  execFileSync("git", ["--git-dir", fixture.remote, "update-ref", "refs/pull/7/head", fixture.featureOid]);
+  return ["--pr", "7"];
+}
+
+for (const [target, failureMessage] of [
+  ["branch fetch", "fatal: Failed to connect to github.com port 443: Couldn't connect to server"],
+  ["branch ls-remote", "fatal: Could not resolve host: github.com"],
+  ["pr fetch", "fatal: The requested URL returned error: 500"],
+  ["pr gh", "HTTP 500: Internal Server Error (https://api.github.com/graphql)"],
+]) {
+  test(`retains the snapshot and retries after transient ${target} failures`, async () => {
+    const fixture = await makeRemoteRepo();
+    const output = join(fixture.root, "watch.json");
+    const failure = join(fixture.root, "failure.json");
+    const remoteUrl = "https://github.com/example/project.git";
+    let watched;
+    try {
+      const env = await proxyRemote(fixture, remoteUrl, failure);
+      git(fixture.repo, "remote", "set-url", "origin", remoteUrl);
       const args = [
-        ...(isPr ? ["--pr", "7"] : ["--branch", "feature"]),
+        ...await remoteWatchTargetArgs(fixture, target, failure),
         "--cache-dir", join(fixture.root, "cache"), "--watch", "--output", output,
       ];
       watched = startWatcher(fixture.repo, args, { env });
@@ -1397,9 +1404,7 @@ process.stdout.write(JSON.stringify({
       const original = await readFile(output, "utf8");
       await writeFile(failure, JSON.stringify({
         command: target.split(" ")[1],
-        message: target.endsWith("gh")
-          ? "error connecting to api.github.com"
-          : "fatal: Failed to connect to github.com port 443: Couldn't connect to server",
+        message: failureMessage,
       }));
       await waitFor(() => watched.logs().includes("Keeping the last valid review") || watched.child.exitCode !== null);
       assert.equal(watched.child.exitCode, null, watched.logs());
@@ -1411,7 +1416,7 @@ process.stdout.write(JSON.stringify({
       await rm(failure);
       await waitFor(() => watched.logs().includes("Remote refresh recovered"));
       assert.equal(await readFile(output, "utf8"), original);
-      if (!isPr) {
+      if (!target.startsWith("pr")) {
         const head = await publishFeatureUpdate(fixture, "recovered.txt", "recovered\n");
         await waitForSnapshot(output, watched, (value) => value.repo.head === head);
       }
