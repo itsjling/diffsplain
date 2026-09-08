@@ -439,6 +439,15 @@ function bareCache(remoteUrl) {
   return { path, run };
 }
 
+class RemoteConnectionError extends Error {}
+
+function remoteLookupError(message, error) {
+  const detail = error?.stderr?.toString().trim() || '';
+  const transient = /(?:failed to connect|couldn't connect|could not resolve host|could not resolve hostname|temporary failure in name resolution|connection (?:timed out|reset|refused|closed)|network is unreachable|operation timed out|i\/o timeout|TLS connection was non-properly terminated|error connecting to|HTTP 50[234]|requested URL returned error: 50[234])/i.test(detail);
+  const ErrorType = transient ? RemoteConnectionError : Error;
+  return new ErrorType(message);
+}
+
 function fetchInto(cache, remoteUrl, refspecs) {
   try {
     runGit(
@@ -456,8 +465,9 @@ function fetchInto(cache, remoteUrl, refspecs) {
     );
   } catch (error) {
     const detail = error?.stderr?.toString().trim();
-    throw new Error(
+    throw remoteLookupError(
       `Could not fetch the remote target${detail ? `: ${detail}` : ''}`,
+      error,
     );
   }
 }
@@ -484,8 +494,8 @@ function remoteDefaultBranchInfo(remoteUrl) {
   let raw;
   try {
     raw = runGit(['ls-remote', '--symref', remoteUrl, 'HEAD'], { remoteUrl });
-  } catch {
-    throw new Error('Could not read the remote default branch');
+  } catch (error) {
+    throw remoteLookupError('Could not read the remote default branch', error);
   }
   const match = raw.match(/^ref:\s+refs\/heads\/([^\t\n]+)\s+HEAD$/m);
   if (!match) {
@@ -659,8 +669,9 @@ function pullRequestInfo(pr, remote) {
       )
         ? ' Check gh auth status.'
         : '';
-    throw new Error(
+    throw remoteLookupError(
       `Could not read pull request ${pr} with gh${detail ? `: ${detail}` : ''}.${authHint}`,
+      error,
     );
   }
 }
@@ -1467,13 +1478,21 @@ function fingerprint() {
   ].join('|');
 }
 
-const refresh = () => {
+let remoteRefreshFailed = false;
+const refresh = ({ retainSnapshot = false } = {}) => {
   try {
     const wrote = build();
+    if (remoteRefreshFailed) console.error('Remote refresh recovered.');
+    remoteRefreshFailed = false;
     console.log(wrote ? `Wrote ${output}` : 'No diff-data changes');
     return true;
   } catch (error) {
     console.error(error.message);
+    if (retainSnapshot && error instanceof RemoteConnectionError) {
+      remoteRefreshFailed = true;
+      console.error('Keeping the last valid review; it has not been refreshed. Will retry the remote refresh.');
+      return true;
+    }
     process.exitCode = 1;
     return false;
   }
@@ -1504,10 +1523,11 @@ if (watching && started) {
       const next = fingerprint();
       remoteWait += watchInterval;
       const remoteDue = remoteMode && remoteWait >= remoteRefreshInterval;
+      if (remoteRefreshFailed && !remoteDue) return true;
       if (next !== last || remoteDue || watchContent) {
         last = next;
         remoteWait = 0;
-        if (!refresh()) {
+        if (!refresh({ retainSnapshot: true })) {
           clearInterval(watcher);
           return false;
         }
