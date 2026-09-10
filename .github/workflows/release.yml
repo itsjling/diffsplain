@@ -48,7 +48,7 @@ jobs:
           RELEASE_VERSION: ${{ inputs.version }}
         run: node scripts/release-workflow.mjs prepare "$RELEASE_VERSION"
       - name: Upload the verified release
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: npm-release-${{ inputs.version }}
           path: |
