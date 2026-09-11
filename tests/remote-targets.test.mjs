@@ -34,7 +34,7 @@ function run(repo, args, options = {}) {
   );
 }
 
-async function proxyRemote(fixture, remoteUrl) {
+async function proxyRemote(fixture, remoteUrl, failurePath) {
   const bin = join(fixture.root, "git-proxy");
   const proxy = join(bin, "git");
   await mkdir(bin);
@@ -42,6 +42,16 @@ async function proxyRemote(fixture, remoteUrl) {
     proxy,
     `#!/usr/bin/env node
 const { spawnSync } = require("node:child_process");
+const { existsSync, readFileSync, appendFileSync } = require("node:fs");
+const failurePath = ${JSON.stringify(failurePath) || "undefined"};
+if (failurePath && existsSync(failurePath)) {
+  const failure = JSON.parse(readFileSync(failurePath, "utf8"));
+  if (process.argv.includes(failure.command)) {
+    appendFileSync(failurePath + ".attempts", Date.now() + "\\n");
+    process.stderr.write(failure.message);
+    process.exit(128);
+  }
+}
 const args = process.argv.slice(2).map((arg) =>
   arg === ${JSON.stringify(remoteUrl)}
     ? ${JSON.stringify(fixture.remote)}
@@ -1340,6 +1350,104 @@ test("rejects conflicting remote target flags", async () => {
     );
     assert.notEqual(result.status, 0);
     assert.match(result.stderr, /--branch.*--pr|--pr.*--branch/i);
+  } finally {
+    await rm(fixture.root, { recursive: true, force: true });
+  }
+});
+
+async function remoteWatchTargetArgs(fixture, target, failure) {
+  if (!target.startsWith("pr")) return ["--branch", "feature"];
+  const gh = join(fixture.root, "git-proxy", "gh");
+  await writeFile(gh, `#!/usr/bin/env node
+const { existsSync, readFileSync, appendFileSync } = require("node:fs");
+const failurePath = ${JSON.stringify(failure)};
+if (existsSync(failurePath)) {
+  const failure = JSON.parse(readFileSync(failurePath, "utf8"));
+  if (failure.command === "gh") {
+    appendFileSync(failurePath + ".attempts", Date.now() + "\\n");
+    process.stderr.write(failure.message);
+    process.exit(1);
+  }
+}
+process.stdout.write(JSON.stringify({
+  number: 7, title: "Feature", url: "https://github.com/example/project/pull/7",
+  baseRefName: "main", baseRefOid: ${JSON.stringify(fixture.mainOid)},
+  headRefName: "feature", headRefOid: ${JSON.stringify(fixture.featureOid)}
+}));
+`);
+  await chmod(gh, 0o755);
+  execFileSync("git", ["--git-dir", fixture.remote, "update-ref", "refs/pull/7/head", fixture.featureOid]);
+  return ["--pr", "7"];
+}
+
+for (const [target, failureMessage] of [
+  ["branch fetch", "fatal: Failed to connect to github.com port 443: Couldn't connect to server"],
+  ["branch ls-remote", "fatal: Could not resolve host: github.com"],
+  ["pr fetch", "fatal: The requested URL returned error: 500"],
+  ["pr gh", "HTTP 500: Internal Server Error (https://api.github.com/graphql)"],
+]) {
+  test(`retains the snapshot and retries after transient ${target} failures`, async () => {
+    const fixture = await makeRemoteRepo();
+    const output = join(fixture.root, "watch.json");
+    const failure = join(fixture.root, "failure.json");
+    const remoteUrl = "https://github.com/example/project.git";
+    let watched;
+    try {
+      const env = await proxyRemote(fixture, remoteUrl, failure);
+      git(fixture.repo, "remote", "set-url", "origin", remoteUrl);
+      const args = [
+        ...await remoteWatchTargetArgs(fixture, target, failure),
+        "--cache-dir", join(fixture.root, "cache"), "--watch", "--output", output,
+      ];
+      watched = startWatcher(fixture.repo, args, { env });
+      await waitForSnapshot(output, watched, (value) => value.repo.head === fixture.featureOid);
+      const original = await readFile(output, "utf8");
+      await writeFile(failure, JSON.stringify({
+        command: target.split(" ")[1],
+        message: failureMessage,
+      }));
+      await waitFor(() => watched.logs().includes("Keeping the last valid review") || watched.child.exitCode !== null);
+      assert.equal(watched.child.exitCode, null, watched.logs());
+      assert.match(watched.logs(), /Keeping the last valid review.*retry/i);
+      await waitFor(async () => (await readFile(`${failure}.attempts`, "utf8")).trim().split("\n").length >= 3);
+      const attempts = (await readFile(`${failure}.attempts`, "utf8")).trim().split("\n").map(Number);
+      assert.ok(attempts[2] - attempts[0] >= 150, "retries respect the remote refresh interval");
+      assert.equal(await readFile(output, "utf8"), original);
+      await rm(failure);
+      await waitFor(() => watched.logs().includes("Remote refresh recovered"));
+      assert.equal(await readFile(output, "utf8"), original);
+      if (!target.startsWith("pr")) {
+        const head = await publishFeatureUpdate(fixture, "recovered.txt", "recovered\n");
+        await waitForSnapshot(output, watched, (value) => value.repo.head === head);
+      }
+      await writeFile(failure, JSON.stringify({ command: "fetch", message: "fatal: couldn't find remote ref refs/heads/feature" }));
+      await waitFor(() => watched.child.exitCode !== null);
+      assert.equal(watched.child.exitCode, 1, "permanent target errors still stop the watcher");
+    } finally {
+      await stopIfRunning(watched);
+      await rm(fixture.root, { recursive: true, force: true });
+    }
+  });
+}
+
+test("fails initial transient remote lookup without serving an old snapshot", async () => {
+  const fixture = await makeRemoteRepo();
+  const output = join(fixture.root, "old.json");
+  const failure = join(fixture.root, "failure.json");
+  const remoteUrl = "https://github.com/example/project.git";
+  try {
+    const env = await proxyRemote(fixture, remoteUrl, failure);
+    git(fixture.repo, "remote", "set-url", "origin", remoteUrl);
+    await writeFile(output, '{"old":true}\n');
+    await writeFile(failure, JSON.stringify({ command: "fetch", message: "fatal: Failed to connect to github.com port 443" }));
+    const result = spawnSync(process.execPath, [script, "--repo", fixture.repo,
+      "--branch", "feature", "--watch", "--cache-dir", join(fixture.root, "cache"), "--output", output],
+    { env, encoding: "utf8", timeout: 10_000 });
+    assert.equal(result.status, 1);
+    assert.match(result.stderr, /Could not fetch the remote target/);
+    assert.doesNotMatch(result.stdout, /Wrote|No diff-data changes/);
+    assert.doesNotMatch(result.stderr, /Keeping the last valid review/);
+    assert.equal(await readFile(output, "utf8"), '{"old":true}\n');
   } finally {
     await rm(fixture.root, { recursive: true, force: true });
   }

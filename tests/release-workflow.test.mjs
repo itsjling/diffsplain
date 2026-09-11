@@ -604,7 +604,7 @@ test('workflow pins the trusted, serialized, split-job release contract', async 
   assert.match(workflow, /^  release:\n    needs: prepare/m);
   assert.match(
     workflow,
-    /^  release:\n(?:.|\n)*?    permissions:\n      contents: write\n      id-token: write/m,
+    /^  release:\n(?:.|\n)*?    permissions:\n      contents: read\n      id-token: write/m,
   );
   assert.match(workflow, /actions\/download-artifact@v5/);
   assert.match(workflow, /if: github\.ref == 'refs\/heads\/main'/);
@@ -632,10 +632,16 @@ test('workflow pins the trusted, serialized, split-job release contract', async 
   );
   assert.match(prepareJob, /ref: \$\{\{ github\.sha \}\}/);
   assert.doesNotMatch(prepareJob, /ref: main/);
+  assert.doesNotMatch(prepareJob, /RELEASE_PUSH_KEY|ssh-key:/);
   assert.match(prepareJob, /git checkout -B main "\$GITHUB_SHA"/);
   const releaseJob = workflow.slice(workflow.indexOf('\n  release:'));
   assert.match(releaseJob, /ref: \$\{\{ github\.sha \}\}/);
   assert.doesNotMatch(releaseJob, /ref: main/);
+  assert.match(releaseJob, /ssh-key: \$\{\{ secrets\.RELEASE_PUSH_KEY \}\}/);
+  assert.match(releaseJob, /test -n "\$RELEASE_PUSH_KEY"/);
+  assert.ok(
+    releaseJob.indexOf('test -n') < releaseJob.indexOf('uses: actions/checkout'),
+  );
   assert.doesNotMatch(releaseJob, /pnpm install|release:verify/);
   assert.doesNotMatch(helper, /^import .*release\.mjs/m);
   assert.match(helper, /'--ignore-scripts'/);

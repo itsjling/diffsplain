@@ -67,14 +67,19 @@ jobs:
     runs-on: ubuntu-latest
     environment: npm-publish
     permissions:
-      contents: write
+      contents: read
       id-token: write
     steps:
+      - name: Require the release push identity
+        env:
+          RELEASE_PUSH_KEY: ${{ secrets.RELEASE_PUSH_KEY }}
+        run: test -n "$RELEASE_PUSH_KEY"
       - name: Check out the dispatch revision with release credentials
         uses: actions/checkout@v6
         with:
           ref: ${{ github.sha }}
           fetch-depth: 0
+          ssh-key: ${{ secrets.RELEASE_PUSH_KEY }}
       - name: Set up Node
         uses: actions/setup-node@v6
         with:

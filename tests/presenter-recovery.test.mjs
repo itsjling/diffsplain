@@ -61,14 +61,14 @@ function stop(child) {
   });
 }
 
-function present(repo, summaries, output, codex, environment = {}) {
+function present(repo, summaries, output, codex, environment = {}, target = ['--worktree']) {
   return spawn(
     process.execPath,
     [
       script,
       '--repo',
       repo,
-      '--worktree',
+      ...target,
       '--agent',
       'codex',
       '--summaries',
@@ -237,6 +237,117 @@ process.stdout.write(JSON.stringify(response));
   } finally {
     await stopIfRunning(first);
     await stopIfRunning(second);
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+
+test('serves completed notes and lets an active agent finish during a remote outage', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'diffsplain-remote-recovery-'));
+  const repo = await makeRepo(root, ['changed.txt']);
+  const remote = join(root, 'remote.git');
+  const bin = join(root, 'bin');
+  const failure = join(root, 'offline');
+  const release = join(root, 'release-agent');
+  const active = join(root, 'agent-active');
+  const calls = join(root, 'calls.jsonl');
+  const summaries = join(root, 'notes.json');
+  const output = join(root, 'snapshot.json');
+  const codex = join(root, 'codex.mjs');
+  let presenter;
+  let logs = '';
+  try {
+    git(repo, 'branch', '-M', 'main');
+    git(repo, 'switch', '-qc', 'feature');
+    git(repo, 'commit', '-qam', 'feature');
+    execFileSync('git', ['init', '--bare', '-q', remote]);
+    git(repo, 'remote', 'add', 'origin', remote);
+    git(repo, 'push', '-q', 'origin', 'main', 'feature');
+    git(repo, 'switch', '-q', 'main');
+    await mkdir(bin);
+    await writeFile(join(bin, 'git'), `#!/usr/bin/env node
+const { existsSync } = require('node:fs');
+const { spawnSync } = require('node:child_process');
+if (process.argv.includes('fetch') && existsSync(${JSON.stringify(failure)})) {
+  process.stderr.write('fatal: Failed to connect to github.com port 443');
+  process.exit(128);
+}
+const result = spawnSync('git', process.argv.slice(2), {
+  env: { ...process.env, PATH: process.env.RECOVERY_REAL_PATH }, stdio: 'inherit',
+});
+process.exit(result.status ?? 1);
+`);
+    await chmod(join(bin, 'git'), 0o755);
+    await writeFile(codex, `#!/usr/bin/env node
+import { appendFileSync, existsSync, readFileSync, writeFileSync } from 'node:fs';
+const input = JSON.parse(readFileSync(0, 'utf8'));
+const paths = input.files.map((file) => file.path);
+appendFileSync(${JSON.stringify(calls)}, JSON.stringify(paths) + '\\n');
+if (!paths.length) {
+  writeFileSync(${JSON.stringify(active)}, 'active');
+  while (!existsSync(${JSON.stringify(release)})) {
+    await new Promise((resolve) => setTimeout(resolve, 25));
+  }
+}
+process.stdout.write(JSON.stringify({
+  change: { title: 'Feature', summary: 'Updates text.', why: 'Tests recovery.', highlights: [], risks: [] },
+  files: paths.map((path) => ({ path, title: 'Updated text', what: 'Changes text.', why: 'Tests recovery.', details: [], risks: [] })),
+}));
+`);
+    await chmod(codex, 0o755);
+    presenter = present(repo, summaries, output, codex, {
+      PATH: `${bin}:${process.env.PATH}`,
+      RECOVERY_REAL_PATH: process.env.PATH,
+      XDG_CACHE_HOME: join(root, 'cache'),
+      XDG_CONFIG_HOME: join(root, 'config'),
+      DIFFSPLAIN_WATCH_INTERVAL_MS: '50',
+      DIFFSPLAIN_REMOTE_REFRESH_INTERVAL_MS: '200',
+    }, ['--branch', 'feature', '--base', 'main']);
+    presenter.stdout.on('data', (chunk) => { logs += chunk; });
+    presenter.stderr.on('data', (chunk) => { logs += chunk; });
+    const ready = await waitFor(() => {
+      const line = logs.split('\n').find((value) => value.startsWith('{"event":"ready"'));
+      return line && JSON.parse(line);
+    });
+    const url = new URL('diff-data.json', ready.url);
+    url.searchParams.set('access', ready.access);
+    const served = async () => {
+      const response = await fetch(url);
+      assert.equal(response.status, 200);
+      return response.json();
+    };
+    await waitFor(() => readFile(active, 'utf8'));
+    const before = await served();
+    assert.equal(before.files[0].noteReady, true);
+    assert.equal(before.notes.status, 'generating');
+    await writeFile(failure, 'offline');
+    await waitFor(() => (logs.match(/Keeping the last valid review/g) || []).length >= 2);
+    assert.equal(presenter.exitCode, null, logs);
+    assert.deepEqual(await served(), before);
+    await writeFile(release, 'finish');
+    const completed = await waitFor(async () => {
+      const snapshot = await served();
+      return snapshot.notes.complete && snapshot;
+    });
+    assert.equal(completed.files[0].noteReady, true);
+    const callsBefore = await readFile(calls, 'utf8');
+    const notesBefore = await readFile(summaries, 'utf8');
+    await rm(failure);
+    await waitFor(() => logs.includes('Remote refresh recovered'));
+    const recovered = await served();
+    assert.deepEqual(recovered.files, completed.files);
+    assert.deepEqual(recovered.change, completed.change);
+    assert.deepEqual(recovered.notes, completed.notes);
+    assert.deepEqual(recovered.repo, completed.repo);
+    assert.equal(await readFile(calls, 'utf8'), callsBefore);
+    assert.equal(await readFile(summaries, 'utf8'), notesBefore);
+    const stopped = await stop(presenter);
+    assert.equal(stopped.code, 0);
+    await assert.rejects(fetch(url));
+  } catch (error) {
+    throw new Error(`${error.message}\n${logs}`, { cause: error });
+  } finally {
+    await stopIfRunning(presenter);
     await rm(root, { recursive: true, force: true });
   }
 });
