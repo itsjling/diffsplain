@@ -134,7 +134,7 @@ const DIFF_OPTIONS = {
   overflow: "scroll",
   theme: "pierre-light",
   themeType: "light",
-} satisfies FileDiffOptions<undefined>;
+} satisfies FileDiffOptions<undefined, undefined>;
 
 function shortRef(ref: string) {
   return ref.length > 16 ? ref.slice(0, 8) : ref;

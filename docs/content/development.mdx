@@ -401,9 +401,11 @@ keep the same version and tag, fix the npm login or named error, and rerun only
 `release:publish`. If npm accepted the package but the Git push failed, push the
 existing commit and tag without publishing again.
 
-The production audit has no findings. `pnpm audit` reports three high and one
-low finding below the Blume docs tool. We accept this limited risk while docs
-builds use only committed docs and do not handle user content.
+Dependency security overrides live in `pnpm-workspace.yaml`. Their advisory
+references and re-evaluation steps are recorded in
+[the dependency override register](https://github.com/itsjling/diffsplain/blob/main/docs/dependency-overrides.md).
+Run `pnpm audit` and `pnpm audit --prod` for current findings; docs builds use
+committed content and do not handle user submissions.
 
 ## Refresh the demo
 

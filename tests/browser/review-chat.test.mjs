@@ -28,7 +28,7 @@ function file(path, { agentExcluded = false, oldPath } = {}) {
       "index 0000000..1111111 100644",
       `--- a/${oldPath ?? path}`,
       `+++ b/${path}`,
-      "@@ -1 +1,2 @@",
+      "@@ -1 +1 @@",
       "-before",
       "+after",
     ].join("\n"),
