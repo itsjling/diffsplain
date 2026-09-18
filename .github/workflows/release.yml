@@ -23,7 +23,7 @@ jobs:
       contents: read
     steps:
       - name: Check out the dispatch revision without credentials
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
         with:
           ref: ${{ github.sha }}
           fetch-depth: 0
@@ -75,7 +75,7 @@ jobs:
           RELEASE_PUSH_KEY: ${{ secrets.RELEASE_PUSH_KEY }}
         run: test -n "$RELEASE_PUSH_KEY"
       - name: Check out the dispatch revision with release credentials
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
         with:
           ref: ${{ github.sha }}
           fetch-depth: 0
