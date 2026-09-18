@@ -33,7 +33,7 @@ jobs:
       - name: Set up pinned pnpm
         uses: pnpm/action-setup@v4
       - name: Set up Node
-        uses: actions/setup-node@v6
+        uses: actions/setup-node@v7
         with:
           node-version: 24
           package-manager-cache: false
@@ -81,7 +81,7 @@ jobs:
           fetch-depth: 0
           ssh-key: ${{ secrets.RELEASE_PUSH_KEY }}
       - name: Set up Node
-        uses: actions/setup-node@v6
+        uses: actions/setup-node@v7
         with:
           node-version: 24
           package-manager-cache: false
