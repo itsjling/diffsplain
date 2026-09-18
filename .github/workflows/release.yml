@@ -31,7 +31,7 @@ jobs:
       - name: Create the pinned local release branch
         run: git checkout -B main "$GITHUB_SHA"
       - name: Set up pinned pnpm
-        uses: pnpm/action-setup@v4
+        uses: pnpm/action-setup@v6
       - name: Set up Node
         uses: actions/setup-node@v6
         with:
