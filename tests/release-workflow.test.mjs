@@ -598,7 +598,7 @@ test('workflow pins the trusted, serialized, split-job release contract', async 
   assert.match(workflow, /^permissions: \{\}$/m);
   assert.match(workflow, /^  prepare:\n(?:.|\n)*?    permissions:\n      contents: read/m);
   assert.match(workflow, /persist-credentials: false/);
-  assert.match(workflow, /actions\/upload-artifact@v4/);
+  assert.match(workflow, /actions\/upload-artifact@v7/);
   assert.match(workflow, /include-hidden-files: true/);
   assert.match(workflow, /retention-days: 90/);
   assert.match(workflow, /^  release:\n    needs: prepare/m);
