@@ -23,7 +23,7 @@ importers:
   .:
     dependencies:
       '@pierre/diffs':
-        specifier: ^1.4.1
+        specifier: ^1.4.2
         version: 1.4.2(@shikijs/themes@4.4.3)(react-dom@19.3.0(react@19.3.0))(react@19.3.0)
       ignore:
         specifier: 7.0.9

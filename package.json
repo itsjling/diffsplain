@@ -118,7 +118,7 @@
   },
   "type": "module",
   "dependencies": {
-    "@pierre/diffs": "^1.4.1",
+    "@pierre/diffs": "^1.4.2",
     "ignore": "7.0.9"
   }
 }
