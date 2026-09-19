@@ -251,6 +251,9 @@ test('serves completed notes and lets an active agent finish during a remote out
   const release = join(root, 'release-agent');
   const active = join(root, 'agent-active');
   const calls = join(root, 'calls.jsonl');
+  const agentStarted = join(root, 'agent-started');
+  const refreshBlocked = join(root, 'refresh-blocked');
+  const releaseRefresh = join(root, 'release-refresh');
   const summaries = join(root, 'notes.json');
   const output = join(root, 'snapshot.json');
   const codex = join(root, 'codex.mjs');
@@ -266,11 +269,21 @@ test('serves completed notes and lets an active agent finish during a remote out
     git(repo, 'switch', '-q', 'main');
     await mkdir(bin);
     await writeFile(join(bin, 'git'), `#!/usr/bin/env node
-const { existsSync } = require('node:fs');
+const { existsSync, writeFileSync } = require('node:fs');
 const { spawnSync } = require('node:child_process');
 if (process.argv.includes('fetch') && existsSync(${JSON.stringify(failure)})) {
   process.stderr.write('fatal: Failed to connect to github.com port 443');
   process.exit(128);
+}
+if (process.argv.includes('--name-status') &&
+    existsSync(${JSON.stringify(agentStarted)}) &&
+    !existsSync(${JSON.stringify(refreshBlocked)})) {
+  writeFileSync(${JSON.stringify(refreshBlocked)}, 'blocked');
+  const deadline = Date.now() + 10000;
+  while (!existsSync(${JSON.stringify(releaseRefresh)})) {
+    if (Date.now() > deadline) process.exit(1);
+    Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 25);
+  }
 }
 const result = spawnSync('git', process.argv.slice(2), {
   env: { ...process.env, PATH: process.env.RECOVERY_REAL_PATH }, stdio: 'inherit',
@@ -283,7 +296,12 @@ import { appendFileSync, existsSync, readFileSync, writeFileSync } from 'node:fs
 const input = JSON.parse(readFileSync(0, 'utf8'));
 const paths = input.files.map((file) => file.path);
 appendFileSync(${JSON.stringify(calls)}, JSON.stringify(paths) + '\\n');
-if (!paths.length) {
+if (paths.length) {
+  writeFileSync(${JSON.stringify(agentStarted)}, 'started');
+  while (!existsSync(${JSON.stringify(refreshBlocked)})) {
+    await new Promise((resolve) => setTimeout(resolve, 25));
+  }
+} else {
   writeFileSync(${JSON.stringify(active)}, 'active');
   while (!existsSync(${JSON.stringify(release)})) {
     await new Promise((resolve) => setTimeout(resolve, 25));
@@ -320,7 +338,10 @@ process.stdout.write(JSON.stringify({
     const before = await served();
     assert.equal(before.files[0].noteReady, true);
     assert.equal(before.notes.status, 'generating');
+    assert.equal(before.usage.agentNotes.calls, 1);
+    assert.equal(before.notes.changeReady, false);
     await writeFile(failure, 'offline');
+    await writeFile(releaseRefresh, 'finish');
     await waitFor(() => (logs.match(/Keeping the last valid review/g) || []).length >= 2);
     assert.equal(presenter.exitCode, null, logs);
     assert.deepEqual(await served(), before);
@@ -330,6 +351,8 @@ process.stdout.write(JSON.stringify({
       return snapshot.notes.complete && snapshot;
     });
     assert.equal(completed.files[0].noteReady, true);
+    assert.equal(completed.usage.agentNotes.calls, 2);
+    assert.equal(completed.notes.changeReady, true);
     const callsBefore = await readFile(calls, 'utf8');
     const notesBefore = await readFile(summaries, 'utf8');
     await rm(failure);
@@ -339,6 +362,7 @@ process.stdout.write(JSON.stringify({
     assert.deepEqual(recovered.change, completed.change);
     assert.deepEqual(recovered.notes, completed.notes);
     assert.deepEqual(recovered.repo, completed.repo);
+    assert.deepEqual(recovered.usage, completed.usage);
     assert.equal(await readFile(calls, 'utf8'), callsBefore);
     assert.equal(await readFile(summaries, 'utf8'), notesBefore);
     const stopped = await stop(presenter);

@@ -227,6 +227,7 @@ test("starts the note agent after the watch snapshot and stops cleanly", async (
         : undefined;
     });
     assert.equal(snapshot.files[0].summary.title, "Update text");
+    assert.equal(snapshot.usage.agentNotes.calls, 2);
 
     const result = await stop(presenter);
     presenter = undefined;
@@ -322,6 +323,8 @@ test("starts the note agent after the watch snapshot and stops cleanly", async (
     await waitForOutput(presenter, /^Reusing current agent notes\.$/m);
     const reuseLog = await readFile(events, "utf8");
     assert.equal(agentCallCount(reuseLog), firstRunCalls + 2);
+    const reusedSnapshot = JSON.parse(await readFile(output, "utf8"));
+    assert.equal(reusedSnapshot.usage.agentNotes.calls, 0);
 
     const reuseResult = await stop(presenter);
     presenter = undefined;

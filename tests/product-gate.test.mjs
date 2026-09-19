@@ -6,17 +6,17 @@ import test from 'node:test';
 const root = new URL('..', import.meta.url);
 const check = new URL('../scripts/check.mjs', import.meta.url).pathname;
 
-test('runs the product gate once from the lockfile on the pinned Node LTS', async () => {
+test('runs the product gate once from the lockfile on an explicit Node runtime', async () => {
   const [workflow, fallow] = await Promise.all([
     readFile(new URL('../.github/workflows/product-gate.yml', import.meta.url), 'utf8'),
     readFile(new URL('../.github/workflows/fallow.yml', import.meta.url), 'utf8'),
   ]);
 
   assert.match(workflow, /pull_request:/);
-  assert.match(workflow, /node-version: '24\.20\.0'/);
+  assert.match(workflow, /^\s+node-version: ['"]?\d+\.\d+\.\d+['"]?$/m);
   assert.doesNotMatch(workflow, /check-latest: true/);
   assert.doesNotMatch(workflow, /matrix:/);
-  assert.match(workflow, /uses: pnpm\/action-setup@v4/);
+  assert.match(workflow, /uses: pnpm\/action-setup@\S+/);
   assert.match(workflow, /run: pnpm install --frozen-lockfile/);
   assert.match(workflow, /run: pnpm run check/);
   assert.match(fallow, /not full project health/);

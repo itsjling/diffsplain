@@ -1341,6 +1341,8 @@ function build() {
       ...(generatedFor ? { generatedFor } : {}),
       fresh: summariesAreFresh,
       complete: summariesAreComplete,
+      changeReady: Boolean(agentFiles.length && completeChangeSummary(sourceSummaries.change)),
+      updatedAt: sourceSummaries.meta?.generatedAt || sourceSummaries.meta?.startedAt,
       status: noteStatus,
       completedFiles,
       totalFiles: agentFiles.length,

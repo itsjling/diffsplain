@@ -16,6 +16,7 @@ import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { createInterface } from 'node:readline';
 import { fileURLToPath } from 'node:url';
+import { isDeepStrictEqual } from 'node:util';
 import { helpText, parseCliArgs } from './cli-args.mjs';
 import { applyAgentConfigOperation } from './agent-config.mjs';
 import {
@@ -45,6 +46,7 @@ import {
   agentRunCompleted,
   agentRunFailed,
   agentRunNeeded,
+  preserveAgentNotes,
   agentRunSuperseded,
   ensureBuiltAssets,
   failedAgentRunForFingerprint,
@@ -776,15 +778,16 @@ function markSnapshotReady() {
   );
 }
 
-function snapshotForPresentation(snapshot) {
+function snapshotForPresentation(snapshot, previous) {
   const zeroUsage = usageSummary(emptyUsageAccumulator());
   const hasCurrentNotes = snapshotStateFromSnapshot(snapshot)
     .hasCurrentAgentNotes;
   const current = {
     ...snapshot,
-    usage: reviewUsage(zeroUsage, zeroUsage),
+    usage: previous && snapshotReviewFingerprint(previous) === snapshotReviewFingerprint(snapshot)
+      ? previous.usage ?? reviewUsage(zeroUsage, zeroUsage)
+      : reviewUsage(zeroUsage, zeroUsage),
   };
-  if (hasCurrentNotes && snapshot.notes?.fast === cli.fast) return current;
   const content = {
     ...current,
     notes: {
@@ -795,22 +798,33 @@ function snapshotForPresentation(snapshot) {
         : { complete: false, status: 'generating' }),
     },
   };
-  delete content.version;
-  delete content.generatedAt;
+  if (hasCurrentNotes && snapshot.notes?.fast === cli.fast) content.notes = snapshot.notes;
+  const next = previous && agentSettingsMatch(previous.notes) &&
+    previous.notes.fast === cli.fast && previous.notes.accessMode === accessMode.mode
+    ? preserveAgentNotes(content, previous)
+    : content;
+  delete next.version;
+  delete next.generatedAt;
   return {
     version: createHash('sha256')
-      .update(JSON.stringify(content))
+      .update(JSON.stringify(next))
       .digest('hex')
       .slice(0, 12),
     generatedAt: new Date().toISOString(),
-    ...content,
+    ...next,
   };
 }
 
 function seedPresentationSnapshot() {
-  const snapshot = snapshotForPresentation(
-    JSON.parse(readFileSync(rawSnapshotPath, 'utf8')),
-  );
+  const previous = snapshotReady
+    ? JSON.parse(readFileSync(outputPath, 'utf8'))
+    : undefined;
+  const rawSnapshot = JSON.parse(readFileSync(rawSnapshotPath, 'utf8'));
+  const snapshot = snapshotForPresentation(rawSnapshot, previous);
+  if (previous && isDeepStrictEqual(
+    { ...previous, version: undefined, generatedAt: undefined },
+    { ...snapshot, version: undefined, generatedAt: undefined },
+  )) return;
   mkdirSync(dirname(outputPath), { recursive: true });
   const pendingOutput = `${outputPath}.${process.pid}.${randomBytes(8).toString('hex')}.tmp`;
   writeFileSync(pendingOutput, `${JSON.stringify(snapshot, null, 2)}\n`);

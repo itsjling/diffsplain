@@ -146,3 +146,50 @@ export function ensureBuiltAssets(options) {
   }
   return true;
 }
+
+function matchingAgentNotes(snapshot, previous) {
+  return previous?.notes.fresh &&
+    previous.notes.reviewFingerprint === snapshot.notes.reviewFingerprint &&
+    previous.notes.agentReviewFingerprint === snapshot.notes.agentReviewFingerprint &&
+    previous.notes.generatedFor === snapshot.notes.agentReviewFingerprint;
+}
+
+function newerAgentNotes(current, previous) {
+  if (current.updatedAt !== previous.updatedAt) {
+    return Boolean(current.updatedAt &&
+      (!previous.updatedAt || current.updatedAt > previous.updatedAt));
+  }
+  return ['complete', 'changeReady', 'completedFiles'].some(
+    (key) => Number(current[key] || 0) > Number(previous[key] || 0),
+  );
+}
+
+function copyNoteFields(target, source, keys) {
+  const next = { ...target };
+  for (const key of keys) {
+    if (Object.hasOwn(source, key)) next[key] = source[key];
+    else delete next[key];
+  }
+  return next;
+}
+
+export function preserveAgentNotes(snapshot, previous) {
+  if (!matchingAgentNotes(snapshot, previous)) return snapshot;
+  if (newerAgentNotes(snapshot.notes, previous.notes)) return snapshot;
+
+  const priorFiles = new Map(previous.files.map((file) => [file.path, file]));
+  const files = snapshot.files.map((file) => {
+    const prior = priorFiles.get(file.path);
+    return prior ? copyNoteFields(file, prior, ['summary', 'noteReady', 'noteFailure']) : file;
+  });
+  const change = previous.notes.changeReady
+    ? copyNoteFields(snapshot.change, previous.change, ['title', 'summary', 'why', 'highlights', 'risks'])
+    : { ...snapshot.change };
+  return {
+    ...snapshot,
+    files,
+    change,
+    notes: { ...previous.notes, totalFiles: snapshot.notes.totalFiles },
+    usage: previous.usage,
+  };
+}
