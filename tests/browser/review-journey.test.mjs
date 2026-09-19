@@ -263,6 +263,48 @@ function deferred() {
   return { promise, resolve };
 }
 
+async function installSnapshotEvents(page, readyOnOpen = true) {
+  await page.addInitScript(({ readyOnOpen }) => {
+    class ControlledEventSource extends EventTarget {
+      static instances = [];
+
+      constructor(url) {
+        super();
+        this.closed = false;
+        this.url = String(url);
+        ControlledEventSource.instances.push(this);
+        if (readyOnOpen) {
+          queueMicrotask(() => {
+            this.dispatchEvent(new MessageEvent("ready", { data: "{}" }));
+          });
+        }
+      }
+
+      close() {
+        this.closed = true;
+      }
+    }
+
+    window.EventSource = ControlledEventSource;
+    window.controlledEvents = {
+      emit(type, data = "{}") {
+        const source = ControlledEventSource.instances.at(-1);
+        const event =
+          type === "error"
+            ? new Event(type)
+            : new MessageEvent(type, { data });
+        source.dispatchEvent(event);
+      },
+      state() {
+        return ControlledEventSource.instances.map((source) => ({
+          closed: source.closed,
+          url: source.url,
+        }));
+      },
+    };
+  }, { readyOnOpen });
+}
+
 test("parses Vite's URL when text and color codes cross output chunks", () => {
   let outputText = "";
   for (const chunk of [
@@ -1035,6 +1077,7 @@ test("keeps a pending success when a newer refresh fails", async () => {
     "pending successful refresh",
     { viewport: { width: 1280, height: 800 } },
     async (page) => {
+      await installSnapshotEvents(page, false);
       await writeSnapshot(fixture("pending-base"));
       await page.goto(serverUrl);
       await page.getByRole("heading", { name: "Explain saved todos" }).waitFor();
@@ -1046,13 +1089,15 @@ test("keeps a pending success when a newer refresh fails", async () => {
       const delaySuccess = async (route) => {
         const response = await route.fetch();
         const body = await response.body();
+        assert.equal(JSON.parse(body).version, "pending-success");
         successCaptured.resolve();
         await releaseSuccess.promise;
         await route.fulfill({ response, body });
         successDelivered.resolve();
       };
-      await page.route("**/diff-data.json?*", delaySuccess);
+      await page.route("**/diff-data.json?*", delaySuccess, { times: 1 });
       await writeSnapshot(fixture("pending-success"));
+      await page.evaluate(() => window.controlledEvents.emit("update"));
       await successCaptured.promise;
 
       await page.route(
@@ -1063,14 +1108,20 @@ test("keeps a pending success when a newer refresh fails", async () => {
             contentType: "application/json",
             status: 503,
           }),
-        { times: 1 },
       );
       await writeSnapshot(fixture("newer-failure"));
+      for (let request = 0; request < 2; request += 1) {
+        const failedResponse = page.waitForResponse((response) =>
+          new URL(response.url()).pathname === "/diff-data.json" && response.status() === 503,
+        );
+        await page.evaluate(() => window.controlledEvents.emit("update"));
+        await failedResponse;
+      }
       await page.getByText("Snapshot returned 503").waitFor();
 
       releaseSuccess.resolve();
       await successDelivered.promise;
-      await page.unroute("**/diff-data.json?*", delaySuccess);
+      await page.unroute("**/diff-data.json?*");
       await page
         .getByRole("heading", { name: "Live review pending-success" })
         .waitFor();
@@ -1088,45 +1139,7 @@ test("recovers from event faults without resetting the selected file", async () 
     "event stream recovery",
     { viewport: { width: 1280, height: 800 } },
     async (page) => {
-      await page.addInitScript(() => {
-        class ControlledEventSource extends EventTarget {
-          static instances = [];
-
-          constructor(url) {
-            super();
-            this.closed = false;
-            this.url = String(url);
-            ControlledEventSource.instances.push(this);
-            queueMicrotask(() => {
-              this.dispatchEvent(
-                new MessageEvent("ready", { data: "{}" }),
-              );
-            });
-          }
-
-          close() {
-            this.closed = true;
-          }
-        }
-
-        window.EventSource = ControlledEventSource;
-        window.controlledEvents = {
-          emit(type, data = "{}") {
-            const source = ControlledEventSource.instances.at(-1);
-            const event =
-              type === "error"
-                ? new Event(type)
-                : new MessageEvent(type, { data });
-            source.dispatchEvent(event);
-          },
-          state() {
-            return ControlledEventSource.instances.map((source) => ({
-              closed: source.closed,
-              url: source.url,
-            }));
-          },
-        };
-      });
+      await installSnapshotEvents(page);
 
       await writeSnapshot(fixture("stream-one"));
       await page.goto(serverUrl);

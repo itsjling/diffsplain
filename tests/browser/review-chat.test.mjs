@@ -632,6 +632,9 @@ test("keeps chat threads, markdown, recovery, and review controls inside the sum
 
       for (const width of [1280, 980, 680, 320]) {
         await page.setViewportSize({ width, height: width === 320 ? 568 : 800 });
+        await page.locator(".page").evaluate((element) =>
+          Promise.all(element.getAnimations().map((animation) => animation.finished)),
+        );
         await page.getByRole("textbox", { name: "Ask about this file" }).scrollIntoViewIfNeeded();
         const dimensions = await page.evaluate(() => ({
           body: document.body.scrollWidth,
@@ -650,7 +653,10 @@ test("keeps chat threads, markdown, recovery, and review controls inside the sum
           const boxes = await page.locator(selector).evaluateAll((elements) =>
             elements.map((element) => element.getBoundingClientRect().height),
           );
-          assert.ok(boxes.every((height) => height >= 44), `${selector} at ${width}px`);
+          assert.ok(
+            boxes.every((height) => height >= 44),
+            `${selector} at ${width}px ${JSON.stringify(boxes)}`,
+          );
         }
       }
 
