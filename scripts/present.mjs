@@ -16,6 +16,7 @@ import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { createInterface } from 'node:readline';
 import { fileURLToPath } from 'node:url';
+import { isDeepStrictEqual } from 'node:util';
 import { helpText, parseCliArgs } from './cli-args.mjs';
 import { applyAgentConfigOperation } from './agent-config.mjs';
 import {
@@ -776,13 +777,15 @@ function markSnapshotReady() {
   );
 }
 
-function snapshotForPresentation(snapshot) {
+function snapshotForPresentation(snapshot, previous) {
   const zeroUsage = usageSummary(emptyUsageAccumulator());
   const hasCurrentNotes = snapshotStateFromSnapshot(snapshot)
     .hasCurrentAgentNotes;
   const current = {
     ...snapshot,
-    usage: reviewUsage(zeroUsage, zeroUsage),
+    usage: previous && snapshotReviewFingerprint(previous) === snapshotReviewFingerprint(snapshot)
+      ? previous.usage ?? reviewUsage(zeroUsage, zeroUsage)
+      : reviewUsage(zeroUsage, zeroUsage),
   };
   if (hasCurrentNotes && snapshot.notes?.fast === cli.fast) return current;
   const content = {
@@ -808,9 +811,17 @@ function snapshotForPresentation(snapshot) {
 }
 
 function seedPresentationSnapshot() {
+  const previous = snapshotReady
+    ? JSON.parse(readFileSync(outputPath, 'utf8'))
+    : undefined;
   const snapshot = snapshotForPresentation(
     JSON.parse(readFileSync(rawSnapshotPath, 'utf8')),
+    previous,
   );
+  if (previous && isDeepStrictEqual(
+    { ...previous, version: undefined, generatedAt: undefined },
+    { ...snapshot, version: undefined, generatedAt: undefined },
+  )) return;
   mkdirSync(dirname(outputPath), { recursive: true });
   const pendingOutput = `${outputPath}.${process.pid}.${randomBytes(8).toString('hex')}.tmp`;
   writeFileSync(pendingOutput, `${JSON.stringify(snapshot, null, 2)}\n`);

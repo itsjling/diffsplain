@@ -320,6 +320,7 @@ process.stdout.write(JSON.stringify({
     const before = await served();
     assert.equal(before.files[0].noteReady, true);
     assert.equal(before.notes.status, 'generating');
+    assert.equal(before.usage.agentNotes.calls, 1);
     await writeFile(failure, 'offline');
     await waitFor(() => (logs.match(/Keeping the last valid review/g) || []).length >= 2);
     assert.equal(presenter.exitCode, null, logs);
@@ -330,6 +331,7 @@ process.stdout.write(JSON.stringify({
       return snapshot.notes.complete && snapshot;
     });
     assert.equal(completed.files[0].noteReady, true);
+    assert.equal(completed.usage.agentNotes.calls, 2);
     const callsBefore = await readFile(calls, 'utf8');
     const notesBefore = await readFile(summaries, 'utf8');
     await rm(failure);
@@ -339,6 +341,7 @@ process.stdout.write(JSON.stringify({
     assert.deepEqual(recovered.change, completed.change);
     assert.deepEqual(recovered.notes, completed.notes);
     assert.deepEqual(recovered.repo, completed.repo);
+    assert.deepEqual(recovered.usage, completed.usage);
     assert.equal(await readFile(calls, 'utf8'), callsBefore);
     assert.equal(await readFile(summaries, 'utf8'), notesBefore);
     const stopped = await stop(presenter);

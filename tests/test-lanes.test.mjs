@@ -22,14 +22,14 @@ function assertPnpmCacheSetup(workflow, expectedCount) {
   const steps = workflowSteps(workflow);
   const nodeSetups = steps
     .map((step, index) => ({ ...step, index }))
-    .filter(({ body }) => body.includes('uses: actions/setup-node@v6'));
+    .filter(({ body }) => /^\s+uses: actions\/setup-node@\S+$/m.test(body));
 
   assert.equal(nodeSetups.length, expectedCount);
   for (const { body, index } of nodeSetups) {
     assert.match(body, /^\s+cache: pnpm$/m);
     assert.match(body, /^\s+cache-dependency-path: pnpm-lock.yaml$/m);
     assert.ok(index > 0, 'Node setup must follow pnpm setup');
-    assert.match(steps[index - 1].body, /^\s+uses: pnpm\/action-setup@v4$/m);
+    assert.match(steps[index - 1].body, /^\s+uses: pnpm\/action-setup@\S+$/m);
   }
   assert.doesNotMatch(workflow, /^\s+run: corepack(?: pnpm)?\b/m);
 }

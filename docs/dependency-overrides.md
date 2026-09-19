@@ -31,12 +31,13 @@ was not published at review time. The alias switches publisher to
 adds entry-length, bounds, and forward-progress checks to the affected parsers.
 The lockfile pins the published tarball integrity.
 
-The published package was tested with malformed ICNS, JXL, and HEIF inputs:
-upstream 2.0.2 timed out, while the fork rejected them. Valid ICNS, JXL, HEIF,
-PNG, and SVG headers retained their dimensions. Keep the bounded regressions
-in `tests/dependency-overrides.test.mjs` when evaluating a replacement.
-A clean npm audit alone is insufficient here because aliasing changes the
-package identity used for advisory matching.
+Direct parser tests with malformed ICNS, JXL, and HEIF inputs timed out on
+upstream 2.0.2, while the fork rejected them. The bounded regression in
+`tests/dependency-overrides.test.mjs` now checks Blume's public image audit: it
+must finish on those malformed files and report the exact dimensions of valid
+PNG and SVG files. Keep this behavior check when evaluating a replacement. A
+clean npm audit alone is insufficient here because aliasing changes the package
+identity used for advisory matching.
 
 Re-evaluate the fork's maintenance and security status at the next dependency
 update. Prefer a maintained upstream patched release if one becomes available;
