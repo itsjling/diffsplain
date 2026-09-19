@@ -86,7 +86,7 @@ jobs:
           node-version: 24
           package-manager-cache: false
       - name: Download the verified release
-        uses: actions/download-artifact@v5
+        uses: actions/download-artifact@v8
         with:
           name: npm-release-${{ inputs.version }}
           path: .cache
