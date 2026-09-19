@@ -598,7 +598,7 @@ test('workflow pins the trusted, serialized, split-job release contract', async 
   assert.match(workflow, /^permissions: \{\}$/m);
   assert.match(workflow, /^  prepare:\n(?:.|\n)*?    permissions:\n      contents: read/m);
   assert.match(workflow, /persist-credentials: false/);
-  assert.match(workflow, /actions\/upload-artifact@\S+/);
+  assert.match(workflow, /^\s+uses: actions\/upload-artifact@(?:v\d+(?:\.\d+){0,2}|[a-f0-9]{40})\s*$/m);
   assert.match(workflow, /include-hidden-files: true/);
   assert.match(workflow, /retention-days: 90/);
   assert.match(workflow, /^  release:\n    needs: prepare/m);
@@ -606,7 +606,7 @@ test('workflow pins the trusted, serialized, split-job release contract', async 
     workflow,
     /^  release:\n(?:.|\n)*?    permissions:\n      contents: read\n      id-token: write/m,
   );
-  assert.match(workflow, /actions\/download-artifact@\S+/);
+  assert.match(workflow, /^\s+uses: actions\/download-artifact@(?:v\d+(?:\.\d+){0,2}|[a-f0-9]{40})\s*$/m);
   assert.match(workflow, /if: github\.ref == 'refs\/heads\/main'/);
   assert.match(workflow, /runs-on: ubuntu-latest/);
   assert.match(workflow, /environment: npm-publish/);
@@ -614,8 +614,8 @@ test('workflow pins the trusted, serialized, split-job release contract', async 
   assert.match(workflow, /^\s+node-version: ['"]?\d+(?:\.\d+){0,2}['"]?$/m);
   assert.doesNotMatch(workflow, /registry-url:/);
   assert.match(workflow, /package-manager-cache: false/);
-  assert.match(workflow, /pnpm\/action-setup@\S+/);
-  assert.match(workflow, /corepack npm@\S+ --version/);
+  assert.match(workflow, /^\s+uses: pnpm\/action-setup@(?:v\d+(?:\.\d+){0,2}|[a-f0-9]{40})\s*$/m);
+  assert.match(workflow, /corepack npm@\d+\.\d+\.\d+ --version(?:\s|$)/);
   assert.doesNotMatch(workflow, /^\s+cache:/m);
   assert.match(workflow, /RELEASE_VERSION: \$\{\{ inputs\.version \}\}/);
   assert.match(
