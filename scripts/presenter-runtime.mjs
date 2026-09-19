@@ -146,3 +146,42 @@ export function ensureBuiltAssets(options) {
   }
   return true;
 }
+
+export function preserveAgentNotes(snapshot, previous) {
+  if (!previous?.notes.fresh ||
+      previous.notes.reviewFingerprint !== snapshot.notes.reviewFingerprint ||
+      previous.notes.agentReviewFingerprint !== snapshot.notes.agentReviewFingerprint ||
+      previous.notes.generatedFor !== snapshot.notes.agentReviewFingerprint) return snapshot;
+
+  if (snapshot.notes.updatedAt &&
+      (!previous.notes.updatedAt || snapshot.notes.updatedAt > previous.notes.updatedAt)) return snapshot;
+  if (snapshot.notes.updatedAt === previous.notes.updatedAt &&
+      ((snapshot.notes.complete && !previous.notes.complete) ||
+       (snapshot.notes.changeReady && !previous.notes.changeReady) ||
+       snapshot.notes.completedFiles > previous.notes.completedFiles)) return snapshot;
+
+  const priorFiles = new Map(previous.files.map((file) => [file.path, file]));
+  const files = snapshot.files.map((file) => {
+    const prior = priorFiles.get(file.path);
+    if (!prior) return file;
+    const next = { ...file };
+    for (const key of ['summary', 'noteReady', 'noteFailure']) {
+      if (Object.hasOwn(prior, key)) next[key] = prior[key];
+      else delete next[key];
+    }
+    return next;
+  });
+  const change = { ...snapshot.change };
+  if (previous.notes.changeReady) {
+    for (const key of ['title', 'summary', 'why', 'highlights', 'risks']) {
+      change[key] = previous.change[key];
+    }
+  }
+  return {
+    ...snapshot,
+    files,
+    change,
+    notes: { ...previous.notes, totalFiles: snapshot.notes.totalFiles },
+    usage: previous.usage,
+  };
+}

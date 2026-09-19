@@ -46,6 +46,7 @@ import {
   agentRunCompleted,
   agentRunFailed,
   agentRunNeeded,
+  preserveAgentNotes,
   agentRunSuperseded,
   ensureBuiltAssets,
   failedAgentRunForFingerprint,
@@ -787,7 +788,6 @@ function snapshotForPresentation(snapshot, previous) {
       ? previous.usage ?? reviewUsage(zeroUsage, zeroUsage)
       : reviewUsage(zeroUsage, zeroUsage),
   };
-  if (hasCurrentNotes && snapshot.notes?.fast === cli.fast) return current;
   const content = {
     ...current,
     notes: {
@@ -798,15 +798,20 @@ function snapshotForPresentation(snapshot, previous) {
         : { complete: false, status: 'generating' }),
     },
   };
-  delete content.version;
-  delete content.generatedAt;
+  if (hasCurrentNotes && snapshot.notes?.fast === cli.fast) content.notes = snapshot.notes;
+  const next = previous && agentSettingsMatch(previous.notes) &&
+    previous.notes.fast === cli.fast && previous.notes.accessMode === accessMode.mode
+    ? preserveAgentNotes(content, previous)
+    : content;
+  delete next.version;
+  delete next.generatedAt;
   return {
     version: createHash('sha256')
-      .update(JSON.stringify(content))
+      .update(JSON.stringify(next))
       .digest('hex')
       .slice(0, 12),
     generatedAt: new Date().toISOString(),
-    ...content,
+    ...next,
   };
 }
 
@@ -814,10 +819,8 @@ function seedPresentationSnapshot() {
   const previous = snapshotReady
     ? JSON.parse(readFileSync(outputPath, 'utf8'))
     : undefined;
-  const snapshot = snapshotForPresentation(
-    JSON.parse(readFileSync(rawSnapshotPath, 'utf8')),
-    previous,
-  );
+  const rawSnapshot = JSON.parse(readFileSync(rawSnapshotPath, 'utf8'));
+  const snapshot = snapshotForPresentation(rawSnapshot, previous);
   if (previous && isDeepStrictEqual(
     { ...previous, version: undefined, generatedAt: undefined },
     { ...snapshot, version: undefined, generatedAt: undefined },

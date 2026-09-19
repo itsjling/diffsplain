@@ -12,6 +12,7 @@ import {
   failedAgentRunForFingerprint,
   nextAgentFingerprint,
   openBrowser,
+  preserveAgentNotes,
 } from '../scripts/presenter-runtime.mjs';
 
 const url = 'http://localhost:2299';
@@ -212,4 +213,73 @@ test('builds missing assets once and reports a failed build clearly', () => {
     /npm run build exited with 2/i,
   );
   assert.equal(failedCalls, 1);
+});
+
+function refreshFixture() {
+  const previous = {
+    repo: { target: { pullRequest: { state: 'OPEN' } } },
+    change: { title: 'Agent title', summary: 'Agent summary', why: 'Agent reason', highlights: [], risks: [], url: 'old-url' },
+    files: [{ path: 'a.txt', sourceUrl: 'old-source', summary: { title: 'Agent note' }, noteReady: true }],
+    notes: { reviewFingerprint: 'review', agentReviewFingerprint: 'agent', generatedFor: 'agent', fresh: true, complete: false, changeReady: true, totalFiles: 1, updatedAt: '2026-09-19T01:00:02.000Z' },
+    usage: { agentNotes: { calls: 2 } },
+  };
+  const raw = structuredClone(previous);
+  raw.repo.target.pullRequest.state = 'CLOSED';
+  raw.change = { ...raw.change, title: 'New PR title', summary: 'Fallback summary', url: 'new-url' };
+  raw.files[0] = { ...raw.files[0], sourceUrl: 'new-source', comparisonUrl: 'new-comparison', summary: { title: 'Fallback note' }, noteReady: false, noteFailure: 'Stale failure' };
+  raw.notes.changeReady = false;
+  raw.notes.updatedAt = '2026-09-19T01:00:01.000Z';
+  raw.usage.agentNotes.calls = 0;
+  return { previous, raw };
+}
+
+test('refreshes metadata while preserving published agent notes and usage', () => {
+  const { previous, raw } = refreshFixture();
+  const merged = preserveAgentNotes(raw, previous);
+  assert.equal(merged.repo.target.pullRequest.state, 'CLOSED');
+  assert.equal(merged.change.url, 'new-url');
+  assert.equal(merged.change.title, 'Agent title');
+  assert.equal(merged.change.summary, 'Agent summary');
+  assert.equal(merged.files[0].sourceUrl, 'new-source');
+  assert.equal(merged.files[0].comparisonUrl, 'new-comparison');
+  assert.deepEqual(merged.files[0].summary, previous.files[0].summary);
+  assert.equal(merged.files[0].noteReady, true);
+  assert.equal(Object.hasOwn(merged.files[0], 'noteFailure'), false);
+  assert.deepEqual(merged.notes, previous.notes);
+  assert.deepEqual(merged.usage, previous.usage);
+  assert.equal(raw.files[0].noteReady, false);
+});
+
+test('refreshes fallback change text until an agent change note is ready', () => {
+  const { previous, raw } = refreshFixture();
+  previous.notes.changeReady = false;
+  assert.deepEqual(preserveAgentNotes(raw, previous).change, raw.change);
+});
+
+test('does not carry notes across changed reviews or stale agent output', () => {
+  const { previous, raw } = refreshFixture();
+  for (const notes of [
+    { ...previous.notes, reviewFingerprint: 'other-review' },
+    { ...previous.notes, agentReviewFingerprint: 'other-agent-review' },
+    { ...previous.notes, generatedFor: 'old-agent-review' },
+    { ...previous.notes, fresh: false },
+  ]) {
+    assert.equal(preserveAgentNotes(raw, { ...previous, notes }), raw);
+  }
+  assert.equal(preserveAgentNotes(raw), raw);
+});
+
+test('accepts newer agent progress from shared saved notes', () => {
+  const { previous, raw } = refreshFixture();
+  raw.notes.updatedAt = '2026-09-19T01:00:03.000Z';
+  raw.notes.complete = true;
+  raw.notes.changeReady = true;
+  raw.files[0].noteReady = true;
+  raw.files[0].summary = { title: 'Newer completed note' };
+  delete raw.files[0].noteFailure;
+  assert.equal(preserveAgentNotes(raw, previous), raw);
+  raw.notes.updatedAt = previous.notes.updatedAt;
+  assert.equal(preserveAgentNotes(raw, previous), raw);
+  delete previous.notes.updatedAt;
+  assert.equal(preserveAgentNotes(raw, previous), raw);
 });

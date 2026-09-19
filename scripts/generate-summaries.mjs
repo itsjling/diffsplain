@@ -759,6 +759,8 @@ function publishSnapshot(
       generatedFor: agentReviewFingerprint,
       fresh: true,
       complete: state.complete,
+      changeReady: Boolean(includedAgentFiles(publishedSnapshot).length && completeChangeNote(summaries.change)),
+      updatedAt: summaries.meta?.generatedAt || summaries.meta?.startedAt,
       status: state.complete
         ? 'complete'
         : summaries.meta?.status || 'generating',
