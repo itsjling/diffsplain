@@ -22,8 +22,8 @@ importers:
   .:
     dependencies:
       '@pierre/diffs':
-        specifier: ^1.4.2
-        version: 1.4.2(@shikijs/themes@4.4.3)(react-dom@19.3.0(react@19.3.0))(react@19.3.0)
+        specifier: ^1.4.3
+        version: 1.4.3(@shikijs/themes@4.4.3)(react-dom@19.3.0(react@19.3.0))(react@19.3.0)
       ignore:
         specifier: 7.0.9
         version: 7.0.9
@@ -332,10 +332,6 @@ packages:
 
   '@babel/traverse@7.29.8':
     resolution: {integrity: sha512-I5z7H3bf/41ktsNVLtpN0wAa336HkqIHQ5BuPLEhTkt1jVSyZpeNKIzTgEWmlxjdg81R0IgUCcaE+Ok3NvrfZg==}
-    engines: {node: '>=6.9.0'}
-
-  '@babel/types@7.29.7':
-    resolution: {integrity: sha512-4zBIxpPzowiZpusoFkyGVwakdRJUyuH5PxQ/PrqghfdFWWasvnCdPfQXHrenDai+gyLARulZjZowCOj6fjT4pA==}
     engines: {node: '>=6.9.0'}
 
   '@babel/types@7.29.8':
@@ -1018,8 +1014,8 @@ packages:
     cpu: [x64]
     os: [win32]
 
-  '@pierre/diffs@1.4.2':
-    resolution: {integrity: sha512-X9njBs6fGN+BIBhJ/otJRcxzNfsU3fd31VNquPiRW5nK051IyjuNS5JuOunqFDmEN3VCS9fm0gauyka/nMdokg==}
+  '@pierre/diffs@1.4.3':
+    resolution: {integrity: sha512-zJD10amMxjQis5/SYz9AYMTyqdvg1Rbuu6nCYJm67C0phFGHbescoQcxNnxrV2SVQcNSyxtSRwjjf4ND5IJXnA==}
     peerDependencies:
       react: ^18.3.1 || ^19.0.0
       react-dom: ^18.3.1 || ^19.0.0
@@ -5409,11 +5405,6 @@ snapshots:
     transitivePeerDependencies:
       - supports-color
 
-  '@babel/types@7.29.7':
-    dependencies:
-      '@babel/helper-string-parser': 7.29.7
-      '@babel/helper-validator-identifier': 7.29.7
-
   '@babel/types@7.29.8':
     dependencies:
       '@babel/helper-string-parser': 7.29.7
@@ -5946,7 +5937,7 @@ snapshots:
   '@pagefind/windows-x64@1.5.2':
     optional: true
 
-  '@pierre/diffs@1.4.2(@shikijs/themes@4.4.3)(react-dom@19.3.0(react@19.3.0))(react@19.3.0)':
+  '@pierre/diffs@1.4.3(@shikijs/themes@4.4.3)(react-dom@19.3.0(react@19.3.0))(react@19.3.0)':
     dependencies:
       '@pierre/theme': 2.0.0
       '@pierre/theming': 1.0.1(@pierre/theme@2.0.0)(@shikijs/themes@4.4.3)(react-dom@19.3.0(react@19.3.0))(react@19.3.0)(shiki@4.4.3)
@@ -7053,7 +7044,7 @@ snapshots:
 
   babel-plugin-react-compiler@1.0.0:
     dependencies:
-      '@babel/types': 7.29.7
+      '@babel/types': 7.29.8
 
   bail@2.0.2: {}
 
@@ -7082,7 +7073,7 @@ snapshots:
       '@iconify/utils': 3.1.7
       '@modelcontextprotocol/sdk': 1.30.0(supports-color@7.2.0)(zod@4.6.5)
       '@orama/orama': 3.1.18
-      '@pierre/diffs': 1.4.2(@shikijs/themes@4.4.3)(react-dom@19.3.0(react@19.3.0))(react@19.3.0)
+      '@pierre/diffs': 1.4.3(@shikijs/themes@4.4.3)(react-dom@19.3.0(react@19.3.0))(react@19.3.0)
       '@scalar/astro': 0.4.18(astro@7.3.2(@emnapi/core@1.11.1)(@emnapi/runtime@1.11.3)(@types/node@26.5.1)(@vercel/functions@3.9.7)(jiti@2.7.0)(yaml@2.9.1))
       '@scalar/openapi-parser': 0.29.1
       '@scalar/openapi-types': 0.9.5
